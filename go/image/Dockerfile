@@ -44,7 +44,12 @@ LABEL org.opencontainers.image.licenses="AGPL-3.0-or-later AND Apache-2.0" \
       org.opencontainers.image.source="https://github.com/varlatch/varlatch" \
       org.opencontainers.image.title="varlatchd" \
       org.opencontainers.image.version="${VERSION}"
+# The root filesystem is read-only where the image runs as documented, so
+# SQLite's temporary files go to the data directory. varlatchd does the same
+# by itself when it finds no writable temporary directory
+# (go/lib/storage/temp.go).
 ENV PATH=/opt/varlatch:/usr/local/bin:/usr/bin:/bin \
+    SQLITE_TMPDIR=/var/lib/varlatch \
     VARLATCH_IMAGE=varlatchd
 USER 65532:65532
 VOLUME ["/var/lib/varlatch"]

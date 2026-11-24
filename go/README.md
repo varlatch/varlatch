@@ -1918,7 +1918,13 @@ by both commands, a new installation on a new volume as the image user
 with a read-only root filesystem,
 no key in `docker inspect` or `/proc/1/environ`, the recovery gate held in
 the volume across containers, and a backup restored into a new volume
-through the image alone. go.yml's `go-image` job builds the image for
+through the image alone. Then it uses an installation, with a read-only
+root filesystem and no tmpfs: the first passkey, values set, replaced,
+rotated and deleted, imports larger than SQLite keeps in memory, a deleted
+project, a backup and its restore; as `docker run`, as
+`infra/coolify/varlatchd.compose.yml` itself, and without `SQLITE_TMPDIR`;
+and serve refuses to start with nowhere to write (`lib/storage/temp.go`).
+go.yml's `go-image` job builds the image for
 both platforms and runs it on every pull request that touches it;
 `go-container` runs the conformance suites against it nightly (target
 `go-container:<image>`, which runs as go-binary with its expectations).
