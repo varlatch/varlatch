@@ -283,8 +283,15 @@ Changes since 0.50.0-rc.2, by pull request:
   lifted last, only while that gate is there.
 - **`varlatch migrate` needs Docker Compose 2.32.0 or later (#436)**, and
   refuses an earlier one before anything is done.
-<!-- SLOT SETUP-LINK (5.1e's setup enrollment-link fix, number and text to come; fill or drop) -->
-<!-- END SLOT SETUP-LINK -->
+<!-- SLOT #451 (open, head 8a182138, its own text; recheck against the merged PR) -->
+- **`varlatch setup` on a terminal shows the first administrator's link
+  (#451).** In 0.50.0-rc.2 and earlier it showed `/enroll#[redacted]`, so an
+  interactive setup could not go on without a link from `varlatchd admin
+  bootstrap --revoke-unused`. Setup without a terminal, and the links of
+  `varlatch invite`, `move` and `admin reenroll`, were not affected. In
+  assisted mode setup neither asks nor shows anything on the terminal, as
+  without one: a coding agent would read the link and the keys.
+<!-- END SLOT #451 -->
 <!-- SLOT #446 (armed, head d6a9d52d; recheck against the merged PR, then remove both markers; or drop) -->
 - **`varlatch migrate` says what an undo, a rollback and a wait are doing
   (#446).** Each step says when it starts, every 15 seconds while it
@@ -332,11 +339,12 @@ Changes since 0.50.0-rc.2, by pull request:
   members yet", and Invite shows only to someone who may invite; the server
   refused both before too. A members list that cannot be read says so, with
   Try again. The Audit page fits a phone's width.
-<!-- SLOT #447 (armed, head a50e4c43; on merge put it in the line below and remove this marker) -->
+<!-- SLOT #447 (armed, head a50e4c43; its place is in the line below) -->
 - **The migration's rehearsals (#435, #447).** Fixes to the rehearsal harness
   for the image target and for a public address with its own certificate
   authority; Coolify and the Tailscale sidecar together, and `--resume` after
   a kill. No change to what is shipped.
+<!-- END SLOT #447 -->
 - **The release process (#438).** The G1 gate reads its walkthrough record
   from a commit of its own (`walkthrough_ref`), which differs from the
   candidate it judges only in regular files added or changed under
