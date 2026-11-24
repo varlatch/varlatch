@@ -176,7 +176,7 @@ Changes since 0.50.0-rc.2, by pull request:
   reference was masked. The refusal now names the repository and the digest
   when the value is an image reference by digest, does not show any other
   value, and gives the form to use, `repository:tag@sha256:<digest>`.
-<!-- SLOT #436 (open, under review, head 040f2266, newer than this text: the gate check, Compose 2.32.0, the proxy route; recheck the text against the merged PR) -->
+<!-- SLOT #436 (open, armed, head 7a4e45d9; recheck against the merged PR, then remove both markers) -->
 - **`varlatch migrate` from a Coolify installation (#436).** A directory
   Coolify deploys from can hold the repository's `docker-compose.yml`
   beside the file that runs, and plain `docker compose` read the wrong one
@@ -187,19 +187,37 @@ Changes since 0.50.0-rc.2, by pull request:
   TypeScript CLI's backup included), keeps them in the journal, and refuses
   what does not agree instead of guessing. An installation with one
   `docker-compose.yml` migrates as before.
-- **`--rollback` on Coolify (#436).** The rollback gives a Coolify
-  installation its fresh volumes by the names its rendered file uses, and
-  reaches Postgres on its network; before, the fresh volumes were not used
-  there. After a rollback, do not Deploy or Redeploy the TypeScript
-  application in Coolify: Coolify's own file still names the volumes from
-  before the migration. The rollback and the
+- **The address transfer on Coolify (#436).** A domain moved in Coolify
+  without a deploy does nothing on the host, and after a deploy of the Go
+  application both containers answered for the name, at random. `migrate`
+  now stops the TypeScript dashboard's container for the transfer, and
+  starts it again when it is undone; nothing depends on a domain set back
+  in Coolify.
+- **`--rollback` (#436).** It gives a Coolify installation its fresh volumes
+  by the names its rendered file uses; before, they were not used there. On
+  Coolify it begins only once a route you put in Coolify's proxy, which it
+  prints, reaches the TypeScript installation, and only behind the
+  migration's own gate. It pulls the images it needs and makes missing
+  containers again before anything is done, and refuses volumes other than
+  those the migration recorded; `--finish` removes no others either. After
+  a rollback, do not Deploy or Redeploy the TypeScript application in
+  Coolify: Coolify's own file still names the volumes from before the
+  migration. The rollback and the
   [migration guide](docs/operations/migrate-to-0.50.md) say so.
+- **An undone rollback never leaves both servers taking requests (#436).**
+  The TypeScript installation's gate is put back first, and Go's barrier is
+  lifted last, only while that gate is there.
+- **`varlatch migrate` needs Docker Compose 2.32.0 or later (#436)**, and
+  refuses an earlier one before anything is done.
 <!-- END SLOT #436 -->
-<!-- SLOT PROGRESS (no pull request yet, local ed73f077 on #436; give its number, recheck, or drop) -->
+<!-- SLOT PROGRESS (no pull request yet, local 8d4bb540 on #436; give its number, recheck, then remove both markers; or drop) -->
 - **`varlatch migrate` says what an undo, a rollback and a wait are doing
   (#PROGRESS).** Each step says when it starts, every 15 seconds while it
-  lasts (how long so far, and what it waits for) and when it ends. Not with
-  `--json`. rc.2's entry on #423 is corrected: Ctrl-C or a kill ends
+  lasts (how long so far, and what it waits for) and when it ends; so do the
+  final copy and `--finish`'s archive. Not with `--json`. A pipe nobody
+  reads holds no step up, and a closed one no longer ends `varlatch migrate`
+  half way. On Coolify, `--resume` before the domain's move is seen says the
+  whole step again. rc.2's entry on #423 is corrected: Ctrl-C or a kill ends
   `varlatch migrate` at once, and the old node can stay on the tailnet until
   `--resume`.
 <!-- END SLOT PROGRESS -->
@@ -209,15 +227,18 @@ Changes since 0.50.0-rc.2, by pull request:
   seconds of the shipped systemd unit). `infra/coolify/varlatchd.compose.yml`
   gives the service 30 seconds to stop, as the unit does; for `docker run`,
   give `--stop-timeout 30`.
-<!-- SLOT #444 (draft, head fba95e4a; recheck against the merged PR) -->
+<!-- SLOT #444 (ready, head 03788ae5; recheck against the merged PR, then remove both markers) -->
 - **varlatchd's tailnet node starts on no cached network map (#444).** After
   a rename, a node that started again could read its old name and tags from
   a map on its disk: `varlatchd admin tailnet enroll` then refused a node
   that was right, or accepted one by a name only the cache gave it. The node
-  now starts on the map the control plane sends at that start, and the
-  commands of the handoff wait, at most 30 seconds, for the name and tags
-  they expect. A varlatchd restarted while its control plane cannot be
-  reached keeps the tailnet listener closed until it answers.
+  now starts on the map the control plane sends at that start, and
+  `enroll`, `admin tailnet certificate obtain` and `take-name` wait, at most
+  30 seconds, for what they expect of the node before they refuse it. A
+  varlatchd restarted while its control plane cannot be reached keeps the
+  tailnet listener closed until it answers, and then opens it without a
+  restart; its log, the report's warnings and `varlatch doctor` say what it
+  waits for.
 <!-- END SLOT #444 -->
 - **Not-found and error pages in the dashboard (#439).** An address
   without a page shows a not-found page of the dashboard, with its
@@ -240,10 +261,8 @@ Changes since 0.50.0-rc.2, by pull request:
 - **CI (#441, #442, #443).** CI takes MinIO's pinned image from its own
   cache, and pulls it with retries when the cache has none. The migration's
   gate (G5) has 45 minutes. No change to what is shipped.
-<!-- SLOT #445 (open, armed, head 595bb9a4; recheck against the merged PR) -->
 - **Tests (#445).** Three Go tests no longer pick a port and let it go before
   they use it. No change to what is shipped.
-<!-- END SLOT #445 -->
 
 - **Prerelease only.** It is published as a GitHub prerelease and never
   becomes the latest release. What follows the latest release (`varlatch
