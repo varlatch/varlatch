@@ -536,12 +536,15 @@ func (h *Hub) Unsubscribe(s *Stream) {
 func (h *Hub) Close() {
 	h.mu.Lock()
 	h.closed = true
-	all := make([]*Stream, 0, len(h.streams))
-	for s := range h.streams {
-		all = append(all, s)
-	}
 	h.mu.Unlock()
-	for _, s := range all {
+	h.EndStreams()
+}
+
+// EndStreams closes every stream open now, as Close does, and takes new ones
+// after: for a gate that isolates the server, whose admission is closed first
+// (a stream is a request admitted before it, and never ends by itself).
+func (h *Hub) EndStreams() {
+	for _, s := range h.snapshot() {
 		s.close(ReasonShutdown)
 	}
 }

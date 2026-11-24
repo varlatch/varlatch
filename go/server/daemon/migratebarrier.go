@@ -147,6 +147,12 @@ func runMigrateBarrier(ctx context.Context, env *hostEnv, rest []string, stdout,
 	}
 	start := time.Now()
 	for n := env.admission.Busy(); n > 0; n = env.admission.Busy() {
+		// An open dashboard's live updates are a request that never ends by
+		// itself. Each time round, the admission being closed already: one
+		// admitted before that may open its stream after.
+		if env.endStreams != nil {
+			env.endStreams()
+		}
 		if time.Since(start) > drain {
 			return fail(ExitFailure, "%d requests or background passes still ran after %s; the barrier stays, isolating varlatchd: varlatchd admin migrate barrier again waits for them, varlatchd admin migrate release --id %s lifts it", n, drain, a.id)
 		}

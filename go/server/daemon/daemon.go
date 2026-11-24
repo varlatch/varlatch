@@ -392,7 +392,13 @@ func serve(opts Options, h *hooks) int {
 		defer public.Close()
 	}
 	env := &hostEnv{cfg: cfg, store: store, rootKEK: rootKEK, gates: gates, admission: admission, log: log, tune: h.backups, public: public,
-		serving: &atomic.Bool{}, ready: (&backend{store: store, rootKEK: rootKEK}).Ready}
+		serving: &atomic.Bool{}, ready: (&backend{store: store, rootKEK: rootKEK}).Ready,
+		// Host commands are served before the hub is made.
+		endStreams: func() {
+			if hub := live.Load(); hub != nil {
+				hub.EndStreams()
+			}
+		}}
 	env.backups = newBackups(env)
 	// The tailnet listener (step 4.13b), when tailnet = on: its node starts
 	// now and joins its tailnet in the background; the ordinary listener

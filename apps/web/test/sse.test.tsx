@@ -136,6 +136,30 @@ describe("the signal stream", () => {
     expect(h.last().closed).toBe(true);
   });
 
+  it("goes on through a maintenance, however many answers it lasts, and opens again after it", () => {
+    const h = harness();
+    const stream = new SignalStream(h.deps);
+    const connected: boolean[] = [];
+    stream.onConnection((c) => connected.push(c));
+    stream.start();
+    h.last().emit("ready", {});
+    h.last().emit("change", { organizationId: "org_a", lastEventId: "evt_1", domains: [] });
+    // The server ends the stream as a barrier begins; behind it every attempt is 503, an error to the browser.
+    h.last().emit("close", { reason: "shutdown" });
+    h.last().fail();
+    for (let attempt = 0; attempt < 40; attempt++) {
+      expect(h.fire()).toBe(reconnectDelay(attempt, () => 0.5));
+      expect(stream.isConnected()).toBe(false);
+      h.last().fail();
+    }
+    expect(stream.orgDocs("org_a")).toEqual([{ data: { lastEventId: "evt_1", domains: [] } }]);
+    h.fire();
+    h.last().emit("ready", {});
+    expect(stream.isConnected()).toBe(true);
+    expect(connected).toEqual([true, false, true]);
+    stream.stop();
+  });
+
   it("waits longer after the server replaced the stream with another tab's", () => {
     const h = harness();
     const stream = new SignalStream(h.deps);

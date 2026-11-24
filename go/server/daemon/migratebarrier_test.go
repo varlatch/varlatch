@@ -5,6 +5,7 @@
 package daemon
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -16,8 +17,10 @@ import (
 	"maps"
 	"net"
 	"net/http"
+	"net/http/cookiejar"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -26,6 +29,7 @@ import (
 
 	"github.com/varlatch/varlatch/go/lib/backup"
 	"github.com/varlatch/varlatch/go/lib/storage"
+	"github.com/varlatch/varlatch/go/server/auth/authtest"
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/maintenance"
 	"github.com/varlatch/varlatch/go/server/migration/bundle"
@@ -135,6 +139,174 @@ func tableSections(t *testing.T, b []byte) []byte {
 		t.Fatal("not a bundle")
 	}
 	return b[start : end+1]
+}
+
+// liveUpdates is one /auth/events stream of a browser's session.
+type liveUpdates struct {
+	res   *http.Response
+	lines *bufio.Scanner
+}
+
+func (b *browser) liveUpdates(t *testing.T) (*liveUpdates, int, string) {
+	t.Helper()
+	c := *b.c
+	c.Timeout = 0
+	res, err := c.Get(b.origin + "/auth/events")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(res.Body)
+		res.Body.Close()
+		return nil, res.StatusCode, res.Header.Get("Retry-After") + " " + string(raw)
+	}
+	t.Cleanup(func() { res.Body.Close() })
+	return &liveUpdates{res: res, lines: bufio.NewScanner(res.Body)}, res.StatusCode, ""
+}
+
+// next is the stream's next event and its data; "" at its end.
+func (l *liveUpdates) next() (event, data string) {
+	for l.lines.Scan() {
+		switch line := l.lines.Text(); {
+		case strings.HasPrefix(line, "event: "):
+			event = strings.TrimPrefix(line, "event: ")
+		case strings.HasPrefix(line, "data: "):
+			return event, strings.TrimPrefix(line, "data: ")
+		}
+	}
+	return "", ""
+}
+
+// A dashboard's live updates are a request admitted before the barrier, which
+// never ends by itself: the barrier ends every open one, with what the server
+// sends as it stops, and drains at once. One asked for behind it is refused as
+// maintenance, not as signed out; after the release the same session opens it
+// again. Dashboards that reconnect all the while, as they do, open none that
+// holds the barrier.
+func TestTheBarrierEndsOpenDashboards(t *testing.T) {
+	in, _ := migrated(t)
+	const origin = "http://localhost:18999"
+	f, err := os.OpenFile(in.conf, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = f.WriteString("public_url = " + origin + "\n")
+	if cerr := f.Close(); err != nil || cerr != nil {
+		t.Fatal(err, cerr)
+	}
+	r := start(t, in)
+	jar, _ := cookiejar.New(nil)
+	b := &browser{origin: origin, c: &http.Client{Jar: jar, Timeout: 15 * time.Second, Transport: &http.Transport{
+		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, network, r.addr)
+		}}}}
+	code, out, errOut := runAdmin(t, "bootstrap-status", "--config", in.conf)
+	var st struct {
+		Admins []struct {
+			ID      string
+			Enabled bool
+		}
+	}
+	if code != ExitOK || json.Unmarshal([]byte(out), &st) != nil || len(st.Admins) == 0 {
+		t.Fatalf("bootstrap-status: %d %q %q", code, out, errOut)
+	}
+	admin := st.Admins[slices.IndexFunc(st.Admins, func(a struct {
+		ID      string
+		Enabled bool
+	}) bool {
+		return a.Enabled
+	})].ID
+	code, out, errOut = runAdmin(t, "recover", "--identity", admin, "--config", in.conf)
+	m := enrollToken.FindStringSubmatch(out)
+	if code != ExitOK || m == nil {
+		t.Fatalf("recover: %d %q %q", code, out, errOut)
+	}
+	b.enroll(t, m[1], authtest.New(t))
+
+	var open []*liveUpdates
+	for range 3 {
+		l, status, body := b.liveUpdates(t)
+		if l == nil {
+			t.Fatalf("the live updates: %d %s", status, body)
+		}
+		if event, _ := l.next(); event != "ready" {
+			t.Fatalf("the stream's first event: %q", event)
+		}
+		open = append(open, l)
+	}
+	// Dashboards that reconnect at once, whatever they are answered.
+	stop, done := make(chan struct{}), make(chan int)
+	go func() {
+		n := 0
+		defer func() { done <- n }()
+		c := *b.c
+		c.Timeout = 0
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			res, err := c.Get(origin + "/auth/events")
+			if err != nil {
+				continue
+			}
+			n++
+			_, _ = io.Copy(io.Discard, res.Body)
+			res.Body.Close()
+		}
+	}()
+
+	began := time.Now()
+	code, out, errOut = runAdmin(t, "migrate", "barrier", "--id", migA, "--drain-seconds", "5", "--config", in.conf)
+	if code != ExitOK || !strings.Contains(out, `"phase":"paused"`) {
+		t.Fatalf("the barrier with dashboards open: %d %q %q", code, out, errOut)
+	}
+	if took := time.Since(began); took > 4*time.Second {
+		t.Errorf("the barrier took %s", took)
+	}
+	for i, l := range open {
+		var event, data string
+		for event != "close" {
+			if event, data = l.next(); event == "" {
+				break
+			}
+		}
+		if event != "close" || data != `{"reason":"shutdown"}` {
+			t.Errorf("stream %d ended with %q %q", i, event, data)
+		}
+		if event, _ := l.next(); event != "" {
+			t.Errorf("stream %d goes on: %q", i, event)
+		}
+	}
+	if l, status, body := b.liveUpdates(t); l != nil || status != http.StatusServiceUnavailable || !strings.HasPrefix(body, "5 ") || !strings.Contains(body, `"code":"MAINTENANCE"`) {
+		t.Errorf("the live updates behind the barrier: %d %s", status, body)
+	}
+	close(stop)
+	if n := <-done; n == 0 {
+		t.Error("no dashboard reconnected")
+	}
+
+	if code, _, errOut := runAdmin(t, "migrate", "release", "--id", migA, "--config", in.conf); code != ExitOK {
+		t.Fatalf("the release: %q", errOut)
+	}
+	l, status, body := b.liveUpdates(t)
+	if l == nil {
+		t.Fatalf("the live updates after the release: %d %s", status, body)
+	}
+	if event, _ := l.next(); event != "ready" {
+		t.Errorf("after the release the stream's first event is %q", event)
+	}
+	// A barrier again: the streams of the second time end too.
+	if code, out, errOut := runAdmin(t, "migrate", "barrier", "--id", migA, "--drain-seconds", "5", "--config", in.conf); code != ExitOK {
+		t.Fatalf("the barrier a second time: %d %q %q", code, out, errOut)
+	}
+	if event, _ := l.next(); event != "close" {
+		t.Errorf("the second time: %q", event)
+	}
+	if code, _, errOut := runAdmin(t, "migrate", "release", "--id", migA, "--config", in.conf); code != ExitOK {
+		t.Fatalf("the second release: %q", errOut)
+	}
 }
 
 // The reverse's varlatchd half, beside a running varlatchd (slice 7.6a):

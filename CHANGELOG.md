@@ -211,6 +211,11 @@ fixes.
 
 ### Server
 
+- **`varlatch migrate --rollback` with a dashboard open.** The rollback's
+  barrier waited for every request, and an open dashboard's live updates are
+  one that does not end: the rollback was undone, with the new server serving
+  on, for as long as anyone had the dashboard open. The barrier ends them now;
+  dashboards show the maintenance and reconnect by themselves.
 - **The check of a backup's remote copy checks that it is that archive.**
   `admin backup run --verify-remote`, and with it `varlatch migrate --finish
   --delete-old-data`, accepted any archive sealed with the same keys at the
