@@ -50,6 +50,9 @@ Preset **Microsoft**, the tenant ID, the client ID and secret.
 
 Hosts: `graph.microsoft.com`.
 
+The preset's own addresses are on `login.microsoftonline.com` and
+`graph.microsoft.com`, and nowhere else, whatever the metadata says.
+
 ## Good to know
 
 - Microsoft gives a new refresh token at each refresh and keeps the old one

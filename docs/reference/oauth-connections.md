@@ -17,7 +17,8 @@ What to register at the provider: [Google](oauth-google.md),
 ## Making one
 
 In the dashboard: an environment's page, **Add an OAuth connection**. Over
-the API, with `config.value.write` there:
+the API, with `config.value.write` there (a connection to a person's account
+is made by a person; a machine may make a client's own):
 
 ```http
 POST /v1/organizations/acme/projects/mail/environments/production/oauth-connections
@@ -33,6 +34,13 @@ POST /v1/organizations/acme/projects/mail/environments/production/oauth-connecti
   the client secret and the tokens are sent to these and to nothing else,
   whatever the metadata says later. `POST …/oauth-connections/discovery`
   shows them without making anything.
+- **`provider.endpointHosts`**: every address of a generic provider's
+  (authorization, token, revocation, userinfo, keys, issuer) is on one host,
+  the issuer's or, with the endpoints given, the token endpoint's, unless the
+  request names the others here. Otherwise it is refused (`endpoint-hosts`,
+  with the hosts nobody named). The answer's `provider.endpointHosts` are all
+  of them, and they are part of the [redirect URI](#connecting). A preset has
+  fixed hosts.
 - **`scopes`**: what to ask for. The presets add what they need to know the
   account and to get a refresh token.
 - **`hosts`**: the destinations the access token may go to, written as a
@@ -67,12 +75,23 @@ which has to be registered there exactly:
 https://{your Varlatch}/oauth/callback/{the token endpoint's host}
 ```
 
+A generic provider on several hosts has them all in it, the token endpoint's
+first and the others in order: `…/oauth/callback/login.example.com~api.example.com`.
+
 Each provider has its own address, so a code one provider was asked for is
-never sent to another. The state is good for ten minutes, once, and only in
+never sent to another. And each set of hosts has its own: a connection that
+somebody made with one more host in it has a redirect URI that is not
+registered with the client, so the provider sends nobody back to it and no
+token, nor the client secret, ever goes there. Register the exact URI, never a
+pattern or a prefix, and read the hosts: the dashboard shows them before the
+client secret can be typed, on the item, and before a browser goes to a
+generic provider.
+
+The state is good for ten minutes, once, and only in
 the session that began it; the code is exchanged by the server and is in no
 log of Varlatch's. (A proxy in front of Varlatch may log the address the
 browser came back to. The code in it is spent by then, and useless without
-the PKCE verifier.) This installation needs a public URL over HTTPS, or a
+the PKCE verifier. That page is kept in no cache and sends no referrer.) This installation needs a public URL over HTTPS, or a
 loopback one.
 
 Where the provider gives an ID token, Varlatch verifies it (signature,
@@ -82,7 +101,7 @@ its userinfo endpoint says, where there is one. Who connected it is recorded.
 **Connecting again** needs the same account. Another one is refused and
 nothing of it is kept, unless the person asked for it (**Another account**;
 `confirmAccountChange`), and the change is in the audit log. This holds after
-a disconnection too. When the provider never said whose account it is,
+a disconnection too, and after a change of its provider or client ID. When the provider never said whose account it is,
 Varlatch cannot tell.
 
 ## Getting a token
@@ -110,8 +129,11 @@ how long its tokens last.
   (or the last quarter of a shorter life), or ends before
   `minValiditySeconds`. However many ask at once, the provider is asked once
   and all get the same new token.
-- **`minValiditySeconds`** longer than the provider's tokens last is refused:
-  422, reason `min-validity-too-long`, with `lifetimeSeconds`.
+- **`minValiditySeconds`** as long as the provider's tokens last, or longer, is
+  refused: 422, reason `min-validity-too-long`, with `lifetimeSeconds`. For a
+  longer validity alone the provider is asked once a minute at most (or once a
+  quarter of a shorter life): within it, 429 `RATE_LIMITED`, reason
+  `connection-unavailable`, cause `just-refreshed`, with `retryAfterSeconds`.
 - **No token now** (the provider does not answer, or asks to wait): 429
   `RATE_LIMITED`, reason `connection-unavailable`, with `retryAfterSeconds`
   and `Retry-After`. An exercise waits 20 seconds at most. A token that
@@ -160,7 +182,10 @@ end there too.
 Varlatch refreshes when a token is asked for, not to keep one warm. A refresh
 token the provider drops when it is not used is the exception: where the
 provider says when it ends, or the preset (or `refreshTokenIdleDays`) says
-after how many days, Varlatch uses it after two thirds of that time.
+after how many days, Varlatch uses it after two thirds of that time, every ten
+minutes at most. One whose announced end a use does not move is left to end.
+A connection that cannot be refreshed, or whose provider is slow, holds up no
+other Organization's.
 
 Nothing is refreshed while the Organization is frozen or being deleted, the
 environment expired or deleted, or the connection paused or disconnected.
@@ -172,7 +197,13 @@ environment expired or deleted, or the connection paused or disconnected.
 connection. The **provider** and the **client ID** stay while it holds
 tokens: disconnect it first, and give the client secret again. Provider,
 client ID, scopes and hosts are changed by a person; a machine may replace
-the client secret or pause it.
+the client secret or pause it. A connection a person has connected is also
+deleted by a person (`person-required`), connected now or not; a machine that
+may delete its whole environment still can.
+
+With `expectedVersionId` a change, or the start of a connection
+(`…/authorizations`), is of the version that was shown: send it with a client
+secret.
 
 ## Disconnecting
 
@@ -211,7 +242,7 @@ database's copy end each other's grants the same way.
 
 | What | Event |
 | --- | --- |
-| Made, changed | `value.written`, with `oauth`, the server, the client ID, the scopes and the hosts |
+| Made, changed | `value.written`, with `oauth`, the server, `endpointHosts` (every host of the provider's), the client ID, the scopes and the hosts |
 | Connected; connected again | `sync.connection_created`; `sync.connection_credential_replaced`, `outcome` `reconnected`. The person, the account, `accountChanged` and the previous one, `missingScopes` |
 | Refused or failed to connect | `sync.connection_checked`, `outcome` `not-connected`, `reason` |
 | Refreshed | `sync.connection_credential_replaced`, `outcome` `refreshed`, no actor (Varlatch's own), whether the refresh token was replaced |
@@ -222,7 +253,8 @@ database's copy end each other's grants the same way.
 | A request the outbound policy refused | `outbound.refused`, purpose `oauth` |
 
 The types are the ones connections to platforms have; `connection: oauth` in
-the metadata, and the item in the resource, tell them apart.
+the metadata, and the item in the resource, tell them apart. Each names the
+`server` and the `endpointHosts`.
 
 ## Going back to an earlier release
 

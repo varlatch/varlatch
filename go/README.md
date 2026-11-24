@@ -1920,6 +1920,11 @@ may use; it never adds to the Agent's Grants.
     account, the generation and (the access token) its expiry. Changed
     parameters open neither the secret nor a token. A migration carries no
     row of it.
+  - A generic provider's addresses are on the issuer's or the token endpoint's
+    host, or on hosts the request names (`Resolve`); `Params.RedirectName` has
+    them all, so a connection with another host in it connects nowhere its
+    owner registered it. Presets have fixed hosts (`Preset.CheckHosts`). A client's
+    own connection, without a redirect URI, has one host.
   - A retrieval resolves connections apart (`State.Connections`) and captures
     no ciphertext of one; only an exercise captures and opens the access
     token. Nothing in `server/values` opens the refresh token or the client
@@ -1930,8 +1935,12 @@ may use; it never adds to the Agent's Grants.
   - Refreshing (`refresh.go`): a flight everyone shares, the Organization's
     gate (shared) and the connection's (exclusive) across the call, a claim in
     the row before anything is sent, and one job that stores the answer. The
-    flight outlives the request; a stop waits for it. `CrashAt` ends one at a
-    point, for tests.
+    flight outlives the request; a stop waits for it. Waiting for the gates,
+    the call and storing the answer each have a time of their own. `CrashAt`
+    ends one at a point, for tests.
+  - Keeping (`RunOnce`): what may be refreshed and is due, every Organization's
+    oldest before anybody's next, a few of one Organization at once; one that
+    was refused is postponed (`PostponeOAuthKeepalive`).
   - Connecting (`connect.go`): the state is deleted in a job of its own, then
     one external effect (`write.RunEffect`) exchanges the code.
   - Everything asked of a provider (`provider.go`) goes through the outbound
@@ -1942,7 +1951,7 @@ may use; it never adds to the Agent's Grants.
     `_revoked`; `connection: oauth`), since a reverse migration carries only
     types the TypeScript server knows.
   - `server/oauth/oauthtest` is the fake provider; `server/capabilities`
-    `oauth_test.go` covers it over HTTP.
+    `oauth_test.go` and `oauth_bounds_test.go` cover it over HTTP.
 - **One-time codes** (ADR-0061, `server/values/seeds.go`, `lib/totp`; Go
   only, capability `values.totp`).
   - `lib/totp` (Apache-2.0) reads an `otpauth://` URI, normalizes it and makes

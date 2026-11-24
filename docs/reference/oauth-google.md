@@ -32,6 +32,10 @@ screen each time, since Google gives a refresh token only then.
 
 Hosts: the API's, such as `gmail.googleapis.com` or `www.googleapis.com`.
 
+The preset's own addresses are on `accounts.google.com`,
+`oauth2.googleapis.com`, `openidconnect.googleapis.com` and
+`www.googleapis.com`, and nowhere else, whatever Google's metadata says.
+
 ## Good to know
 
 - On the consent screen a person may untick scopes. Varlatch shows what was

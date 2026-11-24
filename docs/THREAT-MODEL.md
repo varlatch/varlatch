@@ -109,9 +109,11 @@ replay or a suite named here does not exist.
 | A code asked for as `fresh` is of a period for which this server gave none under the stored seed, across restarts and concurrent requests, until the seed is written again or a backup restored | **SHIPPED GUARANTEE** | `server/capabilities.TestFresh`, `server/capabilities.TestFreshUnderConcurrency` |
 | On a server that does not know seeds (an earlier release after a rollback, the TypeScript server after a reverse migration) an item that holds one has no value, and a write meant as a seed is refused, never stored as a value | **SHIPPED GUARANTEE** | `server/capabilities.TestAnOlderServerReadsNoSeed`; `server/migration/check.TestTheReverseChecksWithSeeds` |
 | An OAuth connection's refresh token and client secret (Go server) are delivered by no path, `secret.reveal` included, and its access token by the exercise of a Capability alone: retrievals, runs, disclosures, exports, scans, sync targets, references, search, the connection's own operations, events, audit, logs and errors hold none of them, nor text the provider wrote | **SHIPPED GUARANTEE** | `server/capabilities.TestNoOtherPathDeliversAToken`, `server/capabilities.TestNoOperationAnswersWithAToken` (every GET and POST), `server/capabilities.TestAnEchoingProvider`, `server/capabilities.TestConnectAndExercise` (every row and the log); `server/syncs.TestConnectionsAreNeverPushed`; `cmd/varlatch/internal/cli.TestAConnectionIsListedAndNotDelivered`; `apps/web` `oauthConnections.test.tsx` |
-| A connection's client secret, codes and tokens go to the endpoints pinned when it was made and to no other host: metadata read again is not believed, redirects are not followed, plain http is refused, every connection is decided by the outbound policy when it opens, and parameters changed in the database open neither the secret nor a token | **SHIPPED GUARANTEE** | `server/capabilities.TestEndpointsArePinned`, `server/capabilities.TestProvidersInside`, `server/capabilities.TestMixUp`, `server/capabilities.TestARefreshThatFails`; `go/server/oauth/oauthparams` |
-| Connecting needs the person and the browser session that began it: the state and the code are good once, PKCE is always S256, and the redirect URI, the issuer (RFC 9207), the ID token and the account are checked before anything is kept; another account than before is refused unless confirmed | **SHIPPED GUARANTEE** | `server/capabilities.TestTheStateIsOneSessionsAndOnce`, `server/capabilities.TestWhatIsWrongWithAnAnswer`, `server/capabilities.TestMixUp`, `server/capabilities.TestAnotherAccount` |
-| A connection is refreshed by one request at a time, in this process and across processes on one database; the answer's refresh token is stored in the same job as its access token, before anyone gets that, and the one that was used stays stored until then, through a crash at any point | **SHIPPED GUARANTEE** | `server/capabilities.TestOneRefreshServesAll`, `server/capabilities.TestTwoProcessesRefreshOnce`, `server/capabilities.TestAProcessThatEndsDuringARefresh`, `server/capabilities.TestALostAnswer`, `server/capabilities.TestRacesWithARefresh` |
+| A connection's client secret, codes and tokens go to the endpoints pinned when it was made and to no other host; those are all on one host, or on hosts that were named when it was made, are in its redirect URI and in its events, and are shown before a client secret is typed and before a browser goes to a generic provider: metadata read again is not believed, redirects are not followed, plain http is refused, every connection is decided by the outbound policy when it opens, and parameters changed in the database open neither the secret nor a token | **SHIPPED GUARANTEE** | `server/capabilities.TestEveryAddressIsOnANamedHost`, `server/capabilities.TestAProviderOnSeveralHosts`, `server/capabilities.TestAPresetsHosts`, `server/capabilities.TestAClientSecretIsForItsServer`, `server/capabilities.TestDiscoveryIsOnceAtTheStart`, `server/capabilities.TestEndpointsArePinned`, `server/capabilities.TestProvidersInside`, `server/capabilities.TestMixUp`, `server/capabilities.TestARefreshThatFails`; `server/oauth/oauthparams.TestEndpointHosts`; `apps/web` `oauthConnections.test.tsx` |
+| Connecting needs the person and the browser session that began it: the state and the code are good once, PKCE is always S256, and the redirect URI, the issuer (RFC 9207), the ID token and the account are checked before anything is kept; another account than before is refused unless confirmed, after a change of the provider or the client too | **SHIPPED GUARANTEE** | `server/capabilities.TestTheStateIsOneSessionsAndOnce`, `server/capabilities.TestWhatIsWrongWithAnAnswer`, `server/capabilities.TestMixUp`, `server/capabilities.TestAnotherAccount`, `server/capabilities.TestAnotherAccountAfterAChange` |
+| A connection to a person's account is made, and once connected deleted, by a person; a machine with `config.value.write` can pause or disconnect it and replace its client secret, and makes a client's own | **SHIPPED GUARANTEE** | `server/capabilities.TestWhatAMachineMayDoToAConnection`, `server/capabilities.TestEndpointsArePinned` |
+| A connection is refreshed by one request at a time, in this process and across processes on one database; the answer's refresh token is stored in the same job as its access token, before anyone gets that, and the one that was used stays stored until then, through a crash at any point; an answer is kept however long its request waited before it was sent, and the request that asked for it may be gone | **SHIPPED GUARANTEE** | `server/capabilities.TestAnAnswerAfterALongWaitIsKept`, `server/capabilities.TestOneRefreshServesAll`, `server/capabilities.TestTwoProcessesRefreshOnce`, `server/capabilities.TestAProcessThatEndsDuringARefresh`, `server/capabilities.TestALostAnswer`, `server/capabilities.TestRacesWithARefresh` |
+| Refreshes are bounded: for a longer validity alone one is asked for once a minute at most (or a quarter of a shorter life), and one nobody asked for keeps a refresh token within its announced life alone, every ten minutes at most; connections that cannot be refreshed, or are slow, hold up no other Organization's | **SHIPPED GUARANTEE** | `server/capabilities.TestMinValidityAsksOnceAMinute`, `server/capabilities.TestKeepaliveEndsWithTheToken`, `server/capabilities.TestKeepaliveIsNotHeldUp` |
 | A connection's hosts bound where its access token may go, at issuing and again at each exercise; nothing is refreshed while the Organization is frozen or the connection is paused, disconnected or deleted | **SHIPPED GUARANTEE** | `server/capabilities.TestHosts`, `server/capabilities.TestAnInheritedConnection`, `server/capabilities.TestFrozenPausedAndDeleted`, `server/capabilities.TestRacesWithARefresh` |
 | On a server that does not know OAuth connections such an item has no value, and nothing of it is refreshed; a reverse migration carries no tokens | **SHIPPED GUARANTEE** | `server/capabilities.TestAnOlderServerReadsNoConnection`; `server/migration/check.TestTheReverseChecksWithConnections` |
 | These limits fail closed on a server that does not know them (an earlier release after a rollback, the TypeScript server after a reverse migration): it accepts neither the credential, nor an exchange under the binding, nor the Capability | **SHIPPED GUARANTEE** | `server/capabilities.TestLimitsFailClosedOnAnOlderServer`; `server/migration/check.TestTheReverseChecksWithLimits` |
@@ -252,16 +254,27 @@ boundary. The limits:
   Capability it was given the secret of. It gets neither the refresh token
   nor the client secret, so nothing once its tokens have ended and the
   Capability is gone. By asking for long `minValiditySeconds` it can make
-  Varlatch refresh, once a minute at most for one the provider cannot meet.
+  Varlatch refresh, once a minute at most (more often only where tokens last
+  less than four minutes).
   Narrow scopes, hosts and single-use Capabilities keep it small.
 - **A compromised orchestrator** can issue Capabilities for connections as
   for any item, for their hosts only. It can start no connection.
 - **Whoever holds `config.value.write`** in the environment can disconnect,
   pause or delete a connection, replace its client secret (which breaks it,
   until it is replaced again), and make new ones; it cannot read one, nor
-  send one's tokens elsewhere. Only a person changes a connection's provider,
-  client, scopes or hosts, and the first two only while it holds no tokens
-  and with the client secret given anew.
+  send one's tokens elsewhere. Only a person makes a connection to a person's
+  account, deletes one that was connected, and changes a connection's
+  provider, client, scopes or hosts, the first two only while it holds no
+  tokens and with the client secret given anew.
+- **A connection somebody else made** may name hosts that are not the
+  provider's. All of them are in its redirect URI, so nobody connects it at a
+  provider where that URI is not registered with the client, and until it is
+  connected nothing is sent to any but the token endpoint. That rests on the
+  provider comparing redirect URIs exactly (RFC 9700 section 2.1), and on
+  whoever registers one, or types a client secret, reading the hosts the
+  dashboard shows: a client secret given to a connection whose *token
+  endpoint* is another party's goes there. Parties that share a host by path
+  are one host.
 - **A person who connects** decides whose account is used, and consents to
   it at the provider: Varlatch records who and which. Somebody else's
   connection can be connected again by any person with the right, to the same
@@ -279,8 +292,9 @@ boundary. The limits:
   usable and why not.
 - **The browser's way back** carries the code in the address. The dashboard
   takes it out at once and Varlatch logs no query; a proxy in front of it may.
-  The code is good once, for this client, with a verifier only the server
-  has.
+  That address is in no request the page makes (`Referrer-Policy:
+  no-referrer`) and the page in no cache. The code is good once, for this
+  client, with a verifier only the server has.
 - **A lost answer** to a refresh may cost the connection, at a provider that
   takes the second use of a replaced refresh token for a theft: it then needs
   a person. So does **a restored backup**, and **a second server** on a copy

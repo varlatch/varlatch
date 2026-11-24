@@ -91,6 +91,11 @@ fixes.
   - `callerView.withheld` gains the reason `oauth-connection` (strict
     retrieval), a closed enum: a client generated from the earlier document
     that rejects unknown values needs regenerating.
+  - A generic provider's addresses are all on one host, or on hosts the
+    request names (`provider.endpointHosts`), which are then in the redirect
+    URI; the dashboard shows them before the client secret can be typed. A
+    connection to a person's account is made, and once connected deleted, by a
+    person.
   - The dashboard makes, connects, pauses, changes and disconnects them.
   - The database schema is version 6 (two new tables). On an earlier
     release, as after a reverse migration to 0.23, a connection has no value

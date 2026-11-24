@@ -13,9 +13,12 @@ shows, exactly:
 https://{your Varlatch}/oauth/callback/{the token endpoint's host}
 ```
 
-with the port when it is not 443 (`…/oauth/callback/login.example.com:8443`).
-With an issuer, **Ask the provider for it** (or `POST
-…/oauth-connections/discovery`) shows it before the connection is made.
+with the port when it is not 443 (`…/oauth/callback/login.example.com:8443`),
+and with every other host of the provider's
+([below](#providers-on-several-hosts)). With an issuer, **Ask the provider**
+(or `POST …/oauth-connections/discovery`) shows it before the connection is
+made. The provider has to compare it exactly: where it lets you register a
+pattern or only the start of an address, give the whole address all the same.
 
 Allow refresh tokens, and find out which scope gives one (`offline_access`
 at many). If the provider replaces refresh tokens, allow a short leeway for
@@ -34,6 +37,34 @@ Preset **generic**, with either
   access token, for a JSON object with `sub` or `id` (and `email`,
   `preferred_username`, `login` or `name`): without it or an ID token
   Varlatch does not know whose account it is, and cannot tell another one.
+
+### Providers on several hosts
+
+The addresses are all on one host: the issuer's or, with the endpoints given,
+the token endpoint's. Many providers are not made like that: userinfo at
+`api.example.com`, the sign-in page at `www.example.com`, or an issuer on
+another host than its token endpoint. Such a provider is refused until the
+other hosts are named, in the dashboard by confirming them, over the API in
+`provider.endpointHosts`:
+
+```json
+{ "preset": "generic", "issuer": "https://login.example.com", "endpointHosts": ["api.example.com"] }
+```
+
+They are then in the redirect URI (`…/login.example.com~api.example.com`), so
+register that one. Name a host only when it is the provider's: the access
+token, and at a disconnection the refresh token and the client secret, go to
+its userinfo and revocation endpoints. Hosts are compared whole, not by their
+domain, since anybody may have a name under a domain that hosts for others. A
+host that several parties have paths on is one host here.
+
+Or leave an endpoint out: without userinfo the account is known only from an
+ID token, without revocation a disconnection forgets the tokens here and the
+consent is withdrawn at the provider.
+
+A client's own connection (`client_credentials`) has no redirect URI to vouch
+for its hosts: its addresses are all on one host, and none is named. Give the
+token endpoint itself, and the revocation endpoint if it is on its host.
 
 Every URL is `https`, and is one the installation's
 [outbound policy](outbound-policy.md) allows: a server on a private network
