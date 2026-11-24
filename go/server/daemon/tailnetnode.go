@@ -597,16 +597,21 @@ func runTailnetReaches(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer) 
 		fmt.Fprintf(stderr, "varlatchd admin tailnet reaches: "+format+"\n", args...)
 		return ExitFailure
 	}
+	// What the probe needs on this host is not there: not a matter of time.
+	config := func(format string, args ...any) int {
+		fail(format, args...)
+		return ExitConfig
+	}
 	t := cfg.Tailnet
 	if t == nil {
-		return fail("the tailnet listener is off (tailnet = off)")
+		return config("the tailnet listener is off (tailnet = off)")
 	}
 	if t.AuthKeyFile == "" {
-		return fail("no auth key (tailnet_auth_key_file): the probe joins with the node's key, which must be reusable")
+		return config("no auth key (tailnet_auth_key_file): the probe joins with the node's key, which must be reusable")
 	}
 	raw, err := os.ReadFile(t.AuthKeyFile)
 	if err != nil {
-		return fail("cannot read the auth key file: %v", err)
+		return config("cannot read the auth key file: %v", err)
 	}
 	key := strings.TrimSpace(string(raw))
 	clear(raw)
@@ -615,7 +620,7 @@ func runTailnetReaches(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer) 
 	sweepReachDirs(os.TempDir(), time.Now().Add(-reachSweepAfter))
 	dir, err := os.MkdirTemp("", reachDirPrefix)
 	if err != nil {
-		return fail("%v", err)
+		return config("%v", err)
 	}
 	defer os.RemoveAll(dir)
 	sctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

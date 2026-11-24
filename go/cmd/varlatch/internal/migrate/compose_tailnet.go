@@ -92,6 +92,19 @@ func (c *Compose) StartTailnet(ctx context.Context) error {
 	return c.refreshDashboard(ctx)
 }
 
+// StartTailnetGated is StartTailnet, varlatchd's container started, by its
+// id, only behind g.
+func (c *Compose) StartTailnetGated(ctx context.Context, g GateRef) error {
+	made, err := c.startOwner(ctx, tailscaleService)
+	if err != nil {
+		return err
+	}
+	if err := c.startGated(ctx, g, made); err != nil {
+		return err
+	}
+	return c.refreshDashboard(ctx)
+}
+
 // startOwner starts the service varlatchd shares its network with, without
 // its dependencies: its container, or a new one when it is gone (`docker
 // compose start` then does nothing, and exits 0). made is the latter.

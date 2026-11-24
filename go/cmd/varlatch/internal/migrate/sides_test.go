@@ -31,6 +31,8 @@ type scripted struct {
 	nameless bool
 	// host answers for the host's Compose containers (nil: there are none).
 	host *labelled
+	// onRun is called once a command that host does not answer ran.
+	onRun func(key string)
 	// version is docker compose version's answer (nil: 5.2.0).
 	version *Ran
 	ran     []string
@@ -109,11 +111,17 @@ func (s *scripted) Run(_ context.Context, dir, name string, args []string, stdin
 			host = &labelled{}
 		}
 		if r, ok := host.answer(args); ok {
+			if slices.Contains([]string{"start", "restart", "stop", "rm"}, args[0]) {
+				s.ran = append(s.ran, "docker "+strings.Join(args, " "))
+			}
 			return r, nil
 		}
 	}
 	args = s.unnamed(name, args)
 	key := name + " " + strings.Join(args, " ")
+	if s.onRun != nil {
+		defer s.onRun(key)
+	}
 	s.ran = append(s.ran, key)
 	if s.stdins == nil {
 		s.stdins = map[string][]byte{}

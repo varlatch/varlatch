@@ -693,6 +693,7 @@ func TestTheUndoRemovesOnlyVolumesOfTheMigration(t *testing.T) {
 		}
 		cmp := stockCompose(t, &scripted{t: t, host: host, answers: map[string]Ran{"docker compose config ": {Answer: []byte(stockConfig)}, "docker compose stop ": {}, "docker compose up ": {}, "docker compose ps ": {},
 			"docker compose run --rm -T --no-deps varlatchd admin migration status": {Answer: []byte(`{"daemon":false,"gate":{"kind":"migrated-out","id":"gate-1"}}`)}}})
+		cmp.Run.(*scripted).onRun = makes(cmp, host, false)
 		plan, err := cmp.RebuildPlan(t.Context(), j)
 		if err != nil {
 			t.Fatal(err)
@@ -1218,6 +1219,36 @@ func ownCtr(c *Compose, svc string) composeContainer {
 	return l
 }
 
+// makes is what Docker Compose makes for the stock configuration: varlatchd's
+// new container (up --no-start), Postgres's and Convex's where there are
+// none, and, but for an old one, where theirs are on another volume.
+func makes(c *Compose, h *labelled, old bool) func(string) {
+	return func(key string) {
+		switch key {
+		case "docker compose up --no-start --no-deps varlatchd", "docker compose up --no-start --no-deps --no-recreate varlatchd":
+			h.containers = slices.DeleteFunc(slices.Clone(h.containers), func(l composeContainer) bool { return l.service == "varlatchd" })
+			l := ownCtr(c, "varlatchd")
+			l.id, l.status = "made", "created"
+			h.containers = append(h.containers, l)
+		case "docker compose up -d postgres convex-backend":
+			for i, d := range dataMounts {
+				at := slices.IndexFunc(h.containers, func(l composeContainer) bool { return l.service == d.service })
+				if at >= 0 && (old || h.containers[at].volumeAt(d.target) == stockVolumes[i].Name) {
+					h.containers[at].status = "running"
+					continue
+				}
+				l := ownCtr(c, d.service)
+				l.mounts = []containerMount{{Type: "volume", Name: stockVolumes[i].Name, Destination: d.target}}
+				if at >= 0 {
+					h.containers[at] = l
+				} else {
+					h.containers = append(h.containers, l)
+				}
+			}
+		}
+	}
+}
+
 func TestServeGated(t *testing.T) {
 	const config, running = "docker compose config --no-interpolate --format json", "docker compose ps --status running --services"
 	for _, c := range []struct {
@@ -1229,21 +1260,27 @@ func TestServeGated(t *testing.T) {
 		want    []string
 	}{
 		{"its own network, running", stockConfig, []string{"postgres", "varlatchd"}, "postgres\nvarlatchd\n", false, nil},
-		{"its own network, varlatchd gone", stockConfig, []string{"postgres"}, "postgres\n", false, []string{"up -d --no-deps varlatchd"}},
-		{"its own network, all gone", stockConfig, nil, "", false, []string{"up -d --no-deps --no-recreate postgres", "up -d --no-deps varlatchd"}},
-		{"the sidecar stopped", sidecarConfig, []string{"postgres", "varlatchd", "tailscale"}, "postgres\n", true, []string{"start tailscale", "restart varlatchd"}},
-		{"the sidecar stopped, varlatchd restarting in its network", sidecarConfig, []string{"postgres", "varlatchd", "tailscale"}, "postgres\nvarlatchd\n", true, []string{"start tailscale", "restart varlatchd"}},
-		{"the sidecar gone", sidecarConfig, []string{"postgres", "varlatchd"}, "postgres\n", true, []string{"up -d --no-deps tailscale", "up -d --no-deps varlatchd"}},
-		{"the sidecar stopped, varlatchd gone", sidecarConfig, []string{"postgres", "tailscale"}, "postgres\n", true, []string{"start tailscale", "up -d --no-deps varlatchd"}},
+		{"its own network, varlatchd gone", stockConfig, []string{"postgres"}, "postgres\n", false, []string{"up --no-start --no-deps varlatchd", "docker start made"}},
+		{"its own network, varlatchd stopped", stockConfig, []string{"postgres", "varlatchd"}, "postgres\n", false, []string{"up --no-start --no-deps varlatchd", "docker start made"}},
+		{"its own network, all gone", stockConfig, nil, "", false, []string{"up -d --no-deps --no-recreate postgres", "up --no-start --no-deps varlatchd", "docker start made"}},
+		{"the sidecar stopped", sidecarConfig, []string{"postgres", "varlatchd", "tailscale"}, "postgres\n", true, []string{"start tailscale", "docker start c-varlatchd-1"}},
+		{"the sidecar stopped, varlatchd restarting in its network", sidecarConfig, []string{"postgres", "varlatchd", "tailscale"}, "postgres\nvarlatchd\n", true, []string{"start tailscale", "docker restart c-varlatchd-1"}},
+		{"the sidecar gone", sidecarConfig, []string{"postgres", "varlatchd"}, "postgres\n", true, []string{"up -d --no-deps tailscale", "up --no-start --no-deps varlatchd", "docker start made"}},
+		{"the sidecar stopped, varlatchd gone", sidecarConfig, []string{"postgres", "tailscale"}, "postgres\n", true, []string{"start tailscale", "up --no-start --no-deps varlatchd", "docker start made"}},
 		{"both running", sidecarConfig, []string{"postgres", "varlatchd", "tailscale"}, "postgres\nvarlatchd\ntailscale\n", true, nil},
-		{"all gone", sidecarConfig, nil, "", true, []string{"up -d --no-deps --no-recreate postgres", "up -d --no-deps tailscale", "up -d --no-deps varlatchd"}},
+		{"all gone", sidecarConfig, nil, "", true, []string{"up -d --no-deps --no-recreate postgres", "up -d --no-deps tailscale", "up --no-start --no-deps varlatchd", "docker start made"}},
 	} {
 		gated := gatedHost()
 		run := &scripted{t: t, host: gated, answers: map[string]Ran{config: {Answer: []byte(c.config)}, running: {Answer: []byte(c.running)}, "docker compose up ": {}, "docker compose start ": {}, "docker compose restart ": {}}}
 		cmp := stockCompose(t, run)
 		for _, svc := range c.has {
-			gated.containers = append(gated.containers, ownCtr(cmp, svc))
+			l := ownCtr(cmp, svc)
+			if !slices.Contains(strings.Fields(c.running), svc) {
+				l.status = "exited"
+			}
+			gated.containers = append(gated.containers, l)
 		}
+		run.onRun = makes(cmp, gated, false)
 		// Each service journalled before it is started, and only one that
 		// did not run.
 		did := func() []string {
@@ -1258,7 +1295,9 @@ func TestServeGated(t *testing.T) {
 		var started []string
 		if err := cmp.ServeGated(t.Context(), GatedStart{Gate: gate1, Owned: c.owned, Starting: func(svc string) error {
 			started = append(started, svc)
-			if slices.ContainsFunc(did(), func(d string) bool { return strings.HasSuffix(d, " "+svc) }) {
+			if slices.ContainsFunc(did(), func(d string) bool {
+				return strings.HasSuffix(d, " "+svc) || svc == "varlatchd" && strings.HasPrefix(d, "docker ")
+			}) {
 				t.Errorf("%s: %s journalled after it was started", c.name, svc)
 			}
 			return nil

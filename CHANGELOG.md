@@ -108,12 +108,25 @@ fixes.
   Coolify, where the TypeScript server starts before Go's barrier, it starts
   only behind the migration's own gate, read from its state volume before
   anything starts: without that gate (its volume or file lost) it would take
-  requests again. An undo stops the services the rollback started, and no
+  requests again. The container whose gate was read is the one that starts. A
+  migration is refused in its preflight where that gate could not be held
+  (the state directory not on a named volume, whole). An undo stops the services the rollback started, and no
   others. The route's check follows no redirect to another address.
 - **`varlatch migrate` needs Docker Compose 2.32.0 or later**, and refuses an
   earlier one before anything is done. An earlier one left PostgreSQL on its
   old volume when a rollback gave it a fresh one, which the rollback
-  noticed, and undid, only then.
+  noticed, and undid, only then. An undo does not depend on it.
+- **An undone rollback ends the outage of 0.50 also when the TypeScript
+  installation cannot be put back.** Its server is held stopped, Go takes
+  requests again, and `varlatch migrate --resume` puts it back later.
+- **`varlatch migrate` into the image: no surprises in the downtime.** The
+  image's user's programs get an environment of their own (a temporary
+  directory it can write in, checked before anything), and the tailnet's
+  reach check that cannot be made on this host (a missing program, a
+  permission) is undone at once, not tried again until the transfer's timeout.
+- **Coolify: the Go service's host paths are the defaults.** The README said
+  `VARLATCH_DATA_DIR`, `VARLATCH_KEYS_DIR` and `VARLATCH_CONFIG_FILE` change
+  them; Coolify ignores those.
 - **`varlatch migrate --rollback` makes the dashboard again** once the
   rebuilt server starts. Its nginx resolves the server's address once, and
   one that kept running could answer 502 when the address had changed.

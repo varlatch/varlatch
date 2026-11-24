@@ -340,7 +340,7 @@ pins the published image by digest using Coolify environment variables.
    until `varlatch migrate` stops (exit `75`) and asks you to move the domain
    over (first) and **Deploy** it (then).
 
-   Ensure `/srv/varlatch/varlatchd.conf` (or `VARLATCH_CONFIG_FILE`) already
+   Ensure `/srv/varlatch/varlatchd.conf` already
    exists on the host as a regular file before clicking **Deploy**: if a
    bind-mounted file path is missing, Docker creates an empty directory there
    instead, and `varlatchd` fails with `EISDIR` when reading its configuration.
@@ -358,12 +358,16 @@ pins the published image by digest using Coolify environment variables.
    - `VARLATCH_IMAGE_REGISTRY` (optional, default `ghcr.io/varlatch`): override
      only when pulling from another registry (for example, a lab rehearsal
      registry).
-   - `VARLATCH_DATA_DIR` (optional, default `/srv/varlatch/data`): host path
-     mounted at `/var/lib/varlatch`.
-   - `VARLATCH_KEYS_DIR` (optional, default `/srv/varlatch/keys`): host path
-     mounted read-only at `/keys`.
-   - `VARLATCH_CONFIG_FILE` (optional, default `/srv/varlatch/varlatchd.conf`):
-     host file mounted read-only at `/etc/varlatch/varlatchd.conf`.
+
+   **The host paths are `/srv/varlatch/data`, `/srv/varlatch/keys` and
+   `/srv/varlatch/varlatchd.conf`, and cannot be changed in Coolify.** The
+   file's variables for them, `VARLATCH_DATA_DIR`, `VARLATCH_KEYS_DIR` and
+   `VARLATCH_CONFIG_FILE`, have no effect there: Coolify (4.7.6, tested)
+   replaces a mount's `${NAME:-default}` by the default when it reads the
+   file, whatever the variable is set to, and the container then starts on
+   empty directories at the default paths. They work with plain Docker
+   Compose only. Give `varlatch migrate` the same paths (`--to-data`,
+   `--to-keys`, `--to-config`).
 
 4. Routing and readiness:
    - Assign the public domain in Coolify to the `varlatchd` service on port

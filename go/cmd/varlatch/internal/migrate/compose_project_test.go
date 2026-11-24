@@ -5,6 +5,8 @@
 package migrate
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -31,6 +33,48 @@ type labelled struct {
 	// gates are the volumes' maintenance.json, each read counted.
 	gates map[string]string
 	reads int
+	// tars answer docker cp instead, and inspects a container's mounts, by
+	// the container's id.
+	tars     map[string][]byte
+	inspects map[string]string
+	// acted is called after a container was started, stopped or removed.
+	acted func(verb, id string)
+}
+
+// ids gives each container an id.
+func (h *labelled) ids() []string {
+	var out []string
+	for i := range h.containers {
+		if h.containers[i].id == "" {
+			h.containers[i].id = fmt.Sprintf("c-%s-%d", h.containers[i].service, i)
+			for _, l := range h.containers[:i] {
+				if l.id == h.containers[i].id {
+					h.containers[i].id += "x"
+				}
+			}
+		}
+		out = append(out, h.containers[i].id)
+	}
+	return out
+}
+
+func (h *labelled) byID(id string) int {
+	h.ids()
+	return slices.IndexFunc(h.containers, func(l composeContainer) bool { return l.id == id })
+}
+
+// tarOf is docker cp's answer.
+func tarOf(name, text string, typ byte) []byte {
+	var b bytes.Buffer
+	w := tar.NewWriter(&b)
+	hd := &tar.Header{Name: name, Typeflag: typ, Mode: 0o644, Size: int64(len(text))}
+	if typ == tar.TypeSymlink {
+		hd.Size, hd.Linkname, text = 0, "/elsewhere", ""
+	}
+	_ = w.WriteHeader(hd)
+	_, _ = w.Write([]byte(text))
+	_ = w.Close()
+	return b.Bytes()
 }
 
 // gateRun is the arguments that read a volume's gate.
@@ -50,12 +94,67 @@ var gate1 = GateRef{ID: "gate-1", State: &stateVol, Image: "x@sha256:y"}
 
 func ungated(string) error { return errors.New("no gate was to be made") }
 
+func (h *labelled) byActs(args []string) bool {
+	return len(args) > 1 && slices.Contains([]string{"start", "restart", "stop", "rm"}, args[0])
+}
+
 func (h *labelled) answer(args []string) (Ran, bool) {
 	if h.seen != nil && args[0] == "ps" && slices.Contains(args, "label="+labelProject) {
 		h.seen()
 	}
 	switch {
 	case args[0] == "image" && args[1] == "inspect" && h.gates != nil && len(args) == 5 && args[4] == gate1.Image:
+		return Ran{}, true
+	case args[0] == "cp" && len(args) == 3 && args[2] == "-":
+		id, file, _ := strings.Cut(args[1], ":")
+		i := h.byID(id)
+		if i < 0 || file != "/var/lib/varlatch/maintenance.json" {
+			return Ran{Code: 1, Said: []byte("Error response from daemon: No such container: " + args[1])}, true
+		}
+		h.reads++
+		if b, ok := h.tars[id]; ok {
+			return Ran{Answer: b}, true
+		}
+		text := h.gates[h.containers[i].volumeAt(stateTarget)]
+		if text == "" {
+			return Ran{Code: 1, Said: []byte("Error response from daemon: Could not find the file " + file + " in container " + id)}, true
+		}
+		return Ran{Answer: tarOf("maintenance.json", text, tar.TypeReg)}, true
+	case len(args) == 6 && args[0] == "inspect" && args[4] == mountsFormat:
+		i := h.byID(args[5])
+		if i < 0 {
+			return Ran{Code: 1, Said: []byte("No such container")}, true
+		}
+		if text, ok := h.inspects[args[5]]; ok {
+			return Ran{Answer: []byte(text)}, true
+		}
+		var mounts []map[string]any
+		for _, m := range h.containers[i].mounts {
+			mounts = append(mounts, map[string]any{"Type": m.Type, "Name": m.Name, "Destination": m.Destination, "Driver": "local", "RW": true})
+		}
+		b, _ := json.Marshal(mounts)
+		return Ran{Answer: []byte(`["PATH=/x","VARLATCH_STATE_DIR=/var/lib/varlatch"] ` + string(b) + " null null\n")}, true
+	case h.byActs(args):
+		for _, id := range args[1:] {
+			i := h.byID(id)
+			if i < 0 {
+				return Ran{Code: 1, Said: []byte("Error response from daemon: No such container: " + id)}, true
+			}
+			switch args[0] {
+			case "start", "restart":
+				h.containers[i].status = "running"
+			case "stop":
+				h.containers[i].status = "exited"
+			case "rm":
+				if s := h.containers[i].status; s == "" || s == "running" {
+					return Ran{Code: 1, Said: []byte("cannot remove a running container")}, true
+				}
+				h.containers = slices.Delete(slices.Clone(h.containers), i, i+1)
+			}
+			if h.acted != nil {
+				h.acted(args[0], id)
+			}
+		}
 		return Ran{}, true
 	case args[0] == "run":
 		for name, text := range h.gates {
@@ -101,11 +200,7 @@ func (h *labelled) answer(args []string) (Ran, bool) {
 	case h.volumes != nil && args[0] == "ps" && len(args) == 6 && strings.HasPrefix(args[3], "volume="):
 		return Ran{Answer: []byte(h.users[strings.TrimPrefix(args[3], "volume=")])}, true
 	case len(args) > 2 && args[0] == "ps" && args[1] == "-a" && args[2] == "-q" && slices.Contains(args, "label="+labelProject):
-		var ids []string
-		for i := range h.containers {
-			ids = append(ids, "c"+string(rune('a'+i)))
-		}
-		return Ran{Answer: []byte(strings.Join(ids, "\n"))}, true
+		return Ran{Answer: []byte(strings.Join(h.ids(), "\n"))}, true
 	case len(args) > 4 && args[0] == "inspect" && slices.Contains(args, containersFormat):
 		var b strings.Builder
 		for _, l := range h.containers {
@@ -119,7 +214,7 @@ func (h *labelled) answer(args []string) (Ran, bool) {
 				status = "running"
 			}
 			m, _ := json.Marshal(l.mounts)
-			b.WriteString(`"` + status + `" ` + string(m) + "\n")
+			b.WriteString(`"` + status + `" ` + string(m) + ` "` + l.id + "\"\n")
 		}
 		return Ran{Answer: []byte(b.String())}, true
 	}
@@ -685,7 +780,7 @@ func TestComposeProjectOnDocker(t *testing.T) {
 	// installation's: there, its file gone, the volume gone (not made by
 	// the reading), another of its name.
 	gateVol := project + "_" + stateKey
-	state, err := bare.stateVolume(ctx)
+	state, _, err := bare.stateVolume(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -714,6 +809,56 @@ func TestComposeProjectOnDocker(t *testing.T) {
 	time.Sleep(1100 * time.Millisecond)
 	docker("volume", "create", "--label", labelProject+"="+project, "--label", labelVolume+"="+gateVol, gateVol)
 	check("is not the one that carried the gate")
+	docker("volume", "rm", gateVol)
+	docker("volume", "create", "--label", labelProject+"="+project, "--label", labelVolume+"="+gateVol, gateVol)
+	if gate.State, _, err = bare.stateVolume(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// Through varlatchd's own container, made and not started; the very one
+	// is started, by its id.
+	docker(append(slices.Clone(named), "up", "--no-start", "--no-deps", "--pull", "never", service)...)
+	check("holds no gate")
+	if err := bare.startGated(ctx, gate, false); err == nil || !strings.Contains(err.Error(), "holds no gate") {
+		t.Errorf("started without its gate: %v", err)
+	}
+	write("ln -s /etc/hostname /s/maintenance.json")
+	check("is not a plain file")
+	write("rm /s/maintenance.json; printf '%s' '" + gateText + "' > /s/maintenance.json; mkdir /s/part; cp /s/maintenance.json /s/part/")
+	check("")
+	status := func() (id, status string) {
+		t.Helper()
+		_, l, err := bare.stateVolume(ctx)
+		if err != nil || l == nil {
+			t.Fatalf("%+v %v", l, err)
+		}
+		return l.id, l.status
+	}
+	if id, s := status(); s != "created" {
+		t.Errorf("%s is %s", id, s)
+	}
+	made, _ := status()
+	if err := bare.startGated(ctx, gate, false); err != nil {
+		t.Errorf("behind its gate: %v", err)
+	}
+	if id, s := status(); id != made || s != "running" {
+		t.Errorf("%s is %s, made %s", id, s, made)
+	}
+	check("")
+	if err := bare.startGated(ctx, gate, false); err != nil {
+		t.Errorf("again: %v", err)
+	}
+	// A part of the volume, which has the same file: another container, and
+	// not the whole.
+	part := filepath.Join(dir, "part.yml")
+	if err := os.WriteFile(part, []byte("services:\n  varlatchd:\n    volumes:\n      - {type: volume, source: "+gateVol+", target: /var/lib/varlatch, volume: {subpath: part}}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	inPart := &Compose{Directory: dir, Run: x, resolved: &ComposeProject{Name: p.Name, Dir: p.Dir, Files: append(slices.Clone(p.Files), part)}}
+	docker("rm", "-f", made)
+	if err := inPart.startGated(ctx, gate, true); err == nil || !strings.Contains(err.Error(), "a part of it") {
+		t.Errorf("a part of the volume: %v", err)
+	}
+	docker(append(slices.Clone(named), "-f", part, "rm", "-sf")...)
 	docker("volume", "rm", gateVol)
 	if data, _, err := bare.MountedVolumes(ctx, source); err != nil || !slices.Equal(data, source) {
 		t.Errorf("--finish without containers: %+v %v", data, err)
@@ -882,6 +1027,99 @@ func TestComposeProjectOnDocker(t *testing.T) {
 		if there, err := c.volume(ctx, v); err != nil || (there != nil) != (i == 3) {
 			t.Errorf("%s after: %v %v", v, there, err)
 		}
+	}
+}
+
+// An undo puts Postgres and Convex back on the volumes the Compose files
+// name with any Docker Compose, the one at hand: an earlier one leaves their
+// containers as they are when only a volume's name changed.
+func TestTheUndoOnDocker(t *testing.T) {
+	image := os.Getenv("VARLATCH_MIGRATE_TEST_IMAGE")
+	if os.Getenv("VARLATCH_MIGRATE_TEST_DOCKER") != "1" || image == "" {
+		t.Skip("VARLATCH_MIGRATE_TEST_DOCKER is not 1")
+	}
+	const project = "vl-migrate-test-undo"
+	svc := func(name, vol, target string) string {
+		return "  " + name + ":\n    image: " + image + "\n    command: [\"sleep\", \"600\"]\n    stop_grace_period: 1s\n    network_mode: none\n    volumes: [\"" + vol + ":" + target + "\"]\n"
+	}
+	dir := installationDir(t, map[string]string{
+		"docker-compose.yml": "name: " + project + "\nservices:\n" + svc("varlatchd", "varlatch-state", "/var/lib/varlatch") + svc("postgres", "postgres-data", "/var/lib/postgresql/data") + svc("convex-backend", "convex-data", "/convex/data") +
+			"volumes: {varlatch-state: {}, postgres-data: {}, convex-data: {}}\n",
+	})
+	var x ExecRunner
+	ctx := t.Context()
+	docker := func(args ...string) {
+		t.Helper()
+		if r, err := x.Run(ctx, dir, "docker", args, nil); err != nil || r.Code != 0 {
+			t.Fatalf("docker %v: %v %s", args, err, r.Said)
+		}
+	}
+	named := []string{"compose", "--project-name", project, "--project-directory", dir, "-f", filepath.Join(dir, "docker-compose.yml")}
+	plan := RebuildRecord{Override: OverrideFile, Owner: "mig_undo", Volumes: []string{project + "_postgres-data-abcdefgh", project + "_convex-data-abcdefgh"}}
+	t.Cleanup(func() {
+		_, _ = x.Run(context.Background(), dir, "docker", append(slices.Clone(named), "down", "-v", "--remove-orphans", "--timeout", "1"), nil)
+		for _, v := range plan.Volumes {
+			_, _ = x.Run(context.Background(), dir, "docker", []string{"volume", "rm", "-f", v}, nil)
+		}
+	})
+	docker(append(slices.Clone(named), "up", "-d", "--pull", "never")...)
+	c := &Compose{Directory: dir, Run: x}
+	p, err := c.project(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.KeepProject(&ComposeProject{Name: p.Name, Dir: p.Dir, Files: p.Files}, true)
+	for i, v := range stockKeys[:2] {
+		r, err := c.volume(ctx, project+"_"+v)
+		if err != nil || r == nil {
+			t.Fatalf("%s: %v %v", v, r, err)
+		}
+		plan.Retained = append(plan.Retained, *r)
+		docker("volume", "create", "--label", labelProject+"="+project, "--label", labelVolume+"="+v, "--label", labelOwner+"="+plan.Owner, plan.Volumes[i])
+	}
+	// On the fresh volumes, made so whatever Compose does of itself.
+	if err := os.WriteFile(filepath.Join(dir, OverrideFile), []byte("volumes:\n  postgres-data:\n    name: "+plan.Volumes[0]+"\n  convex-data:\n    name: "+plan.Volumes[1]+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	docker(append(slices.Clone(named), "rm", "-sf", "postgres", "convex-backend")...)
+	docker(append(slices.Clone(named), "-f", filepath.Join(dir, OverrideFile), "up", "-d", "--no-deps", "--pull", "never", "postgres", "convex-backend")...)
+	on := func() []string {
+		t.Helper()
+		_, all, err := c.verified(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, d := range dataMounts {
+			for _, l := range serviceContainers(p, all, d.service) {
+				out = append(out, l.volumeAt(d.target)+" "+l.status)
+			}
+		}
+		return out
+	}
+	if got := on(); !slices.Equal(got, []string{plan.Volumes[0] + " running", plan.Volumes[1] + " running"}) {
+		t.Fatalf("rebuilt: %v", got)
+	}
+	// The undo: the files as they were, the rest in its order.
+	if err := os.Remove(filepath.Join(dir, OverrideFile)); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.stopContainers(ctx, service, "convex-backend", "postgres"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.restoreVolumes(ctx, plan); err != nil {
+		t.Fatal(err)
+	}
+	if got := on(); !slices.Equal(got, []string{project + "_postgres-data running", project + "_convex-data running"}) {
+		t.Errorf("put back: %v", got)
+	}
+	for _, v := range plan.Volumes {
+		if users, err := c.volumeUsers(ctx, v); err != nil || len(users) > 0 {
+			t.Errorf("%s is used by %v %v", v, users, err)
+		}
+	}
+	if err := c.restoreVolumes(ctx, plan); err != nil {
+		t.Errorf("again: %v", err)
 	}
 }
 
@@ -1055,9 +1293,11 @@ type reverseFake struct {
 	gateErr func(n int) error
 	gates   []GateRef
 	starts  []string
-	// remade is the gate an undo makes.
-	remade  string
-	planErr error
+	// remade is the gate an undo makes; undoErr and stopErr are the undo's
+	// and its stop's failures.
+	remade           string
+	undoErr, stopErr error
+	planErr          error
 	// check, when set, answers instead of checkErr.
 	check func() error
 	did   []string
@@ -1104,9 +1344,11 @@ func (r *reverseFake) UndoRebuild(_ context.Context, p RebuildRecord, g GateRef,
 	r.do("undo " + p.Volumes[0])
 	r.gates = append(r.gates, g)
 	if r.remade != "" {
-		return gated(r.remade)
+		if err := gated(r.remade); err != nil {
+			return err
+		}
 	}
-	return nil
+	return r.undoErr
 }
 func (r *reverseFake) CheckGate(_ context.Context, g GateRef) error {
 	r.gates = append(r.gates, g)
@@ -1124,6 +1366,10 @@ func (r *reverseFake) ServeGated(_ context.Context, s GatedStart) error {
 		}
 	}
 	return nil
+}
+func (r *reverseFake) StopServers(context.Context) error {
+	r.do("stop servers")
+	return r.stopErr
 }
 func (r *reverseFake) StopStarted(_ context.Context, services []string) error {
 	r.do("stop started " + strings.Join(services, " "))

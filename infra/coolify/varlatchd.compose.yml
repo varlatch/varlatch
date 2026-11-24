@@ -36,6 +36,9 @@ services:
       - ALL
     restart: unless-stopped
     volumes:
+      # Coolify mounts the default paths, whatever the variables below are set
+      # to (README.md); they are for plain Docker Compose.
+      #
       # Writable data directory: SQLite database, local backups, control
       # socket, ACME cache, and in-process tsnet tailnet state. Owned by
       # 65532:65532 (mode 0700).

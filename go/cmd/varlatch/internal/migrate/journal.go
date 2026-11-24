@@ -163,7 +163,11 @@ type RollbackRecord struct {
 	Started []string      `json:"started,omitempty"`
 	Undoing bool          `json:"undoing,omitempty"`
 	Undone  *UndoneRecord `json:"undone,omitempty"`
-	DoneAt  string        `json:"doneAt,omitempty"`
+	// Unrestored is why an undo could not put the source back, its server
+	// held to be stopped: Go was opened again all the same, and --resume
+	// puts it back.
+	Unrestored string `json:"unrestored,omitempty"`
+	DoneAt     string `json:"doneAt,omitempty"`
 }
 
 // RebuildRecord is the TypeScript side's fresh database: the Compose file
