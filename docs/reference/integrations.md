@@ -21,7 +21,7 @@ Managing connections and integrations needs `config.sync.manage`. Adding an
 integration also needs the authority to disclose what it pushes:
 `secret.reveal` for Secrets and `config.value.read` for the other items
 (both, on the whole environment, for "All items"). The installation must
-allow outbound sync; see [`VARLATCH_SYNC`](../self-hosting/configuration.md#sync-targets).
+allow outbound sync; see [`sync`](../self-hosting/configuration.md#sync).
 
 ## Varlatch checks the credential first
 
@@ -77,7 +77,7 @@ you back to Varlatch.
   happens anyway, Varlatch keeps nothing, says so, and links to where you
   delete the App on GitHub.
 - Registering needs this installation's public address over HTTPS
-  ([`VARLATCH_PUBLIC_URL`](../self-hosting/configuration.md#varlatch_public_url)), or a
+  ([`public_url`](../self-hosting/configuration.md#public_url)), or a
   loopback address in local development: GitHub sends the browser back
   there.
 - The link GitHub sends you back with works once, for an hour. Opening

@@ -108,6 +108,10 @@ tailnet = off
 #tailnet_tags = tag:varlatch
 #tailnet_port = 8687
 
+# A self-hosted control server, https://<IP address>[:port]. Default:
+# Tailscale's.
+#tailnet_control_url =
+
 # The auth key's file, read only to enrol the node the first time.
 # Default: the tailnet-auth-key credential in $CREDENTIALS_DIRECTORY.
 #tailnet_auth_key_file =

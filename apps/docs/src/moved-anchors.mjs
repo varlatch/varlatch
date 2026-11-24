@@ -29,6 +29,25 @@ export const MOVED = {
     "what-varlatch-puts-on-your-machine": "/reference/uninstall/#what-varlatch-puts-on-your-machine",
     "where-to-go-next": "/getting-started/#reference",
   },
+  // The Compose guide was at /self-hosting/ up to 0.23.0. Dashboards link
+  // to the two upgrade sections.
+  "/self-hosting/": {
+    "first-install": "/run-an-installation/",
+    "with-varlatch-setup-recommended": "/run-an-installation/#install",
+    "existing-installations-varlatch-adopt": "/self-hosting/compose/#existing-installations-varlatch-adopt",
+    "by-hand": "/self-hosting/compose/#by-hand",
+    "where-to-keep-the-backup": "/self-hosting/#the-root-kek-is-your-responsibility",
+    "passphrase-wrapped-escrow-recommended": "/self-hosting/#a-passphrase-protected-copy",
+    "shamir-secret-sharing-multi-custodian": "/self-hosting/#shares-for-several-people",
+    "backup": "/operations/backup/",
+    "upgrade-backup-gated-forward-only": "/operations/upgrade/",
+    "outbound-destinations-after-upgrading-to-0220": "/self-hosting/compose/#outbound-destinations-after-upgrading-to-0220",
+    "newer-releases-in-the-dashboard": "/operations/upgrade/#newer-releases-in-the-dashboard",
+    "health-check-read-only": "/self-hosting/#health-check",
+    "optional-tailscale-integration": "/self-hosting/configuration/#tailscale",
+    "september-2026-upgrade-compatibility": "/self-hosting/compose/#september-2026-upgrade-compatibility",
+    "client-addresses-behind-proxies": "/self-hosting/configuration/#trusted_proxies",
+  },
 };
 
 /** The inline script every page carries: on an old page with a moved fragment, go to the new place. */

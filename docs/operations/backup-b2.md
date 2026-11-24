@@ -1,8 +1,12 @@
 # First off-host backup with Backblaze B2
 
-Varlatch can make local encrypted backups without cloud storage. An off-host
-copy is needed to survive losing the installation host. B2 is one supported
-S3-compatible destination; an AWS account is not required.
+> **Prerelease.** This page is for Varlatch 0.50, which is not released yet.
+> The current release, 0.23.0, runs on Docker Compose:
+> [its version of this page](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/operations/backup-b2.md).
+
+An installation makes encrypted backups on its own disk without any cloud
+storage. A copy off the host is needed to survive losing the host. B2 is one
+supported S3-compatible destination; an AWS account is not required.
 
 ## Create the bucket and credentials
 
@@ -11,10 +15,11 @@ S3-compatible destination; an AWS account is not required.
    `varlatch-backups-YOURNAME`. Record its **S3 endpoint** and bucket name.
 2. Create `varlatch-backup-upload` restricted to that bucket and the filename
    prefix `production/`, with the exact **writeFiles** capability. Use the B2
-   CLI below; the GUI's Write Only preset is broader than the scheduled job
+   CLI below; the GUI's Write Only preset is broader than a backup
    needs. Never configure Varlatch with the account's master key.
 3. Create `varlatch-backup-verify` for the same bucket and prefix, with
-   **readFiles** access. Keep it separately; scheduled uploads do not need it.
+   **readFiles** access. Keep it off the host, for restores and for checking
+   archives from another machine.
 4. Save each key ID and application key in a password manager when displayed.
    The application key cannot be retrieved again. Do not paste secrets into
    chat, source control, command arguments, or the destination configuration.
@@ -24,7 +29,7 @@ and [application-key instructions](https://www.backblaze.com/docs/cloud-storage-
 Install the [official B2 CLI](https://www.backblaze.com/docs/cloud-storage-command-line-tools)
 on your operator workstation and run `b2 account authorize` interactively using
 an account credential authorized to create keys. Keep that administrative
-credential off the scheduled-backup host. Then run:
+credential off the installation's host. Then run:
 
 ```sh
 b2 key create --bucket YOUR-BUCKET --name-prefix production/ varlatch-backup-upload writeFiles
@@ -36,18 +41,17 @@ privately. [B2's capability mapping](https://www.backblaze.com/docs/cloud-storag
 confirms that `writeFiles` covers uploads and multipart completion/abort;
 deletion requires the separate `deleteFiles` permission. This uploader addresses
 a known bucket and object, so it does not need bucket/object listing rights.
-Upload-only credentials are not immutable storage: consider Object Lock
-separately after validating your retention needs.
+Upload-only credentials are not immutable storage: turn on Object Lock with a
+default retention too, after validating your retention needs. The server uses
+one key for everything, so with a write-only key it cannot check what it
+uploaded: [Scoping destination credentials](backup.md#scoping-destination-credentials-per-provider)
+explains the choice.
 
-## Store credential files on the operator host
+<a id="store-credential-files-on-the-operator-host"></a>
 
-These are example paths, not files that Varlatch creates automatically:
+## Store the upload key on the host
 
-```sh
-install -d -m 700 "$HOME/.config/varlatch-backup"
-```
-
-Use a local editor to create `s3-write.json` in that directory:
+In an editor, as root, create `/etc/varlatch/bucket-write.json`:
 
 ```json
 {
@@ -56,17 +60,22 @@ Use a local editor to create `s3-write.json` in that directory:
 }
 ```
 
-Use the same JSON shape for `s3-read.json`, with the separate read key. Set
-both files to mode 0600. Keep the read file on the recovery operator's machine
-or supply it only when verifying; Varlatch never saves it as a destination.
-The S3 keys authorize access to storage. They are **not** the Backup Encryption
-Key (BEK) or Root KEK. Preserve off-host copies of those encryption keys through
-separate custody channels as described in the [recovery runbook](backup.md).
+The service reads this file itself. Let its group read it, and nobody else:
+
+```sh
+sudo chown root:varlatch /etc/varlatch/bucket-write.json
+sudo chmod 640 /etc/varlatch/bucket-write.json
+```
+
+Never store the read key on this host. The S3 keys give access to storage.
+They are **not** the backup key or the Root KEK: keep off-host copies of
+those two as the [recovery runbook](backup.md#keys-and-recovery-inputs)
+describes.
 
 ## Configure Varlatch
 
-Create `backup-destinations.json` in the actual installation's Compose
-directory. Replace every placeholder, including the absolute credential path:
+Create `/etc/varlatch/backup-destinations.json`, and replace every
+placeholder:
 
 ```json
 {
@@ -76,24 +85,22 @@ directory. Replace every placeholder, including the absolute credential path:
     "bucket": "YOUR-BUCKET",
     "prefix": "production/",
     "forcePathStyle": true,
-    "writeCredentialsFile": "/ABSOLUTE/PATH/s3-write.json"
+    "writeCredentialsFile": "/etc/varlatch/bucket-write.json"
   }
 }
 ```
 
 Copy the endpoint from B2 rather than guessing it. The region is the segment
-between `s3.` and `.backblazeb2.com`. Do not put `~` in the credential path.
-The Compose directory must describe the running installation, not a fresh
-checkout or disposable test installation.
+between `s3.` and `.backblazeb2.com`.
 
-Follow the [S3 create and remote verify commands](backup.md#s3-compatible-destinations).
-First upload, then verify **that same archive ID** by downloading it with the
-read key. Finally download that archive to an isolated recovery host and follow
-the fresh-host restore procedure. Keep that rehearsal isolated from production
-sync destinations. A successful upload or verification is not a restore test.
+Then add both settings to `varlatchd.conf`, restart, test the bucket and make
+a backup: [S3-compatible destinations](backup.md#s3-compatible-destinations)
+has the commands. Download that archive with the read key to an isolated
+machine, and [rehearse a restore](backup.md#rehearse-a-restore) there. A
+successful upload is not a restore test.
 
-Only after the rehearsal, choose a backup schedule and bucket retention policy.
-Include an incomplete-multipart-upload expiry rule. Retain both encryption keys
+Then choose the bucket's retention. Include an
+incomplete-multipart-upload expiry rule. Retain both encryption keys
 for as long as any archive needs them. Avoid a lifecycle policy that silently
 deletes the only recovery point before a replacement has been checked.
 The `writeFiles` upload key can also *hide* files, either with `b2_hide_file`
@@ -104,4 +111,4 @@ Object Lock on the bucket, so a compromised host cannot erase archives
 through the lifecycle.
 
 Safe details to share when asking for setup help: bucket name, endpoint, region,
-Compose directory, and credential-file paths. Never share the file contents.
+and file paths. Never share the file contents.

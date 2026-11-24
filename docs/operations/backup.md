@@ -1,284 +1,223 @@
 # Installation backup and recovery
 
-Run `varlatch admin backup` on the Infrastructure Operator's Docker Compose
-host, with `--dir` pointing at the canonical Compose directory. No Varlatch
-login is needed: host/container access is the authority. Backup destinations
-are operator files, never Organization Platform Connections.
+> **Prerelease.** This page is for Varlatch 0.50, which is not released yet.
+> The current release, 0.23.0, runs on Docker Compose:
+> [its version of this page](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/operations/backup.md).
 
-## Install the operator CLI
-
-Each release attaches `varlatch-cli-<version>.cjs`, a single-file build of
-the CLI that needs only Node.js, at a release with its line's security
-fixes ([Node.js version](../reference/install-the-cli.md#nodejs-version)): no
-checkout, pnpm, or build.
-Install it root-owned on the Compose host:
-
-```sh
-V=0.22.0  # the release the installation runs
-curl -fLO https://github.com/varlatch/varlatch/releases/download/v$V/varlatch-cli-$V.cjs
-curl -fLO https://github.com/varlatch/varlatch/releases/download/v$V/SHA256SUMS
-sha256sum --ignore-missing -c SHA256SUMS
-sudo install -m 755 varlatch-cli-$V.cjs /usr/local/bin/varlatch
-varlatch --version
-```
-
-Releases after 0.15.0 sign `SHA256SUMS` itself: check its signature
-first, as [Verifying a release](verify-release.md) describes.
-
-From then on, `varlatch self-update` does the same for a newer release:
-it checks the signature on `SHA256SUMS` when cosign is installed and the
-release is signed, checks the file, and replaces the CLI after you confirm.
-Run it with `sudo` for a root-owned copy such as `/usr/local/bin/varlatch`.
-
-The varlatchd image carries the same file at `/opt/varlatch/varlatch.cjs`, so
-on the Compose host you can also take it from the running release, trusted
-exactly as far as the digest-pinned image you already run:
-
-```sh
-cd /srv/varlatch && docker compose cp varlatchd:/opt/varlatch/varlatch.cjs ./varlatch.cjs
-sudo install -m 755 varlatch.cjs /usr/local/bin/varlatch
-```
-
-The CLI embeds its release's compatibility manifest, so it is
-version-coupled to the installation: a stale host CLI records failed
-compatibility checks against archives from a newer release. **Replace the host
-CLI with the new release's file after every upgrade**, before the next
-scheduled backup runs; `varlatch upgrade` prints a reminder when the CLI and
-the installation differ. The reference host timer (`infra/host-backup`) does
-this itself: every run extracts the CLI from the running image. Releases up
-to 0.8.0 predate this artifact and need the CLI built from a checkout of that
-tag (`pnpm install --frozen-lockfile && pnpm build`, then
-`node apps/cli/dist/main.js`).
+An installation backs itself up: `varlatchd` makes an encrypted archive of
+its database every day, checks it, and uploads it when you gave it a bucket.
+You need no scheduler and no other program. The host commands below need
+root on the host; no Varlatch login is needed, and nothing in a tenant can
+configure a destination or start a recovery.
 
 ## Keys and recovery inputs
 
-Generate an independent 32-byte Backup Encryption Key (BEK), for example:
+To restore, you need all of these:
 
-```sh
-umask 077
-openssl rand -hex 32 > /secure/operator/backup-key
-```
+1. an archive (`<id>.vltbak`);
+2. the **backup key** (the Backup Encryption Key), which opens the archive;
+3. the **Root KEK** the archive's values depend on;
+4. a `varlatchd` of a release that can read the archive: the one that made
+   it, or a newer one;
+5. **`/etc/varlatch/varlatchd.conf`, and the files it names:** the
+   destinations file and the bucket's key, a proxy's certificates, a private
+   certificate authority. An archive records the settings, but a restore on
+   a fresh host does not apply them. Keep a copy off this host, with the
+   backups' other papers, and again after each change.
 
-Keep a separately held copy of both this BEK and the Root KEK. Do not derive
-the BEK from the Root KEK, put either key in the backup bucket, or place them
-in the archive output directory. Key files accept hex or base64. As an
-alternative to `--bek-file`, use `--bek-passphrase-file` (at least 12 bytes;
-a final newline is removed). Keys and passphrases are never command arguments
-or status fields. `verify --kek-file -` accepts a candidate Root KEK on stdin.
-
-Recovery requires the encrypted archive, its BEK, the Root KEK version named
-in its manifest, a compatible pinned release, and installation configuration.
-Losing either key makes the corresponding encrypted data unrecoverable.
-Retain historical BEKs and Root KEKs for as long as their archives must remain
-restorable. A successful key check does not prove that an off-host custody
-copy exists.
+Setup makes both keys, in `/etc/varlatch/backup-key` and
+`/etc/varlatch/root-kek`, readable by root only, and shows each once for you
+to keep elsewhere. Losing either key makes every archive that needs it
+useless. Keep old copies for as long as you keep archives that need them.
+Never put a key in the backup bucket. Keep the two keys apart from each
+other: whoever has the archive and both keys has every value.
+[The Root KEK is your responsibility](../self-hosting.md#the-root-kek-is-your-responsibility)
+says how to keep the copies.
 
 ## Create and verify
 
 ```sh
-varlatch admin backup create --dir /srv/varlatch \
-  --bek-file /secure/operator/backup-key \
-  --kek-file /secure/operator/root-kek-copy
-
-varlatch admin backup verify --dir /srv/varlatch \
-  --in /srv/varlatch/backups/ARCHIVE-ID.vltbak \
-  --bek-file /secure/operator/backup-key \
-  --kek-file /secure/operator/root-kek-copy --record
-
-varlatch admin backup status --dir /srv/varlatch
+sudo varlatch admin backup run      # make, check and deliver a backup now
+sudo varlatch admin backup status   # every archive, and the warnings
 ```
 
-`create` prints the actual path and archive ID. `--out` overrides the default
-`<compose-dir>/backups/<id>.vltbak`. The archive contains the Secret Plane
-database only (archive format 2). The Application Plane, Convex's
-database and storage, holds nothing a restore cannot rebuild, so restore
-rebuilds it instead. The archive alone never recovers an installation: it
-also takes the BEK, the matching Root KEK, the release artifacts, and the
-installation configuration.
+`run` prints the archive's path, what each check found, and how long the
+database snapshot was held. Every archive, scheduled or not, is checked
+before it counts:
 
-Capture is **online**: nothing is paused or gated. varlatchd takes the
-*capture exclusion*, which key rotation, `migrate`, and restore also need,
-then opens a single database snapshot, and the dump reads that snapshot while
-the installation keeps serving disclosures, writes, sign-in, and its workers.
-Metadata (installation, release, required Root KEK versions, canary) comes
-from the same snapshot. The dump still costs CPU and I/O, so schedule it for
-low load. A migration started during a capture waits for it (up to 15
-minutes); a capture refuses to start during an incomplete key rotation.
+- **integrity:** the archive opens with the backup key, whole;
+- **compatibility:** this release can restore it;
+- **Root KEK match:** the installed Root KEK opens what the archive holds.
 
-A daemon older than online capture (for example the release `varlatch
-upgrade` starts from) is captured with the previous, frozen protocol: it
-answers ordinary traffic with a retryable `503 MAINTENANCE` while both
-databases and Convex storage are dumped, and produces a format-1 archive.
+A backup pauses nothing: people and applications go on working while it
+runs. It takes a consistent snapshot of the database, seals it with the
+backup key, and puts it in `/var/lib/varlatch/backups` (mode 0600). The
+archive holds the database and the settings of `varlatchd.conf`, never a
+key. It does not run during maintenance, and
+`backup run` then says so.
 
-The capture deadline defaults to 300 seconds; `--timeout-seconds` accepts
-1 to 86400 seconds. When it expires, varlatchd stops the dump and confirms it
-has exited before it releases the capture exclusion. A lost or expired
-capture never produces an archive, even if its dump process eventually
-succeeds: the CLI publishes only after varlatchd confirms the capture is
-still valid and still holds its exclusion. A daemon restart, or losing the
-capture's database connection, invalidates an active capture. The
-operator execution lock prevents concurrent create/restore commands across
-Compose invocations; it does not replace the restore isolation gate.
+### The schedule
+
+| Setting | Default | |
+|---|---|---|
+| [`backup_interval`](../self-hosting/configuration.md#backup_interval) | `24h` | how often; `off` turns the schedule off |
+| [`backup_keep`](../self-hosting/configuration.md#backup_keep) | `7` | how many archives stay on this host |
+| [`backup_destinations_file`](../self-hosting/configuration.md#backup_destinations_file) | none | the buckets archives can go to |
+| [`backup_destination`](../self-hosting/configuration.md#backup_destination) | `offsite` | which of them is used |
+
+When no archive could be made, the next try is an hour later. When the
+archive was made but its upload failed, it stays on this host, and the next
+try is the next scheduled backup: run `backup run` yourself once the bucket
+works again. The journal says why.
+
+### Warnings
+
+`backup status`, `varlatch doctor` and the dashboard (**Installation
+settings**, for Installation Admins) show the same warnings:
+
+- no archive within 48 hours;
+- the newest archive was not delivered to a destination, or did not pass
+  its checks;
+- a remote copy failed its check, or, once one was checked, none passed
+  within 30 days;
+- a Root KEK version that archives need had no successful check within 30
+  days.
 
 ### What a capture costs (measured)
 
-Measured 2026-09-24 with `scripts/measure-capture.mjs`.
+The snapshot is taken online, so its cost is processor and disk time, not
+downtime. `backup run` prints both for your installation, and `status`
+records them with each archive. Both grow with the audit history.
 
-**Setup:**
-- PostgreSQL limited to 2 CPUs / 4 GB. The dump runs in its container, sharing that budget.
-- varlatchd limited to 1 CPU / 1 GB.
-- Audit history seeded to shape like real disclosures.
-- Two clients disclosing secrets every 250 ms throughout. That stays under
-  varlatchd's per-client limit of 600 requests a minute, and each disclosure
-  commits an audit event.
-
-| Audit events | Database | Archive | Snapshot held (dump) | Disclosure p50 / p95 / p99, no backup | … during `backup create` | Failed requests | Restore (isolating, incl. rebuild) |
-|---|---|---|---|---|---|---|---|
-| 100,000 | 0.09 GiB | 8 MiB | 1.1 s (0.9 s) | 28 / 40 / 242 ms | 28 / 40 / 40 ms | 0 | 20 s |
-| 1,000,000 | 0.85 GiB | 76 MiB | 7.5 s (7.3 s) | 23 / 37 / 238 ms | 19 / 37 / 83 ms | 0 | 41 s |
-| 10,000,000 | 8.7 GiB | 759 MiB | 79 s (79 s) | 23 / 26 / 247 ms | 24 / 51 / 229 ms | 0 | 161 s |
-
-What this means:
-- **No request failed or was held back during any capture.** Latency during
-  a capture stays close to normal. At ten million audit events the p95 rose
-  from 26 to 51 ms while the 79-second snapshot was open.
-- **Capture time grows with audit history:** about 8 seconds and 76 MiB
-  (compressed) per million audit events on this budget. The default
-  `--timeout-seconds 300` covers roughly 35 million events on such a host;
-  above that, raise it to several times the measured dump time.
-  `backup create` prints the snapshot hold and dump time of every capture
-  and records them with the archive.
-- **Schedule for load, not for downtime.** A capture no longer needs a
-  maintenance window. On a small host, off-peak hours keep its I/O out of
-  the way.
-- **Restore is the window that still isolates**: 20 s, 41 s,
-  and 161 s at the three sizes, including the Application Plane rebuild.
-  Plan recovery around it.
-- Occasional 1 to 2 s outliers appear in every phase on this CPU-limited setup,
-  the no-backup baseline included. They are not caused by the capture.
-- An earlier revision loaded the whole varlatchd CLI (about 0.8 s of CPU)
-  for each backup control call, taken from the running daemon. It pushed
-  p99 during `backup create` to about 1 s. The control calls now use a
-  minimal client (about 35 ms).
-
-To reproduce or measure your own hardware:
-`MEASURE_SIZES=100000,1000000 node scripts/measure-capture.mjs`. See the
-script header for the limits and load it applies.
-
-Use `--scratch-dir /private/scratch` to choose temporary storage. Temporary
-plaintext dumps live in a mode-0700 directory with mode-0600 files; ordinary
-completion/error paths remove them. Abrupt host failure/SIGKILL can leave
-scratch files: use an encrypted scratch filesystem and remove abandoned
-`varlatch-capture-*`, `varlatch-backup-*`, and `varlatch-verify-*` directories
-when no operation is running. Finished archives are encrypted, mode 0600,
-atomically published, and never overwrite an existing path. Version 1 limits
-an archive's plaintext components to 60 GiB (below AES-GCM's per-message limit).
-Plan disk capacity for dumps, decrypted verification scratch, and the encrypted
-archive; verification is streaming but uses private disk scratch.
-
-`verify` reports three independent results: integrity, compatibility, and key
-match. Failure exits nonzero. It can run on a machine with neither Docker nor
-the original installation. The default compatibility target is the verifier's
-embedded release manifest; `--target-release /path/varlatch-release.json`
-overrides it. Missing/unsupported compatibility metadata fails closed.
-`--record` explicitly attaches the result to the running installation's
-per-archive status; omit it for independent disaster verification. Failed key
-or compatibility checks are also recorded when requested. Integrity failures
-cannot safely supply an authenticated archive identity and are not recorded
-against a guessed ID.
-
-Checks passed does not mean the dumps have loaded or every secret decrypts.
-A restore additionally loads the data, verifies the restored canary, and
-republishes Mirrors. Automated disposable `backup drill` remains post-MVP.
+Keep free space for a copy of the database, plus the archive:
+`varlatch doctor` checks it. Finished archives are encrypted. A killed run
+can leave its working files in `/var/lib/varlatch/backups`; the next run
+removes them.
 
 ### Deleted Projects and Organizations
 
 Deleting a Project or an Organization erases its values from the live
-database, not from archives. An archive taken before the deletion completed
-holds the data until your retention removes it, and restoring that archive
-restores the whole installation, deleted data included. With the hosted
-backup, object lock keeps each archive for its whole term. When data must
-be gone from backups too, keep that in mind before you restore, and let the
-retention of every destination run its course.
-
-PostgreSQL itself may keep old row versions and its write-ahead log for a
-while after a deletion, and so do replicas and volume snapshots you keep.
+database, not from archives. An archive taken before the deletion holds the
+data until your retention removes it, and restoring that archive restores
+the whole installation, deleted data included. When data must be gone from
+backups too, let the retention of every destination run its course.
 
 ## S3-compatible destinations
 
-New to S3? Start with the [Backblaze B2 setup guide](backup-b2.md).
+Until you give it a bucket, an installation keeps its archives on its own
+disk, and loses them with it. New to S3? Start with the
+[Backblaze B2 setup guide](backup-b2.md).
 
-Create `backup-destinations.json` in the Compose directory:
+1. Write `/etc/varlatch/backup-destinations.json`:
 
-```json
-{
-  "offsite": {
-    "endpoint": "https://s3.example.net",
-    "region": "us-east-1",
-    "bucket": "varlatch-backups",
-    "prefix": "production/",
-    "forcePathStyle": true,
-    "writeCredentialsFile": "/secure/operator/backup-s3-write.json"
-  }
-}
-```
+   ```json
+   {
+     "offsite": {
+       "endpoint": "https://s3.example.net",
+       "region": "us-east-1",
+       "bucket": "varlatch-backups",
+       "prefix": "production/",
+       "forcePathStyle": true,
+       "writeCredentialsFile": "/etc/varlatch/bucket-write.json"
+     }
+   }
+   ```
 
-For AWS's standard endpoint, omit `endpoint`. Credentials files contain
-`accessKeyId`, `secretAccessKey`, and optional `sessionToken`. Keep them
-operator-readable only. `--destinations-file` overrides the configuration
-path. Credential paths in that file are relative to the file's directory.
+   For AWS's standard endpoint, leave `endpoint` out. `prefix` defaults to
+   `varlatch/`, `forcePathStyle` to `true`.
 
-```sh
-varlatch admin backup create --dir /srv/varlatch --destination offsite \
-  --bek-file /secure/operator/backup-key --kek-file /secure/operator/root-kek-copy
+2. Write the bucket's key in `/etc/varlatch/bucket-write.json`:
 
-varlatch admin backup verify --dir /srv/varlatch --destination offsite \
-  --archive ARCHIVE-ID --read-credentials-file /secure/operator/backup-s3-read.json \
-  --bek-file /secure/operator/backup-key --kek-file /secure/operator/root-kek-copy --record
-```
+   ```json
+   { "accessKeyId": "YOUR_KEY_ID", "secretAccessKey": "YOUR_KEY" }
+   ```
 
-Objects are `<prefix>/<archive-id>.vltbak`. Upload uses bounded-memory multipart
-transfer for large archives. Scope scheduled credentials to writes under that
-prefix; multipart uploads also need completion/abort permissions appropriate
-to the provider. Lifecycle policies should expire incomplete multipart uploads.
-An upload failure leaves the finished local archive available. No remote-read
-credentials are stored by Varlatch; each remote verification invocation supplies
-them separately. Upload completion and download-plus-verification remain
-distinct facts. An ETag is not treated as a universal content checksum.
+   `sessionToken` is optional. The service reads this file itself, so its
+   group must be able to read it, and nobody else:
 
-Bucket lifecycle manages retention. Status tracks recorded archives, not the
-bucket's inventory: removing an object does not automatically remove its
-historical custody warning. Off-host safety depends on the configured endpoint
-actually being off-host; an S3-compatible server on the same disk is not a
-second failure domain.
+   ```sh
+   sudo chown root:varlatch /etc/varlatch/bucket-write.json
+   sudo chmod 640 /etc/varlatch/bucket-write.json
+   ```
 
-Schedule these CLI commands using cron, systemd, or Coolify: `create`, then a
-local `verify --in <archive> --record` (keys already on the host; no extra
-downtime). After them, as a separate step whose failure does not fail the
-job, `varlatch upgrade --check --dir <dir>` records whether a newer release
-exists, for the dashboard's Installation settings → Release. Give separate read credentials only to the job that performs remote
-verification, and run it at least every 30 days. The
-Installation settings page (`/installation/settings`) displays per-archive
-checks/delivery and warnings; only Installation Admins can read that endpoint.
-Warnings are actionable: no archive within 48 hours, a newest archive that is
-undelivered or has not passed local verification, a failed latest remote check,
-no passing remote check within 30 days, or a Root KEK version without a
-successful check within 30 days.
-Nothing in a tenant can configure a destination or initiate recovery.
+3. Add both settings to `/etc/varlatch/varlatchd.conf`, and restart:
+
+   ```ini
+   backup_destinations_file = /etc/varlatch/backup-destinations.json
+   backup_destination = offsite
+   ```
+
+   ```sh
+   sudo systemctl restart varlatchd
+   ```
+
+4. Test the bucket, then make a backup:
+
+   ```sh
+   sudo varlatch admin backup test-bucket
+   sudo varlatch admin backup run
+   ```
+
+On a new installation, setup does step 3: answer **bucket** when it asks
+where backups go, or pass `--backups bucket --backup-destinations-file
+/etc/varlatch/backup-destinations.json --backup-destination offsite`. The
+`varlatch` group exists only once setup has run, so make the key file
+readable when setup's first backup says `permission denied`, then run setup
+again.
+
+`test-bucket` uploads a small test archive with none of the installation's
+data in it, and reports three things:
+
+| Check | Passes when |
+|---|---|
+| delivery | the upload worked |
+| retention | the uploaded version has a retention, and deleting it was refused |
+| recoverability | the uploaded version was downloaded and opened |
+
+It exits 1 unless all three pass. Retention needs a bucket with versioning
+and Object Lock, with a default retention: it is what keeps a stolen host
+from erasing its own backups. The test archive stays in the bucket for that
+retention.
+
+Objects are `<prefix>/<archive id>.vltbak`. A failed upload leaves the
+archive on this host. The bucket's own lifecycle decides how long archives
+stay there: Varlatch deletes nothing at a destination. Add a rule that
+expires incomplete multipart uploads, and never one that could remove the
+newest archive. A bucket on the same disk is no second place.
+
+`sudo varlatchd admin backup run --json --verify-remote` makes a backup,
+then downloads its uploaded copy and checks that it is that archive, whole,
+and opens with the Root KEK. It needs a key that may read: run it at least
+every 30 days with one. A key that only uploads cannot check the copy, so
+until a first check was made there is no warning about it, and `varlatch
+doctor` says that none was made.
+
+A bucket behind a private certificate authority needs that authority among
+the [certificates the server trusts](../reference/outbound-policy.md#a-private-certificate-authority).
 
 ### Scoping destination credentials per provider
 
-The scheduled job needs only to **write** under its prefix: `PutObject`, the
+A backup needs only to **write** under its prefix: `PutObject`, the
 multipart calls (`CreateMultipartUpload`, `UploadPart`,
-`CompleteMultipartUpload`), and `AbortMultipartUpload` on failure. Remote
-verification needs only `GetObject`. Give each job its own key, as narrow as
-the provider allows, so a compromised host cannot read, list, or delete
-existing archives.
+`CompleteMultipartUpload`), and `AbortMultipartUpload` on failure. Give the
+server a key of its own, as narrow as the provider allows, so a compromised
+host cannot list or delete existing archives.
+
+A destination has one key, and the server uses it for everything. So choose:
+
+- **A key that may write only.** A compromised host cannot read archives,
+  but the server cannot download one either: `test-bucket` then reports
+  that retention and recoverability could not be checked, and the status
+  keeps the warning that no remote copy was verified within 30 days. Check
+  archives from another machine instead, with a read key and a
+  [restore rehearsal](#rehearse-a-restore).
+- **A key that may also read** (`GetObject`, `GetObjectVersion` and
+  `GetObjectRetention`) under the prefix. `test-bucket` and the remote check then work. Archives are
+  encrypted with the backup key, so a stolen copy opens only with that key.
 
 A write-only key can still **overwrite** an object if it knows the key name.
 Random UUID names only help against a key stolen *off* the host: the host
-itself knows recent names (the local `backups/` directory and the status
-file). On providers where overwritten versions expire through lifecycle rules
+itself knows recent names (the local `backups/` directory). On providers where overwritten versions expire through lifecycle rules
 (B2 counts a superseded version as hidden), overwriting is effectively
 deletion. The real protection against a hostile host is provider-side
 immutability: versioning plus Object Lock, or the provider's equivalent.
@@ -304,8 +243,8 @@ three multipart calls with `s3:PutObject`; abort needs `s3:AbortMultipartUpload`
 }
 ```
 
-The read key's policy has `"Action": "s3:GetObject"` on the same resource.
-Against overwrites, enable versioning (a write-only key cannot delete old
+For a key that may also read, add `"s3:GetObject"`,
+`"s3:GetObjectVersion"` and `"s3:GetObjectRetention"`. Against overwrites, enable versioning (a write-only key cannot delete old
 versions) or Object Lock in compliance mode. Omit `endpoint` in the
 destinations file for AWS.
 
@@ -314,10 +253,9 @@ destinations file for AWS.
 overwrite, and delete. (Prefix-scoped temporary credentials exist but expire,
 so an unattended job would have to store the parent token.) Protect the prefix
 with an
-[R2 bucket lock](https://developers.cloudflare.com/r2/buckets/bucket-locks/)
-(`npx wrangler r2 bucket lock add <bucket>`); with this key, the lock is the
-only thing stopping a compromised host from deleting archives. The read key is
-*Object Read*, which also allows listing.
+[R2 bucket lock](https://developers.cloudflare.com/r2/buckets/bucket-locks/);
+with this key, the lock is the only thing stopping a compromised host from
+deleting archives.
 
 **MinIO:** put-only and prefix-scoped, with the AWS policy above:
 
@@ -327,8 +265,7 @@ mc admin user add ALIAS varlatch-backup-writer 'LONG-RANDOM-SECRET'
 mc admin policy attach ALIAS varlatch-backup-put --user varlatch-backup-writer
 ```
 
-Create the read user the same way with a `s3:GetObject`-only policy. Versioning plus object locking makes
-archives immutable. Avoid the built-in `writeonly` policy: it covers all
+Versioning plus object locking makes archives immutable. Avoid the built-in `writeonly` policy: it covers all
 buckets.
 
 **Scaleway Object Storage:** create an IAM application with the
@@ -342,202 +279,242 @@ prefix with a bucket policy allowing only `s3:PutObject` on
   console access) must be listed in it, and pushing a policy replaces the old
   one.
 
-The read side is `ObjectStorageObjectsRead` plus a bucket policy allowing only
+For a key that may also read, add `ObjectStorageObjectsRead` and
 `s3:GetObject`. Object lock in compliance mode (it requires versioning)
 prevents overwrites.
 
 ## Restore on a fresh host or retry an interrupted restore
 
-1. Install Docker and the pinned compatible release set. Include
-   `docker-compose.yml`, `convex-supervisor.cjs`, `postgres-init`, and the
-   release manifest. Configure domains/ingress, fresh DB passwords, a fresh
-   Convex instance secret, and the matching Root KEK mount. A fresh host may
-   use fresh TLS and host tailnet enrollment. Do not bootstrap a new
-   Installation before restoring.
+A restored installation is the one the archive holds: the same people,
+passkeys, credentials and audit log, **as they were then**. A credential
+you revoked since works again, a person you removed is back, and a value
+you rotated is the old one. So restore it closed, put those things right,
+and only then open it.
 
-   File permissions matter twice over (rehearsal-tested failure modes):
-   restrict **only key material** to mode 0600, and only the copies the host
-   CLI reads (the BEK, a Root KEK copy). The key files containers read, the
-   mounted Root KEK and the database passwords, need mode 0644 inside a
-   mode-0700 directory: the containers run as other users. `postgres-init/`,
-   `convex-supervisor.cjs`, and any source tree used for image builds must be
-   world-readable (`chmod -R a+rX`), because containers run as non-root users
-   and `docker build` **bakes host permissions into images** (symptom:
-   `ERR_INVALID_PACKAGE_CONFIG: permission denied` from every container). A
-   blanket `umask 077` while preparing the directory causes all three.
-2. **Set `VARLATCH_PUBLIC_URL` to the original installation's public URL**
-   (its exact issuer string), even though the recovery host does not serve
-   that domain. The restored Application Plane keeps the original
-   `VARLATCH_ISSUER`/`VARLATCH_JWKS_URL` values and rejects mirror
-   reconciliation JWTs otherwise (symptom: restore fails at reconciliation
-   with `Convex mutation mirror:upsert failed: HTTP 401`). If the stored
-   `VARLATCH_JWKS_URL` names a compose-internal host, it must resolve in the
-   recovery topology. Archives from the Coolify/Tailscale variant name
-   `http://tailscale:8686/...`: the canonical Compose file gives varlatchd
-   the legacy alias `tailscale` for exactly this, so no extra
-   file is needed any more (older releases needed a `jwks-alias.yml` override
-   adding that alias).
+Every restore leaves the installation **held**. `varlatchd` serves it, but
+its background work does not run: no sync, webhook, audit export or
+organization deletion, and no local archive is removed, until you run `sudo
+varlatch admin restore resume`. While it is held, `varlatch upgrade` is
+refused. Scheduled backups go on, and go to your bucket.
 
-   Resetting both Convex env vars during restore would need a running
-   Application Plane, which the gate correctly prevents; the alias carries
-   reconciliation, and restore resets them afterwards (below).
-3. Obtain the archive, BEK, and candidate Root KEK through their separate
-   custody channels. Run standalone `verify` against the intended release.
-4. Run:
+Held is not closed: **anyone with a session, token or credential in the
+archive can still read and write**, and what they ask for is done. You keep
+them away yourself: [Keep clients away](#keep-clients-away).
+
+In short:
+
+1. The old installation is off, everywhere.
+2. The saved configuration is in place, every way in closed.
+3. Restore.
+4. The files have their owner back.
+5. You put right what changed since the archive, deletions first.
+6. No upgrade is pending; resume; open the ways in again.
+
+Step by step:
+
+1. **Make sure the old installation no longer serves**, anywhere. Two copies
+   of one installation must never run at the same time. With public HTTPS,
+   point the name at the new host now: the certificate authority checks it
+   there.
+
+2. **Put the configuration in place first**, closed. Copy your saved
+   `varlatchd.conf` and the files it names to the same paths, then make the
+   changes under [Keep clients away](#keep-clients-away) in it:
 
    ```sh
-   varlatch admin backup restore --dir /srv/varlatch \
-     --in /recovery/ARCHIVE-ID.vltbak \
-     --bek-file /secure/operator/backup-key \
-     --kek-file /secure/operator/root-kek-copy \
-     --target-release /srv/varlatch/varlatch-release.json
+   sudo install -d -m 750 /etc/varlatch
+   sudo install -m 644 varlatchd.conf /etc/varlatch/varlatchd.conf
+   sudoedit /etc/varlatch/varlatchd.conf
    ```
 
-Restore validates all components before replacing data. It creates a durable
-gate on the `varlatch-state` volume **before** starting a fresh daemon, drains
-existing work, stops Convex, and refuses an existing different Installation ID.
-The running target binaries must implement the chosen compatible release.
-The Secret Plane database is recreated under its canonical role with fresh
-deployment passwords; its grants and append-only audit permissions come from
-the dump. The loaded KEK is then checked against the restored canary and the
-restore event is recorded; only then does isolation clear.
+   Setup keeps a `varlatchd.conf` it finds. Without one it writes a new one
+   from its questions, which is open.
 
-The Application Plane is **rebuilt, not restored**: its database
-and storage are reset to empty. That holds for format-1 archives too, whose Convex
-components `verify` still checks but restore ignores. Once isolation has
-cleared, restore starts the rest of the installation (the dashboard, and the
-ingress proxy where one is configured) without touching the services already
-running. It then runs the `convex-deploy` job, which deploys
-this release's functions and sets `VARLATCH_ISSUER`/`VARLATCH_JWKS_URL` to
-this host's configuration, then publishes every Mirror from the restored
-Secret Plane. Until then the dashboard works from `/v1` without live updates.
-If the deploy job fails, the data is restored but the dashboard has no live
-updates: run `docker compose run --rm convex-deploy`, then `varlatch doctor`.
-If a service did not start, restore says so: run `docker compose up -d`, then
-`varlatch doctor`.
+3. **Restore.** Keep the archive and the two keys in files only root can
+   read:
 
-After a restore, run `varlatch doctor`, then create and verify a fresh archive.
-The backup history lives on the `varlatch-state` volume, so after a restore
-onto a fresh host doctor reports no recent archive until you do.
+   ```sh
+   V=0.50.0  # the release that made the archive, or a newer one
+   curl -fsSL -o install.sh https://github.com/varlatch/varlatch/releases/download/v$V/install.sh
+   sudo sh install.sh --server -- --restore /root/backup.vltbak \
+     --root-kek-file /root/root-kek --backup-key-file /root/backup-key
+   ```
 
-A failed restore is incomplete. Ordinary requests and both planes'
-workers stay blocked across process/host restart. Re-run the same restore with
-the original valid archive; do not delete `maintenance.json` to make readiness
-green. Capture lease expiry has no effect on this durable gate. The supported
-abort procedure is to abandon the disposable recovery installation and remove
-its volumes, then provision a fresh target; there is deliberately no command
-that exposes partially restored data. Keep the `varlatch-state` volume alongside
-the installation through restarts and restore retries.
+   Or, when the binaries are already there, `sudo varlatch setup --restore`
+   with the same flags. It installs your keys, restores the archive, checks
+   that the Root KEK opens it, starts `varlatchd`, makes a backup and runs
+   `varlatch doctor`, which says that the installation is held.
 
-The restored host adopts the archived Installation ID, identities, credentials,
-contracts, audit, and key hierarchy. JWT signing keys stored in the Secret Plane
-are restored with it; fresh deployment credentials do not invalidate those.
-Installations that still set `CONVEX_ADMIN_KEY` must regenerate it for the
-fresh instance secret and update operator tooling using the old admin key;
-without one, the deploy job derives its key from the instance secret. No Root KEK is automatically rotated. Restoring old authorization
-state also restores the revocations/state as of that checkpoint: reconcile any
-post-backup security changes before returning the recovered installation to
-normal external access.
+   When it asks how people reach Varlatch, answer **my own reverse proxy**,
+   whatever you use: `varlatchd.conf` decides that, not the answer. Only for
+   an address such as `http://localhost:8686`, answer **this machine only**.
+   The address must be the one the
+   installation had: its passkeys belong to it. To change it, restore first,
+   then [move it](move-installation.md). Setup refuses a host that holds
+   other keys. If it stops, run it again.
 
-## Upgrade gate
+4. **Give the files their owner back:**
+
+   ```sh
+   sudo chown root:varlatch /etc/varlatch/varlatchd.conf
+   sudo chmod 640 /etc/varlatch/varlatchd.conf
+   ```
+
+   Do the same for the destinations file and the bucket's key file. When
+   setup stopped at the first backup because the service could not read
+   one of them, run setup again.
+
+5. **Put right what changed since the archive was made.** Sign in
+   ([how](#sign-in-while-it-is-closed)). First, an admin of the organization
+   cancels any deletion of it that should not happen: while one is open, it
+   blocks the changes below. Then revoke the credentials and remove the
+   people again, withdraw the invitations, rotate the values, request the
+   deletions that should happen, and set freezes and controls as they were.
+   An audit export or your own notes say what those were.
+
+6. **Resume, then open it.** On a host that had an upgrade under way, look
+   first whether it is still recorded as pending:
+
+   ```sh
+   sudo grep '"state"' /etc/varlatch/upgrade.json
+   ```
+
+   If it says `in-progress` or `failed`, move that record away **before** you
+   resume, or the next `varlatch upgrade` would undo that upgrade over the
+   restored database. Keep the files in `/var/lib/varlatch/upgrades`:
+
+   ```sh
+   sudo mv /etc/varlatch/upgrade.json /root/
+   ```
+
+   Then:
+
+   ```sh
+   sudo varlatch admin restore resume
+   sudoedit /etc/varlatch/varlatchd.conf   # take the closing changes out
+   sudo systemctl restart varlatchd
+   sudo varlatch doctor
+   ```
+
+   Point the name at the new host if it is not there yet, and open your
+   proxy again.
+
+At the resume, what came due meanwhile is done: organization deletions that
+are due run, an audit export being drained past its deadline is given up,
+and webhooks and Sync Targets go on from where the archive had them, so a
+receiver may see an event twice.
+
+`sudo varlatch admin restore status` says whether the installation is held,
+and since when. `resume` is recorded in the audit log. It works with
+`varlatchd` stopped too.
+
+### Keep clients away
+
+Close every way in before you restore, and open it again after `resume`:
+
+| Way in | To close it | After `resume` |
+|---|---|---|
+| every host | `listen = 127.0.0.1:8686` in `varlatchd.conf`, whatever else it uses | put your own line back |
+| public HTTPS | `listen_https = 127.0.0.1:443` and `listen_http_redirect = :80` in `varlatchd.conf` | put your own two lines back |
+| your own proxy | let the proxy listen on `127.0.0.1` only, or accept only your own address | undo it in the proxy |
+| the tailnet | put a `#` in front of every `tailnet` line in `varlatchd.conf`, all of them | remove the `#`s ([the node](#the-tailnet-node)) |
+| the container image | run it by hand on a network of its own: [Restore in the container image](../../infra/coolify/README.md#restore-in-the-container-image) | remove that container and network, and deploy |
+
+Port 80 stays open with public HTTPS: it answers the certificate authority
+and redirects, and serves nothing else. `listen = 127.0.0.1:8686` closes the
+plain listener to the network: a proxy on another machine cannot reach it
+until you put your own line back.
+
+#### Sign in while it is closed
+
+- **In a browser,** through SSH. Forward port 443 from your computer, and
+  add `127.0.0.1 vault.example.com` to your computer's hosts file until you
+  are done. Then open the installation's address:
+
+  ```sh
+  sudo ssh -L 443:127.0.0.1:443 you@the-host
+  ```
+
+  Other administrators do the same, or reach it through a proxy that
+  accepts only their addresses. Passkeys, and the approvals that
+  [security controls](../reference/security-controls.md) ask for, work at
+  the installation's own address only, so this is the way for them.
+
+- **With the CLI,** on the host, as an Installation Admin. This makes a
+  credential, which does not expire, and signs in with it without showing
+  it:
+
+  ```sh
+  sudo varlatchd admin bootstrap-status      # the administrators' ids
+  sudo varlatchd admin recover --identity <identity id> --cli-credential |
+    grep -o 'vlt_[A-Za-z0-9_-]*' |
+    varlatch login --server http://127.0.0.1:8686 --token-stdin
+  ```
+
+  Revoke that credential when you are done: in the dashboard, under your
+  account, then Sessions. `varlatch logout` alone does not.
+
+#### The tailnet node
+
+The node's state is not in the archive. On a fresh host it joins again when
+you take the `#`s away, so it needs a new auth key in
+`tailnet_auth_key_file`. Delete the old node in your tailnet first: while
+it is there, the new one gets another name, and the listener stays closed.
+On the same host the node keeps its state and needs neither.
+
+With public HTTPS, the certificate is not in the archive either: a new host
+obtains its own, through port 80.
+
+### Put an archive back on the same host
+
+Every change since the archive is lost, revocations included. First
+[close every way in](#keep-clients-away), and copy the archive out of
+`backups/`, so that nothing removes it.
 
 ```sh
-varlatch upgrade VERSION --dir /srv/varlatch \
-  --bek-file /secure/operator/backup-key \
-  --kek-file /secure/operator/root-kek-copy --yes
+sudo systemctl stop varlatchd
+sudo cp /var/lib/varlatch/backups/ARCHIVE-ID.vltbak /root/
+sudo varlatch admin backup restore --in /root/ARCHIVE-ID.vltbak
+sudo chown varlatch:varlatch /var/lib/varlatch/varlatch.db
+sudo systemctl start varlatchd
 ```
 
-The upgrade creates an encrypted archive and verifies it against the target
-release before changing deployment files. The former `--skip-db-backup` and
-`--kek-backup-verified` assertions no longer satisfy the gate. Each release's
-`packages/backup/src/release.json` declares its migration/PostgreSQL versions
-and explicitly allowed restore sources; release tooling uses that same
-manifest. Unsupported paths fail rather than infer compatibility.
+Then do steps 5 and 6 above, the check for a pending upgrade included, and
+make a fresh backup.
 
-### Passkeys that shared a credential (migration 39)
+It uses the keys in `/etc/varlatch`; `--backup-key-file` names another
+backup key. The restore runs as root, so the `chown` gives the restored
+database back to the service: without it, `varlatchd` cannot open it. It
+prints the archive's settings, to compare with `varlatchd.conf`.
 
-Migration 39 makes every passkey's credential id unique. Before it, the
-server could store two passkeys with the same credential id, and signing
-in with one of them could pick either. If your installation has such
-passkeys, the migration keeps the oldest of each credential id and moves
-the others to the `passkey_quarantine` table, with all their fields, when
-they moved and which passkey was kept (`kept_passkey_id`). Nothing is
-deleted, and installations without such passkeys are not affected.
+It refuses while `varlatchd` runs, a wrong key, an archive it cannot read,
+and an archive of another installation, and then changes nothing. A restore
+that fails or is killed later, while it replaces the database, leaves the
+installation closed: it answers `503` until you run the same restore again
+with the same archive.
 
-A quarantined passkey can no longer sign in. The migration job prints
-each one with its person's name and identity id, and whether the passkey
-that was kept is the same person's or another person's (with Compose:
-`docker compose logs varlatch-migrate`):
+### Rehearse a restore
 
-- **The same person's:** they sign in with their other passkeys. If the
-  quarantined one was the only one their authenticator holds, they need a
-  new one.
-- **Another person's:** the person whose passkey was quarantined lost it.
-  If both passkeys have the same public key, that authenticator now signs
-  in as the other person.
+A backup you never restored is a hope. Restore an archive onto a disposable
+machine, isolated from the network the real installation reaches, and look
+at what you find. Delete that machine and its copies of the keys
+afterwards.
 
-To give someone a new trusted passkey, send them a one-time link:
+## Archives of 0.23.0 and earlier
 
-```sh
-varlatch admin reenroll --identity <identity-id>
-# or inside the container:
-docker compose exec varlatchd node dist/cli.js admin reenroll --identity <identity-id>
-```
+Varlatch 0.50 does not restore an archive made by 0.23.0 or earlier. Keep
+the old release, its archives and their keys together for as long as you
+may need them. [Old archives: the converter](migrate-to-0.50.md#old-archives-the-converter)
+turns one into an archive 0.50 restores.
 
-An Installation Admin who is disabled or has no way in at all uses
-`admin recover` instead (see the [break-glass
-section](../../infra/compose/README.md#break-glass-recovery)). To list the
-quarantined passkeys again later, query the table:
+The commands of those releases (`backup create`, `verify` and `restore`
+with `--dir`) are in
+[their version of this page](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/operations/backup.md):
 
-```sql
-SELECT q.id, l.identity_id, q.kept_passkey_id, q.quarantined_at
-FROM passkey_quarantine q LEFT JOIN auth_user_links l ON l.better_auth_user_id = q."userId";
-```
-
-### First upgrade from the published v0.7.0 release
-
-Use the **0.8.0 or newer CLI** for this upgrade. The published v0.7.0 daemon has no
-capture lease/control socket. Its release manifest identifies the one supported
-offline bridge: version 0.7.0, migration 16, PostgreSQL 17, canonical local
-Convex storage. Source-built 0.7.0 installations at migration 18 use ordinary
-capture instead. Unknown combinations are refused.
-
-The bridge stops every Compose application service while leaving PostgreSQL
-running, dumps both databases, and copies Convex storage from the stopped
-container. It verifies an encrypted archive before deploying 0.8.0. Plan downtime
-for capture, encryption, verification, and upgrade: unlike ordinary capture,
-the legacy services **remain stopped**, including if capture fails. Fix and
-retry, or explicitly restart the original release before any migration has run.
-External writers must also be stopped for this offline procedure.
-
-For a manual deployment, create the bridge archive explicitly:
-
-```sh
-varlatch admin backup create --dir /srv/varlatch \
-  --legacy-release /srv/varlatch/varlatch-release.json \
-  --bek-file /secure/operator/backup-key \
-  --kek-file /secure/operator/root-kek-copy
-```
-
-Verify it against the target release before proceeding. The bridge creates a
-local archive; configure scheduled S3 uploads after upgrading. Recovery of this
-migration-16 archive is supported on 0.8.0, which applies migrations before
-reconciliation. Never start old binaries against forward-migrated databases.
-
-A failed upgrade retains `varlatch-release.json.pending`, the original release
-files, and `backup.pre-VERSION.json`. Retry re-verifies the original archive;
-it does not replace it with a capture of partially upgraded state.
-
-### Coolify and older emergency dumps
-
-Disable automatic deployments for stateful upgrades. Before a manual Coolify
-deployment, create and verify an archive against its target release using the
-Compose configuration for the actual running installation. Preserve custom
-networking, mounts, and the shared `varlatch-state` volume when applying changes.
-
-The previous automatic `pg_dumpall | gzip` job is removed: it produced
-unencrypted dumps without Convex file storage, and it did not meet the backup design.
-Existing `postgres-backups` volumes are not deleted by this change. They contain
-sensitive plaintext; retain them securely until a checked encrypted replacement
-and a restore rehearsal exist, then remove them deliberately. Do not use volume
-pruning as part of an upgrade.
+- <a id="install-the-operator-cli"></a>[Install the operator CLI](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/operations/backup.md#install-the-operator-cli).
+  From 0.50, `install.sh --server` installs it.
+- <a id="upgrade-gate"></a>[Upgrade gate](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/operations/backup.md#upgrade-gate).
+  From 0.50: [Upgrading](upgrade.md).
+- <a id="first-upgrade-from-the-published-v070-release"></a>[First upgrade from the published v0.7.0 release](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/operations/backup.md#first-upgrade-from-the-published-v070-release)
+- <a id="coolify-and-older-emergency-dumps"></a>[Coolify and older emergency dumps](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/operations/backup.md#coolify-and-older-emergency-dumps)
+- <a id="passkeys-that-shared-a-credential-migration-39"></a>[Passkeys that shared a credential (migration 39)](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/operations/backup.md#passkeys-that-shared-a-credential-migration-39)

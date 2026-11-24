@@ -157,9 +157,9 @@ and without anyone's passkey, for example when every admin lost their
 trusted passkeys, or when a deploy must go out now:
 
 ```sh
-varlatch admin unfreeze --org acme --confirm acme
-# or inside the container:
-docker compose exec varlatchd node dist/cli.js admin unfreeze --org acme --confirm acme
+sudo varlatch admin unfreeze --org acme --confirm acme
+# or inside the container image:
+varlatchd admin unfreeze --org acme --confirm acme
 ```
 
 It closes the open approvals for a lift and records `organization.unfrozen`

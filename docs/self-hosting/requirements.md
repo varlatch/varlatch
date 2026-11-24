@@ -1,89 +1,51 @@
 # Host requirements
 
-This page lists what a host needs to run a Varlatch installation with the
-canonical Docker Compose deployment, the one `varlatch setup` installs from
-a release bundle. [Getting started](../run-an-installation.md)
-walks you through the installation itself, and
-[Configuration](configuration.md) lists every setting.
+> **Prerelease.** This page is for Varlatch 0.50, which is not released yet.
+> The current release, 0.23.0, runs on Docker Compose:
+> [its version of this page](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/self-hosting/requirements.md).
+
+This page lists what a host needs to run a Varlatch installation.
+[Run an installation](../run-an-installation.md) walks you through the
+installation itself, and [Configuration](configuration.md) lists every
+setting.
 
 | | Minimum |
 |---|---|
 | Operating system | Linux, on amd64 or arm64 |
-| Containers | Docker with the Docker Compose plugin (`docker compose`), Compose 2.24 or newer |
-| On the host | Node.js 22, 24 or 26 with its current security fixes, for the operator CLI |
-| Memory | 2 GiB |
-| Processor | 2 CPU cores |
-| Disk | 20 GB free for Docker's data and the installation's directory |
+| Service manager | systemd, or a container runtime for the image |
+| Memory | 1 GiB |
+| Processor | 1 CPU core; 2 recommended |
+| Disk | 5 GB free, on a local disk |
 | Network | depends on how people reach Varlatch: [Network](#network) |
 
 The memory, processor, and disk figures are recommendations with headroom.
-[Sizing](#sizing) shows what an installation actually used, and how it was
-measured.
+[Sizing](#sizing) shows what was measured.
 
 ## Operating system and architecture
 
-Run Varlatch on Linux, on amd64 or arm64. From 0.10.0 on, the release
-images are published for linux/amd64 and linux/arm64, and the Convex backend
-image the release pins exists for those two platforms only. No other
-architecture can run an installation.
-
-Run the images for the host's own architecture, not under emulation. When
-the release checks run the arm64 images on an amd64 machine, they still run
-PostgreSQL and the Convex backend natively, because Convex's function time
-limits do not hold under emulation on a small host.
+Run Varlatch on Linux, on amd64 or arm64. `varlatchd` and `varlatch` are
+single programs with no dependencies: no Docker, no database server, no
+Node.js. The container image is published for the same two architectures.
 
 ## Software
 
-- **Docker with the Docker Compose plugin, Compose 2.24 or newer.** Every
-  host command (`varlatch setup`, `doctor`, `upgrade`, and `admin backup`)
-  drives `docker compose`. The Tailscale overlay needs 2.24, because it uses
-  `!reset` to drop varlatchd's own port mapping, and the same minimum holds
-  for every ingress. `varlatch setup` stops before it changes anything when
-  Compose is older, and `varlatch doctor` reports the version. Releases are
-  tested with Docker 29 and Compose 5.
-- **Node.js 22, 24 or 26, with its current security fixes.** The operator
-  CLI is a single file that needs only Node.js:
-  [Get the CLI](../reference/install-the-cli.md). On a Node.js release
-  without those fixes it prints a warning:
-  [Node.js version](../reference/install-the-cli.md#nodejs-version).
-- **systemd,** only if you use the reference backup timer in
-  [`infra/host-backup`](../../infra/host-backup/README.md).
-
-You do not install PostgreSQL, Convex, Caddy, or Tailscale yourself: each
-runs in a container the Compose files define.
-
-Apart from the Compose version, `varlatch setup` does not check free
-ports, memory, or disk before it starts. When something is missing, the Docker or Compose command
-it runs fails, and setup stops with that error. Fix the cause and run
-setup again: it continues where it stopped.
+- **systemd,** for an installation from `install.sh --server`. The unit uses
+  credentials (`LoadCredential`), as in the systemd of every current
+  distribution.
+- **`curl`, and `sha256sum`,** which `install.sh` uses.
+- **Docker, or another container runtime,** only for the container image.
 
 ## Access on the host
 
-Run `varlatch setup` and the other host commands as a user who can use
-Docker. Access to Docker is root-equivalent on the host, and anyone who can
-open a shell in the installation's containers is an Infrastructure Operator
-for it: the compose guide's
-[break-glass section](../../infra/compose/README.md#break-glass-recovery)
-says what that means.
+`varlatch setup` and the other host commands run as root. Anyone who is root
+on the host is an Infrastructure Operator of the installation:
+[Break-glass recovery](../self-hosting.md#break-glass-recovery) says what
+that means.
 
-File permissions matter, because the containers run as users other than
-yours:
-
-- Unpack the release bundle with the usual umask (022). The containers must
-  read `postgres-init/` and `convex-supervisor.cjs`. A blanket `umask 077`
-  while you prepare the directory makes every container fail, as
-  [the backup runbook](../operations/backup.md#restore-on-a-fresh-host-or-retry-an-interrupted-restore)
-  describes.
-- Secret files must be readable by the containers' users. Setup writes the
-  ones containers read with mode 0644, inside a `secrets/` directory with
-  mode 0700. varlatchd runs as a user of its own and cannot read a 0600
-  file that you own.
-  [Keys and passwords](configuration.md#keys-and-passwords) has the
-  details.
-- On a host where other people have a shell, mount `/proc` with
-  `hidepid=2`. The Convex backend image passes its instance secret to the
-  backend process as a command-line argument, which every user on the host
-  can otherwise read in `/proc/<pid>/cmdline`.
+The service itself runs as the `varlatch` user, with no privilege but
+binding ports 80 and 443. It can write only to its data directory. Files you
+make for it, such as a bucket's key file, need `root:varlatch` and mode
+0640. Setup makes every other file itself.
 
 If the credentials that deploy or roll back this installation come from
 Varlatch itself, keep a break-glass credential outside it before anyone
@@ -102,8 +64,9 @@ Choose how people reach Varlatch before you run setup:
 | Ingress | Address | Inbound to the host | You also need |
 |---|---|---|---|
 | **public** | `https://vault.example.com` | TCP 80 and 443 from the internet | a DNS name that resolves to this host in public DNS |
-| **tailnet** | `https://<machine>.<tailnet>.ts.net` | none | a Tailscale auth key, MagicDNS and HTTPS certificates enabled in the Tailscale admin console, and Compose 2.24 or newer |
-| **external** | whatever your reverse proxy serves | whatever your proxy needs | a proxy that forwards to `127.0.0.1:8787`, WebSocket upgrades for `/convex/` included |
+| **proxy** | whatever your reverse proxy serves | whatever your proxy needs | a proxy that forwards to `127.0.0.1:8686` |
+| **localhost** | `http://localhost:8686` | none | nothing |
+| **tailnet** | whatever your own proxy serves | whatever your proxy needs | a Tailscale auth key ([Tailscale](configuration.md#tailscale)) |
 
 Whichever you choose, the address must be:
 
@@ -111,144 +74,71 @@ Whichever you choose, the address must be:
   Varlatch cannot be served under a path such as
   `https://example.com/vault`.
 - **HTTPS.** Browsers only allow passkeys on HTTPS. `http://localhost` works
-  for local testing only.
+  on the machine itself only.
 - **Final.** Passkeys are registered for this address. Changing it later
-  means everyone registers their passkey again, so setup refuses a different
-  address on a rerun.
+  means everyone registers their passkey again.
 
-For the public ingress, the address must be a DNS name, not an IP address
-or a `ts.net` name, and carry no port. Let's Encrypt validates the
-certificate over ports 80 and 443. A private domain validated over DNS is
-not built in: use the external ingress with your proxy's own certificate
-automation.
-
-For the tailnet ingress, the certificate covers only the machine's full name
-and is published in Certificate Transparency logs, so keep the machine name
-non-sensitive. The Tailscale sidecar runs in userspace mode: the host needs
-no TUN device.
+For the public ingress, the address must be a DNS name, not an IP address.
+Let's Encrypt validates the certificate over ports 80 and 443. A private
+domain validated over DNS is not built in: use the proxy ingress with your
+proxy's own certificate automation.
 
 ### Host ports
 
-| Host port | Service | When |
-|---|---|---|
-| `127.0.0.1:8787` | `varlatch-web`: the dashboard, which also serves `/v1` and `/convex` | always; `varlatch setup --port` changes it |
-| 80/tcp, 443/tcp, and 443/udp on all interfaces | `caddy` | public ingress |
-| a free loopback port Docker picks | `varlatchd` and `convex-backend` | installations set up by `varlatch setup` |
-| `127.0.0.1:8686` and `127.0.0.1:3210` | `varlatchd` and `convex-backend` | installations configured by hand, with the defaults |
+| Port | When |
+|---|---|
+| `127.0.0.1:8686` | always ([`listen`](configuration.md#listen)) |
+| 80/tcp and 443/tcp on all interfaces | public ingress |
+| the tailnet listener's port, 8687 by default, on the node's tailnet addresses only | with [`tailnet`](configuration.md#tailnet) |
+| the tailnet browser endpoint's port, on the same addresses | with [`tailnet_https_port`](configuration.md#tailnet_https_port) |
 
-Each fixed port must be free on the host, or the stack does not start.
-PostgreSQL publishes no port at all. varlatchd's tailnet listener (port
-8687) is reachable only over Tailscale, never through a host port, and so is
-its optional tailnet browser endpoint (HTTPS on port 8688 of the node,
-`varlatch setup --tailnet-endpoint`): devices need a tailnet access rule for
-that port.
-
-Do not route a public domain at varlatchd's or Convex's port: passkey
-sign-in works only at the public URL, which the dashboard serves.
-[Host ports](configuration.md#host-ports) lists the settings.
+Each port must be free on the host, or the service does not start.
 
 ### Outbound connections
 
 The host connects out to:
 
-- **ghcr.io and Docker Hub,** to pull images when you install and upgrade.
-  Varlatch's images and the Convex backend come from ghcr.io; PostgreSQL,
-  Caddy, and Tailscale come from Docker Hub.
-- **GitHub,** when `varlatch upgrade` or `varlatch self-update` reads a
-  release, and when `varlatch upgrade --check` looks for a newer one (the
-  reference backup timer runs it after each backup). `varlatch upgrade
-  --release-dir <dir>` reads a release from a local directory instead.
-  varlatchd and the dashboard never contact GitHub to look for releases:
-  the dashboard shows what the host's check recorded.
+- **GitHub,** when you install, and when `varlatch upgrade` or `varlatch
+  self-update` reads a release; and, with
+  [`serve_cli`](configuration.md#serve_cli), when `varlatchd` downloads the
+  CLI. Nothing looks for new releases by itself.
+- **Sigstore's public servers** (`tuf-repo-cdn.sigstore.dev`), for the keys
+  a release's signature is checked with.
 - **Let's Encrypt,** with the public ingress, to obtain and renew the
   certificate.
-- **Tailscale,** with the tailnet ingress or the Tailscale overlay, so the
-  node can join your tailnet. If you run `varlatchd`'s built-in tailnet node
-  against a self-hosted control server instead, see
-  [Self-hosted tailnet control server (Headscale)](self-hosted-tailnet-control.md).
-- **Your backup destination,** when you configure an S3-compatible one.
+- **Tailscale,** or your own control server, with
+  [`tailnet`](configuration.md#tailscale).
+- **Your backup destination,** when you configure one.
 - **The platforms of Sync Targets** (GitHub Actions, Coolify, Convex), when
-  someone configures one. `VARLATCH_SYNC=off` turns delivery off:
-  [Sync Targets](configuration.md#sync-targets).
+  someone configures one. [`sync = off`](configuration.md#sync) turns
+  delivery off.
 - **What Organizations configure:** audit webhook receivers, Coolify and
-  Convex instances, GitHub, and OIDC issuers. varlatchd sends these
+  Convex instances, GitHub, and OIDC issuers. `varlatchd` sends these
   requests to public addresses over https only, unless you allow a private
-  destination with
-  [`VARLATCH_OUTBOUND_ALLOW`](configuration.md#varlatch_outbound_allow).
-  Loopback, link-local and cloud metadata addresses stay closed unless you
-  name them. [Outbound policy](../reference/outbound-policy.md) has the
-  details.
-
-The Compose file turns off the Convex backend's usage beacon.
+  destination with [`outbound_allow`](configuration.md#outbound_allow).
+  [Outbound policy](../reference/outbound-policy.md) has the details.
 
 ## Sizing
 
 ### How these figures were measured
 
-Memory and processor use were read from the containers' control groups on
-2026-10-06, on a development installation that had been running for six
-days: 2 organizations, 3 projects, 4 environments, and 18 identities. For
-the five minutes around the readings, the dashboard received no requests
-except its own health checks. The host was an Intel Core i9-9900T
-(linux/amd64) with Docker 29.7.2. Only the four long-running services were
-running: the Caddy and Tailscale containers of the ingress overlays are not
-included.
+Memory, disk and file sizes were read on 2026-11-24 from new installations
+of 0.50.0-rc.1 and rc.2 on linux/amd64, with one administrator and no
+Organizations, shortly after they started. Plan for more: the
+recommendations above leave headroom. Measurements of larger installations
+will follow.
 
 ### Memory
 
-| Service | In use, without page cache | Total, with page cache | Peak, with page cache |
-|---|---|---|---|
-| `postgres` | 188 MiB (52 MiB plus 136 MiB of shared buffers) | 445 MiB | 3,860 MiB |
-| `varlatchd` | 60 MiB | 115 MiB | 166 MiB |
-| `convex-backend` | 72 MiB | 92 MiB | 181 MiB |
-| `varlatch-web` | 2 MiB | 6 MiB | 25 MiB |
-| **All four** | **322 MiB** | **658 MiB** | |
-
-PostgreSQL's peak is almost all page cache: this installation had grown a
-3.3 GiB Application Plane database under a release before 0.14.3
-([Disk](#disk) explains why). The kernel reclaims page cache when other
-processes need the memory.
-
-A reading from a production installation on 2026-10-05, less than two
-hours after its Convex backend restarted, was similar: 72 MiB for the
-Convex backend, and 24 MiB plus 140 MiB of shared buffers for PostgreSQL,
-without page cache.
-
-The one-shot jobs were measured on a fresh development installation on
-2026-10-06, sampling each container's memory ten times a second:
-
-| Job | Peak |
-|---|---|
-| `convex-deploy`, deploying the Application Plane functions (every setup and upgrade) | 173 MiB |
-| `varlatch admin backup create`: the host CLI | 125 MiB |
-| the same backup: `varlatchd`, and the PostgreSQL dump | 83 MiB and 79 MiB, no more than they use idle |
-
-That backup took 1.9 seconds for a small Secret Plane database; a large
-audit history takes longer and more memory, as below.
-
-**Recommended: at least 2 GiB.** That leaves room above the measured 658
-MiB for the operating system, Docker, page cache, the ingress container,
-and the one-shot jobs above, which run one at a time.
-
-<!-- TODO(owner): before launch, run setup, a backup, and an upgrade on a
-2 GiB host with each ingress, measuring Caddy and the Tailscale sidecar,
-and confirm the recommendation. -->
-
-For a large audit history, the
-[capture measurements](../operations/backup.md#what-a-capture-costs-measured)
-in the backup runbook ran PostgreSQL with 2 CPUs and 4 GB and varlatchd
-with 1 CPU and 1 GB, up to ten million audit events, with no failed
-requests.
+An idle `varlatchd` used 50 to 65 MiB. **Recommended: at least 1 GiB** for
+the host, which leaves room for the operating system and for work in
+parallel.
 
 ### Processor
 
-Over two idle minutes, the four services together used about a tenth of
-one core: `convex-backend` 0.044, `postgres` 0.031, `varlatchd` 0.028, and
-`varlatch-web` 0.004 of a core.
-
-**Recommended: 2 cores.** The idle load is small, but a backup capture runs
-the database dump while the installation keeps serving, and that costs CPU
-and I/O. The capture measurements gave PostgreSQL 2 CPUs.
+**Recommended: 2 cores.** One is enough for a small team. A backup seals the
+whole database while the installation keeps serving, and that costs CPU and
+I/O.
 
 ### Sharing the host with other workloads
 
@@ -269,27 +159,28 @@ scheduler does its periodic work at the start of every minute.
   waited. Its p95 latency was up to 858 ms in them (132 ms without the
   extra writes), against 22 to 28 ms in the rest of the minute.
 
-To give Varlatch priority, give its services a higher CPU weight than the
-other containers, in `docker-compose.override.yml`
-([Files you do not edit](configuration.md#files-you-do-not-edit) says how
-that file applies):
+To give Varlatch priority, give it a higher CPU weight than the other
+workloads:
 
-```yaml
-services:
-  varlatchd:
-    cpu_shares: 4096
-  postgres:
-    cpu_shares: 4096
-```
+- **Installed with `install.sh`,** in a drop-in for the service. 100 is what
+  a service that sets nothing has:
 
-Then run `varlatch setup` again with the public or tailnet ingress, or
-`docker compose up -d` with the external ingress.
+  ```sh
+  sudo systemctl edit varlatchd     # add the two lines below
+  sudo systemctl restart varlatchd
+  ```
+
+  ```ini
+  [Service]
+  CPUWeight=300
+  ```
+
+- **In a container,** with `cpu_shares`, in the Compose file or in Coolify's
+  setting ([Deploying on Coolify](../../infra/coolify/README.md#sharing-the-host)).
 
 **Measured once (2026-11-19).** The same host and load, with the extra
 writes. The Varlatch server ran in one container that Coolify deployed, so
-its CPU weight came from Coolify's setting
-([Deploying on Coolify](../../infra/coolify/README.md#sharing-the-host)).
-The server's p95 latency at the 50 requests a second:
+its CPU weight came from Coolify's setting. The server's p95 latency at the 50 requests a second:
 
 | CPU weight | Runs | :00 to :09 | :10 to :59 |
 |---|---|---|---|
@@ -304,16 +195,12 @@ The server's p95 latency at the 50 requests a second:
   server's Sync Target runs overlapped the first seconds of every minute;
   in the run at 157 they did not.
 
-- **Raise `postgres` with `varlatchd`.** Every request varlatchd answers
-  reads or writes the database, and a weight on varlatchd alone can leave
-  PostgreSQL waiting instead. Add `convex-backend` and `varlatch-web` too if
-  the dashboard must stay responsive in those seconds.
 - **It changes nothing on an idle host.** The weight counts only while the
   cores are busy. It also favours Varlatch's own heavy work over the other
   containers, a backup capture for instance.
-- **Use 4096, not 1024 or 2048.** On cgroup v2, Docker converts `cpu_shares`
-  to the kernel's CPU weight, where a container that sets nothing gets 100.
-  The conversion depends on the container runtime:
+- **In a container, use 4096, not 1024 or 2048.** On cgroup v2, Docker
+  converts `cpu_shares` to the kernel's CPU weight, where a container that
+  sets nothing gets 100. The conversion depends on the container runtime:
 
   | `cpu_shares` | Weight, older runtimes (linear) | Weight, runc 1.5 |
   |---|---|---|
@@ -324,8 +211,8 @@ The server's p95 latency at the 50 requests a second:
   Only 4096 is above 100 under both. 2048 would lower Varlatch's priority
   on an older runtime. On such a runtime, Coolify's default of 1024 for
   the containers it deploys gives them weight 39.
-- **Check the weight you get.** Read it from the host, which works whatever
-  the image contains (the path is for Docker's systemd cgroup driver, the
+- **Check the weight a container gets.** Read it from the host, which works
+  whatever the image contains (the path is for Docker's systemd cgroup driver, the
   usual one):
 
   ```sh
@@ -334,121 +221,43 @@ The server's p95 latency at the 50 requests a second:
 - **cgroup v2 only.** Current distributions use cgroup v2. On a cgroup v1
   host there is no `cpu.weight`, and `cpu_shares` applies as `cpu.shares`
   (1024 for a container that sets nothing).
-- **A dedicated core** (`cpuset`) keeps varlatchd and PostgreSQL on that
-  core, but other containers still run there unless they are pinned to the
-  other cores. On a 2-core host, a weight is the simpler choice.
-
-The shipped Compose files set no CPU weight. There are two reasons:
-- whether Varlatch should take CPU from the other workloads on a host is
-  the operator's choice;
-- the effect of a given number depends on the runtime, as above.
-
-A Varlatch stack deployed as a Coolify resource runs the Compose file the
-resource points at, so an override file does not apply there: see
-[Deploying on Coolify](../../infra/coolify/README.md#sharing-the-host).
 
 ### Disk
 
-The images of one release, as Docker 29.7.2 reports them for linux/amd64
-with its containerd image store, which keeps both the download and the
-unpacked image. Varlatch's own three images were built from the current
-source:
+Every write waits until the disk has it. A slow disk makes every change
+slow, so put the data directory on a local disk. Network block storage is
+not supported. Setup measures the disk for five seconds: it wants the
+99th-percentile write latency under 10 ms, and stops on a slower disk unless
+you accept it. `varlatch doctor` measures it again.
 
-| Image | Used by | On disk | Download |
-|---|---|---|---|
-| `postgres:17.6` | `postgres` | 636 MB | 161 MB |
-| `varlatchd` | `varlatchd`, `varlatch-migrate` | 474 MB | 108 MB |
-| `varlatch-web` | `varlatch-web` | 95 MB | 27 MB |
-| Convex backend (pinned) | `convex-backend` | 800 MB | 207 MB |
-| `varlatch-convex-deploy` | `convex-deploy` | 734 MB | 160 MB |
-| `caddy:2.10.2` | public ingress | 85 MB | 23 MB |
-| `tailscale/tailscale:v1.102.3` | tailnet ingress | 180 MB | 61 MB |
+| What | Size |
+|---|---|
+| `varlatchd` | 64 MB |
+| `varlatch` | 27 MB |
+| the container image | 133 MB |
+| a new installation's database | under 1 MiB |
 
-Without an ingress overlay that is about 2.7 GB on disk and 0.7 GB to
-download; the overlays add 0.1 to 0.2 GB. Layers the images share are stored
-once, so the real total is somewhat lower. Sizes change a little between
-releases. `varlatch upgrade` does not remove the previous release's images,
-so plan for two sets during an upgrade, until you remove the old ones.
+The database grows with the audit history. Beside it, plan for the local
+archives (7 by default), a working copy during a backup, and during an
+upgrade a second copy and a snapshot kept 30 days. Each upgrade also keeps
+the previous release's binaries. A large import or read also uses
+temporary files for as long as it runs: in the data directory in the
+container image, in the service's own `/var/tmp` with systemd.
+**Recommended: 5 GB free.**
 
-The data grows over time:
-
-- **The Secret Plane database** held 9.6 MiB on the measured installation.
-  It grows with the audit history: about 0.9 GiB per million audit events
-  in the backup runbook's measurements.
-- **The Application Plane database** holds the dashboard's read models
-  (Mirrors), which are small, and grows only when they change. Convex keeps
-  each replaced version of a document for at least 14 days. Before 0.14.3,
-  varlatchd stored every Mirror again once a minute even when nothing had
-  changed, and the measured installation reached 3.3 GiB that way: an
-  installation upgraded from an earlier release may hold several GiB of
-  such versions.
-- **Backup archives** hold only the Secret Plane database: about 76 MiB per
-  million audit events. `backup create` writes them to `backups/` in the
-  installation's directory, and the reference timer keeps the newest 7
-  there.
-- **Backup scratch space,** in the system's temporary directory unless you
-  pass `--scratch-dir`, holds the dump and the decrypted copy that
-  verification reads while a backup runs.
-
-**Recommended: 20 GB free.** That covers two release sets, the databases,
-and local backups, with room for the audit history to grow. Watch the free
-space of Docker's data directory.
 Where the data lives:
 
-| Volume or directory | Holds |
+| Directory | Holds |
 |---|---|
-| `postgres-data` | both databases: `varlatch` (the Secret Plane) and `convex_self_hosted` (the Application Plane) |
-| `convex-data` | Convex's module bundles and file storage |
-| `varlatch-state` | backup and restore state shared by the services, and the backup history |
-| `caddy-data`, `caddy-config` | the certificate and the ACME account (public ingress) |
-| `tailscale-state` | the node's identity and certificate (tailnet ingress) |
-| `secrets/`, `recovery/`, `backups/` | key files, the Root KEK escrow file, and local archives, in the installation's directory |
-
-Keep every volume through restarts and upgrades. Docker names them after
-the Compose project, `varlatch`: for example `varlatch_postgres-data`.
+| `/var/lib/varlatch` | the database, `backups/`, `upgrades/`, and, when used, `acme/` (the certificate), `tailnet/` (the node's identity) and `cli/` |
+| `/etc/varlatch` | the configuration and the two keys |
+| `/usr/local/lib/varlatch/releases` | the binaries of earlier releases |
 
 ### Deleting an organization
 
 Deleting an organization runs as one database transaction when its waiting
 period ends: it erases every value version, ends every membership and
-revokes everything the organization holds. Measured 2026-10-30 with
-`scripts/measure-org-deletion.mjs`, on the host above (local NVMe disk):
-
-- PostgreSQL 17.6 limited to 2 CPUs and 4 GB.
-- The deleted organization: 20 projects of 5 environments, every item with
-  5 versions, 25 people, 10 machine identities, 10 integrations and 2
-  webhooks.
-- Meanwhile, one client wrote a value in another organization, each write
-  audited, pausing 250 ms after each one.
-- Lock waits were sampled from PostgreSQL every 20 ms during the deletion;
-  a shorter wait can go unseen.
-
-| Value versions | Database | Deletion | Other writes p50 / p95 / max, before | … during the deletion | Failed writes | Lock waits sampled |
-|---|---|---|---|---|---|---|
-| 100,000 | 73 MB | 2.2 s | 15 / 16 / 17 ms | 16 / 28 / 28 ms | 0 | 0 |
-| 1,000,000 | 636 MB | 34.1 s | 13 / 14 / 17 ms | 27 / 108 / 1,508 ms | 0 | 0 |
-
-What this means:
-
-- **Deletion time grows with the organization's value versions**: about
-  35 seconds per million on this budget. Three runs at a million took 31 to
-  39 seconds. Organizations of up to about a million value versions are
-  supported; a larger one is deleted too, but its one transaction takes
-  longer and writes more to PostgreSQL's write-ahead log.
-- **Other organizations keep working.** No write in another organization
-  failed, and no lock wait was seen in sampling: the deletion records its
-  audit events, which take the installation-wide audit order, only at its
-  end. A diagnostic run that sampled every wait saw the other writes wait
-  on the disk instead, on write-ahead log flushes while the erasure fills
-  the log, and while a checkpoint writes out changed pages. So a few writes
-  took longer: the slowest in each of three runs at a million took 0.8 to
-  3.8 seconds.
-- **Plan for the write-ahead log**: the erasure rewrites every version, and
-  PostgreSQL logs each change. Replicas, and backups that keep write-ahead
-  log segments, hold that log for a while.
-
-To measure your own hardware:
-`MEASURE_VERSIONS=100000,1000000 node scripts/measure-org-deletion.mjs`
-after `pnpm build`. It runs varlatchd's code against a throwaway PostgreSQL
-container, which it removes at the end. See the script's header for the
-shape and the load it applies.
+revokes everything the organization holds. Its time grows with the
+organization's value versions. Figures measured for the TypeScript server
+are in
+[0.23.0's version of this page](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/self-hosting/requirements.md#deleting-an-organization).
