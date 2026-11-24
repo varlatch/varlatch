@@ -194,7 +194,8 @@ func freezeCopy(ctx context.Context, store *storage.DB, dir, path string) (int64
 		}
 	}
 	clean(tmp)
-	if _, err := store.Snapshot(ctx, tmp, storage.SnapshotOptions{}); err != nil {
+	// Nobody is served behind the barrier: every second is downtime.
+	if _, err := store.Snapshot(ctx, tmp, storage.Unpaced); err != nil {
 		clean(tmp)
 		return 0, err
 	}
