@@ -85,7 +85,11 @@ func upgradeNotOver(j *upgradejournal.Journal) error {
 // the swap, then starts the new varlatchd. That start is this one; a later
 // one, after a reboot too, is held all the same, and serves nothing until that
 // varlatch, or a newer one, ends the upgrade. At any step before the swap is
-// done there is no start of the new release.
+// done there is no start of the new release. Its checks pass against a held
+// one: they are `varlatchd admin status --json` alone, on the control socket
+// (the version, the schema, serving, and the three of ready), never a
+// listener (0.50.0-rc.2's and rc.3's upgrade.go, check). go/install/
+// test-upgrade.sh upgrades from rc.2 with rc.2's own engine.
 func startedByFormatOne(j *upgradejournal.Journal, version string) bool {
 	return j.Format == upgradejournal.FormatOne && j.State == upgradejournal.InProgress && j.To == version &&
 		(j.Step == upgradejournal.Swapped || j.Step == upgradejournal.Started)
