@@ -29,7 +29,7 @@ checks need root.
 ## Upgrading
 
 ```text
-varlatch upgrade --check
+sudo varlatch upgrade --check
 sudo varlatch upgrade
 ```
 
