@@ -439,7 +439,7 @@ deliver or destroy on its own waits for `sudo varlatch admin restore resume`
   `varlatchd-image.txt`, listed in the signed `SHA256SUMS`, gives the
   image's digest to pin ([verifying a release](docs/operations/verify-release.md#the-go-lines-image-0500-and-later)).
 
-## 0.50.0-rc.4 (DATE AT TAG)
+## 0.50.0-rc.4 (2026-11-24)
 
 The fourth prerelease of the Go line (ADR-0059), to test upgrades, going
 back and restores, and the Go installation's documentation. **It is a
@@ -459,7 +459,6 @@ Changes since 0.50.0-rc.3, by pull request. Most changes were reviewed on
 branches of their own and merged together, by #463, #332, #464 and #465;
 where a change had a pull request of its own, it is named too.
 
-<!-- SLOT #465 (merged d21d284e; reread 2026-11-24 against its head 24769f3b) -->
 - **`varlatch migrate --rollback` with a dashboard open (#465).** The
   rollback's barrier waited for every request, and an open dashboard's live
   updates are one that does not end by itself. While anyone had the dashboard
@@ -497,8 +496,6 @@ where a change had a pull request of its own, it is named too.
   [upgrading](docs/operations/upgrade.md), `go/README.md` and
   `THIRD-PARTY-NOTICES.md` for compressed archives, the rollback drain and
   going back by hand to a release before rc.4.
-<!-- END SLOT #465 -->
-<!-- SLOT #464 (merged 902f2a74; reread 2026-11-24 against its head d7db122f) -->
 - **Dependencies with published advisories are updated (#464).** Updated
   `klauspost/compress` (GO-2026-6865), `andybalholm/brotli` (GO-2026-6888),
   `golang.org/x/net` (GO-2026-6860, GO-2026-6866), `golang.org/x/crypto`
@@ -527,8 +524,6 @@ where a change had a pull request of its own, it is named too.
   PROXY preambles, host listeners and browser endpoint refusals, updated the
   conformance inventory, and fixed `go/install/test-upgrade.sh` on hosted
   runners with world-writable `/usr/local/bin`. No change to what is shipped.
-<!-- END SLOT #464 -->
-<!-- SLOT #332 (merged 886c4c3b; reread 2026-11-24 against its head 97a3e9b5) -->
 - **`varlatch upgrade --rollback` (#332)** returns to the release the last
   upgrade came from (0.50.0-rc.4 or later), with that release's kept
   binaries. When the release you leave declared itself rollback-safe for that
@@ -595,8 +590,6 @@ where a change had a pull request of its own, it is named too.
   step of the upgrade, its undo and the rollback, the commands by hand, the
   removal and a restore. The tests that need root run in CI as root. No
   change to what is shipped.
-<!-- END SLOT #332 -->
-<!-- SLOT #463 (merged 14eb86e2; reread 2026-11-24 against its head 64bd6dd4) -->
 - **A restored installation is held until you resume it (#454, in #463).** An
   archive brings back what was changed since it was made: a deletion
   cancelled since, a webhook removed since, an old value. After every restore
@@ -690,7 +683,6 @@ where a change had a pull request of its own, it is named too.
   The migration rehearsal reports each step's time, can keep a restored copy
   in memory, and writes on Go after a migration. No change to what is
   shipped.
-<!-- END SLOT #463 -->
 - **Prerelease only.** It is published as a GitHub prerelease and never
   becomes the latest release. What follows the latest release (`varlatch
   upgrade` and the release notice of a final release, `varlatch
