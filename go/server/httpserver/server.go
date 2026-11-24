@@ -42,6 +42,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/audit"
 	"github.com/varlatch/varlatch/go/server/auth"
 	"github.com/varlatch/varlatch/go/server/clientaddr"
+	"github.com/varlatch/varlatch/go/server/entry"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
 	"github.com/varlatch/varlatch/go/server/oauth"
 	"github.com/varlatch/varlatch/go/server/oidc"
@@ -289,6 +290,8 @@ var BuiltOperations = []string{
 	listCapabilitiesPattern, issueCapabilityPattern, revokeCapabilityPattern, exerciseCapabilityPattern,
 	listOAuthConnectionsPattern, createOAuthConnectionPattern, discoverOAuthProviderPattern, getOAuthConnectionPattern, updateOAuthConnectionPattern,
 	startOAuthAuthorizationPattern, completeOAuthAuthorizationPattern, refreshOAuthConnectionPattern, disconnectOAuthConnectionPattern,
+	// Entry links (entry.go, ADR-0063).
+	listEntryLinksPattern, createEntryLinkPattern, getEntryLinkPattern, cancelEntryLinkPattern, lookupEntryLinkPattern, submitEntryLinkPattern,
 	// Step 4.8: OIDC workload identity (oidc.go).
 	listOidcBindingsPattern, createOidcBindingPattern, revokeOidcBindingPattern, exchangeOidcTokenPattern,
 	// Step 4.13a: the tailnet listeners (tailnet.go).
@@ -325,6 +328,8 @@ type Server struct {
 	// oidc is the OIDC exchange, with its bounded issuer caches (one per
 	// process).
 	oidc *oidc.Service
+	// entry is entry links (ADR-0063).
+	entry *entry.Service
 }
 
 // New builds the handler.
@@ -342,6 +347,7 @@ func New(opts Options) (*Server, error) {
 		return nil, errors.New("httpserver: no backend")
 	}
 	s := &Server{opts: opts, window: newRequestWindow(opts.Now)}
+	s.entry = &entry.Service{Writer: opts.Writer, RootKEK: opts.RootKEK, Now: opts.Now}
 	if opts.Writer != nil && (opts.Outbound != nil || opts.OIDCFetch != nil) {
 		fetch := opts.OIDCFetch
 		if fetch == nil {
@@ -777,13 +783,13 @@ func headerValue(r *http.Request, name string) string {
 // authenticates reports whether the TypeScript server's bearer middleware
 // (app.ts, app.use("/v1/*")) authenticates a request to path with method
 // before routing it: every /v1 path but /v1/meta (any method), and the
-// three operations that authenticate otherwise (the OIDC exchange and
-// device sign-in's two CLI calls, POST only).
+// operations that authenticate otherwise (the OIDC exchange, device
+// sign-in's two CLI calls, and an entry link's two, POST only).
 func authenticates(method, p string) bool {
 	if p == "/v1/meta" {
 		return false
 	}
-	if method == http.MethodPost && (p == "/v1/oidc/token" || p == "/v1/auth/device" || p == "/v1/auth/device/token") {
+	if method == http.MethodPost && (p == "/v1/oidc/token" || p == "/v1/auth/device" || p == "/v1/auth/device/token" || optionalBearer["POST "+p]) {
 		return false
 	}
 	return true

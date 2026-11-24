@@ -392,7 +392,7 @@ func TestHealthReadyMeta(t *testing.T) {
 	// The TypeScript server's, then varlatchd's own: ADR-0060's limits and
 	// the browser session (auth.session); server-sent events (realtime.sse) come with step 3.5.
 	want := append(slices.DeleteFunc(slices.Clone(Capabilities), func(c string) bool { return c == "tailnet.browser-reads" || c == "cli.download" }),
-		"capabilities.delegate", "capabilities.single-use", "auth.oidc.limits", "values.totp", "oauth.connections", "auth.session")
+		"capabilities.delegate", "capabilities.single-use", "auth.oidc.limits", "values.totp", "oauth.connections", "values.entry-links", "auth.session")
 	if !slices.Equal(m.Capabilities, want) || !slices.Contains(m.Capabilities, "auth.device") {
 		t.Errorf("capabilities: %q", m.Capabilities)
 	}
@@ -528,6 +528,36 @@ func TestTheOAuthCallbacksHeaders(t *testing.T) {
 		h := w.Header()
 		if got := h.Get("Referrer-Policy") == "no-referrer" && h.Get("Cache-Control") == "no-store"; got != want || want && w.Code != 200 {
 			t.Errorf("%s: %d %v", p, w.Code, h)
+		}
+	}
+}
+
+// The entry page (ADR-0063) has headers of its own, whatever the browser
+// endpoint, and no other page has them.
+func TestTheEntryPagesHeaders(t *testing.T) {
+	s, _, _, _ := newTestServer(t, func(o *Options) { o.BrowserEndpoint = func() string { return "https://varlatch.corp.ts.net:8443" } })
+	for _, method := range []string{"GET", "HEAD"} {
+		w := do(s, method, "/entry", "", nil)
+		h := w.Header()
+		csp := h.Get("Content-Security-Policy")
+		if w.Code != 200 || h.Get("Referrer-Policy") != "no-referrer" || h.Get("Cache-Control") != "no-store" || h.Get("X-Frame-Options") != "DENY" ||
+			h.Get("X-Content-Type-Options") != "nosniff" || h.Get("Cross-Origin-Opener-Policy") != "same-origin" || !strings.Contains(h.Get("X-Robots-Tag"), "noindex") {
+			t.Errorf("%s: %d %v", method, w.Code, h)
+		}
+		for _, want := range []string{"default-src 'none'", "script-src 'self'", "connect-src 'self';", "form-action 'none'", "frame-ancestors 'none'", "base-uri 'none'"} {
+			if !strings.Contains(csp, want) {
+				t.Errorf("%s: %q lacks %s", method, csp, want)
+			}
+		}
+		for _, never := range []string{"https:", "unsafe", "*", "ts.net"} {
+			if strings.Contains(csp, never) {
+				t.Errorf("%s: %q holds %s", method, csp, never)
+			}
+		}
+	}
+	for _, p := range []string{"/", "/entry/x", "/entry2", "/o/acme/projects"} {
+		if h := do(s, "GET", p, "", nil).Header(); h.Get("Referrer-Policy") != "" {
+			t.Errorf("%s has the entry page's headers", p)
 		}
 	}
 }

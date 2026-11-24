@@ -302,7 +302,8 @@ var boundQuery = map[string]string{
 }
 
 // builtOperation wraps a built /v1 operation's generated handler:
-// authentication first (unless the operation authenticates otherwise),
+// authentication first (unless the operation authenticates otherwise, or
+// needs no credential and was sent none),
 // then the operation, with the writer and request in its context.
 func (s *Server) builtOperation(pattern string, h http.HandlerFunc) http.HandlerFunc {
 	method, route, _ := strings.Cut(pattern, " ")
@@ -323,7 +324,7 @@ func (s *Server) builtOperation(pattern string, h http.HandlerFunc) http.Handler
 			r.URL = &u
 		}
 		stages.Admitted(r.Context())
-		if !open {
+		if !open || optionalBearer[pattern] && headerValue(r, "Authorization") != "" {
 			m := stages.Start()
 			p, ok := s.authenticate(w, r, pattern)
 			stages.Since(r.Context(), "authentication", m)

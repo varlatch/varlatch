@@ -140,7 +140,7 @@ func insertSeed(ctx context.Context, q *query.Queries, orgKEK []byte, organizati
 	return q.InsertValueVersion(ctx, query.InsertValueVersionParams{
 		ID: versionID, ValueID: valueID, Payload: sql.NullString{String: payload, Valid: true},
 		WrappedDek: sql.NullString{String: string(dek), Valid: true}, PreviousVersionID: previous,
-		CreatedBy: sql.NullString{String: actor, Valid: true}, CreatedAt: at,
+		CreatedBy: sql.NullString{String: actor, Valid: actor != ""}, CreatedAt: at,
 	})
 }
 

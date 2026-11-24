@@ -262,6 +262,10 @@ func (s *Service) finalizeIn(ctx context.Context, tx *storage.Tx, deletionID, or
 	if err := q.ForgetOAuthConnectionsOfOrganization(ctx, organizationID); err != nil {
 		return nil, err
 	}
+	// And its entry links, with what their makers wrote (ADR-0063).
+	if err := q.ForgetEntryLinksOfOrganization(ctx, organizationID); err != nil {
+		return nil, err
+	}
 	if o.VersionsErased, err = q.EraseOrganizationVersions(ctx, query.EraseOrganizationVersionsParams{Now: now, OrganizationID: organizationID}); err != nil {
 		return nil, err
 	}

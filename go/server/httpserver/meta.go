@@ -89,9 +89,10 @@ var Capabilities = []string{
 // server without them would ignore it. And values.totp, ADR-0061's one-time
 // codes: a seed in a value's place, an exercise's minValiditySeconds and
 // fresh, a disclosure's totpSeeds. And oauth.connections, ADR-0062's: OAuth
-// connections, whose access token an exercise gives. The TypeScript server
+// connections, whose access token an exercise gives. And values.entry-links,
+// ADR-0063's: links a person enters a value with. The TypeScript server
 // lists none of them.
-var GoCapabilities = []string{"capabilities.delegate", "capabilities.single-use", "auth.oidc.limits", "values.totp", "oauth.connections", "auth.session", "realtime.sse"}
+var GoCapabilities = []string{"capabilities.delegate", "capabilities.single-use", "auth.oidc.limits", "values.totp", "oauth.connections", "values.entry-links", "auth.session", "realtime.sse"}
 
 // SemanticsVersions are the Contract Semantics versions the server
 // evaluates (packages/contract/src/semantics.ts SEMANTICS_VERSIONS).
@@ -129,7 +130,7 @@ func (o *operations) GetMeta(ctx context.Context, _ api.GetMetaRequestObject) (a
 		hidden["auth.device"] = true
 	}
 	caps := slices.DeleteFunc(slices.Clone(Capabilities), func(c string) bool { return hidden[c] })
-	caps = append(caps, "capabilities.delegate", "capabilities.single-use", "auth.oidc.limits", "values.totp", "oauth.connections")
+	caps = append(caps, "capabilities.delegate", "capabilities.single-use", "auth.oidc.limits", "values.totp", "oauth.connections", "values.entry-links")
 	if s.browser != nil {
 		caps = append(caps, "auth.session")
 		if s.opts.Realtime != nil {

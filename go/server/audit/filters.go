@@ -198,7 +198,8 @@ func (f Filters) Conditions() ([]string, []any) {
 		add("actor_identity_id = ?", f.ActorIdentityID)
 	}
 	if f.Actor == "varlatch" {
-		add("(actor_identity_id IS NULL AND substr(event_type, 1, 15) <> 'authentication.')")
+		// Nor what somebody unknown did with an entry link (ADR-0063).
+		add("(actor_identity_id IS NULL AND substr(event_type, 1, 15) <> 'authentication.' AND json_extract(resource, '$.entryLinkId') IS NULL AND json_extract(metadata, '$.entryLinkId') IS NULL)")
 	}
 	if f.ProjectID != "" {
 		add("json_extract(resource, '$.projectId') = ?", f.ProjectID)

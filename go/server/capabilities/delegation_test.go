@@ -78,6 +78,8 @@ type world struct {
 	names  map[string]string
 	oauth  *oauth.Service
 	policy *outbound.Policy
+	// public is the public URL, when it is not the loopback one ("": none).
+	public *string
 }
 
 func newWorld(t *testing.T) *world {
@@ -126,6 +128,11 @@ func (w *world) start() {
 	policy := outbound.New(nil, options)
 	w.policy = policy
 	public, _ := url.Parse("http://127.0.0.1:8686")
+	if w.public != nil {
+		if public = nil; *w.public != "" {
+			public, _ = url.Parse(*w.public)
+		}
+	}
 	wr := &write.Writer{Store: store, Gates: write.NewGates()}
 	approvals := auth.New(store, auth.Options{Log: log, RootKEK: w.rootKEK, PublicURL: public, PersonGate: wr.Gates.PersonGate, Now: w.now})
 	w.oauth = &oauth.Service{Writer: wr, RootKEK: w.rootKEK, Policy: policy, Now: w.now, Log: log}

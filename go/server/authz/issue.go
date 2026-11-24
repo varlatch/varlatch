@@ -35,10 +35,16 @@ func MayIssueCapabilities(kind string) bool { return slices.Contains(issuerKinds
 // identity whose kind it does not count for is denied as one without the
 // Grant is, whatever its Grants say.
 func DecideCapabilityIssue(ctx context.Context, db query.DBTX, p Principal, r Resource, opts Options) (Decision, error) {
-	if MayIssueCapabilities(p.IdentityKind) {
-		return Decide(ctx, db, p, CapabilityIssue, r, opts)
+	return decideForMachines(ctx, db, p, CapabilityIssue, r, opts)
+}
+
+// decideForMachines decides an action that counts for machines that run on
+// their own alone.
+func decideForMachines(ctx context.Context, db query.DBTX, p Principal, action string, r Resource, opts Options) (Decision, error) {
+	if slices.Contains(issuerKinds, p.IdentityKind) {
+		return Decide(ctx, db, p, action, r, opts)
 	}
-	org, action, reqID := r.OrganizationID, CapabilityIssue, opts.RequestID
+	org, reqID := r.OrganizationID, opts.RequestID
 	return Decision{
 		Evaluation: Evaluation{Denial: NoGrant, Requirements: []Outcome{}},
 		Err:        domainerr.New("PERMISSION_DENIED", "Not authorized for this action"),

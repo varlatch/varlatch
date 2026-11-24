@@ -41,6 +41,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/db"
 	"github.com/varlatch/varlatch/go/server/db/query"
+	"github.com/varlatch/varlatch/go/server/entry"
 	"github.com/varlatch/varlatch/go/server/githubapps"
 	"github.com/varlatch/varlatch/go/server/httpserver"
 	"github.com/varlatch/varlatch/go/server/ids"
@@ -529,6 +530,13 @@ func serve(opts Options, h *hooks) int {
 		connections.RunLoop(ctx, oauth.Interval)
 	}()
 	defer func() { cancel(); connections.Close(); <-connectionsDone }()
+	// Entry links that expired a day ago are forgotten (ADR-0063).
+	entryDone := make(chan struct{})
+	go func() {
+		defer close(entryDone)
+		entry.PruneLoop(ctx, store, log, admission.Enter)
+	}()
+	defer func() { cancel(); <-entryDone }()
 	// Webhook delivery (feature-parity decision 10): a pass at once, then
 	// every 30 seconds, through the outbound policy. A stop ends it before
 	// the policy and the database close; an attempt cut short is not

@@ -55,6 +55,8 @@ const (
 	MembershipRemoval = "mrm"
 	// Step 4.6: broker Capabilities.
 	Capability = "cap"
+	// Entry links (ADR-0063).
+	EntryLink = "enl"
 	// Step 4.8: OIDC bindings.
 	OIDCBinding = "oib"
 	// Step 4.9b: Platform Connections.
