@@ -4,6 +4,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -72,7 +73,7 @@ func readUpgrade(configDir string) (*upgradejournal.Journal, error) {
 	// alone.
 	j, err := upgradejournal.ReadWith(preread.ReadFile, configDir)
 	if err != nil {
-		return nil, fmt.Errorf("the upgrade journal %s cannot be read (%w), so it is not known whether an upgrade is half done: run sudo varlatch upgrade, of the newest release that was installed on this host, which finishes or undoes it",
+		return nil, fmt.Errorf("the upgrade journal %s cannot be read (%w), so it is not known whether an upgrade is half done: sudo varlatch upgrade, of the newest release that was installed on this host, says what to do with it",
 			filepath.Join(configDir, upgradejournal.File), err)
 	}
 	return j, nil
@@ -82,7 +83,11 @@ func upgradeNotOver(j *upgradejournal.Journal) error {
 	if j.State == upgradejournal.Failed {
 		return fmt.Errorf("the upgrade from %s to %s could not be undone (%s): run sudo varlatch upgrade, which goes on with it", j.From, j.To, j.Reason)
 	}
-	return fmt.Errorf("the upgrade from %s to %s is not over (its last step is %q): run sudo varlatch upgrade, which finishes or undoes it", j.From, j.To, j.Step)
+	boot := ""
+	if j.Start != nil && upgradeBootID() == "" {
+		boot = "; this host's boot id cannot be read (/proc/sys/kernel/random/boot_id), without which no start of an upgrade's is known"
+	}
+	return fmt.Errorf("the upgrade from %s to %s is not over (its last step is %q): run sudo varlatch upgrade, which finishes or undoes it%s", j.From, j.To, j.Step, boot)
 }
 
 // startedByFormatOne: a release before format 2 (0.50.0-rc.2, rc.3) upgrades
@@ -122,9 +127,21 @@ func endUpgradeHold(ctx context.Context, configDir string, admission *maintenanc
 			case rerr == nil && j == nil:
 				rerr = os.ErrNotExist
 			}
+			switch {
+			case errors.Is(rerr, os.ErrNotExist):
+				admission.NoteUpgrade(maintenance.UpgradeJournalMissing)
+			case rerr != nil:
+				admission.NoteUpgrade(maintenance.UpgradeJournalUnreadable)
+			default:
+				admission.NoteUpgrade(maintenance.UpgradeHeld)
+			}
 			if rerr != nil && rerr.Error() != said {
 				said = rerr.Error()
-				log.Warn("the upgrade journal cannot be read: varlatchd keeps answering 503 MAINTENANCE; run sudo varlatch upgrade", "file", path, "error", rerr)
+				if errors.Is(rerr, os.ErrNotExist) {
+					log.Warn("the upgrade journal is gone, so it is not known when the upgrade is over: varlatchd keeps answering 503 MAINTENANCE; once no varlatch upgrade runs, restart it (sudo systemctl restart varlatchd) to serve the database in place", "file", path)
+				} else {
+					log.Warn("the upgrade journal cannot be read: varlatchd keeps answering 503 MAINTENANCE; sudo varlatch upgrade says what to do with it", "file", path, "error", rerr)
+				}
 			}
 			seen = info
 			if rerr != nil {

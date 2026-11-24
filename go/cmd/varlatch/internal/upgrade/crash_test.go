@@ -85,6 +85,16 @@ func (h *standHost) run(binary string, args ...string) ([]byte, error) {
 		}
 		h.put(f, strings.Replace(content, "schema 1\n", fmt.Sprintf("schema %d\n", schema), 1), 0o600)
 		return fmt.Appendf(nil, `{"to":%d}`, schema), nil
+	case "schema status":
+		return fmt.Appendf(nil, `{"dataDir":%q}`, h.data), nil
+	case "schema identity":
+		// Whose, by its first line, and how far, by its writes.
+		content, log := h.read(args[len(args)-1]), h.read(args[len(args)-1]+walSuffix)
+		if log != "" && !strings.HasPrefix(log, walHead(content)) {
+			return nil, errors.New("another's log")
+		}
+		name, _, _ := strings.Cut(strings.TrimPrefix(content, "db "), "\n")
+		return fmt.Appendf(nil, `{"installation":"inst_%s","history":%d}`, name, strings.Count(content+log, "write ")), nil
 	case "status --json":
 		if h.svc.running != version {
 			return nil, errors.New("it is not running")
@@ -189,6 +199,8 @@ type standService struct {
 	writes  int    // clients' writes accepted
 	killed  bool   // a stop kills: the log stays
 	hold    bool   // it was started held
+	config  string // its unit's, "" for the host's
+	fresh   bool   // an earlier release made a database of its own
 	faults  []string
 }
 
@@ -224,6 +236,14 @@ func (s *standService) held() bool {
 	return s.hold
 }
 
+// Config is the unit's: the host's.
+func (s *standService) Config(context.Context) (string, error) {
+	if s.config != "" {
+		return s.config, nil
+	}
+	return s.h.conf, nil
+}
+
 func (s *standService) Start(context.Context) error {
 	if s.running != "" {
 		return nil
@@ -239,11 +259,21 @@ func (s *standService) Start(context.Context) error {
 	}
 	db, wal := filepath.Join(s.h.data, databaseFile), filepath.Join(s.h.data, databaseFile+walSuffix)
 	content := s.h.read(db)
+	if order, _ := release.CompareVersions(version, journal.FormatSince); content == "" && order < 0 {
+		// A release that reads no journal makes a new one.
+		content, s.fresh = fmt.Sprintf("db fresh\nschema %d\n", schema), true
+		s.h.put(db, content, 0o600)
+		if s.h.shadow != nil {
+			s.h.shadow.stored(s.h.data, db)
+		}
+	}
 	if content == "" {
 		s.fault("%s started without a database: it would make an empty one", version)
 		return errors.New("no database")
 	}
-	if !strings.HasPrefix(content, "db original\n") || !strings.HasSuffix(content, "\n") {
+	if s.fresh && strings.HasPrefix(content, "db fresh\n") {
+		// That release's own fault.
+	} else if !strings.HasPrefix(content, "db original\n") || !strings.HasSuffix(content, "\n") {
 		s.fault("%s started on a database that is not the installation's: %q", version, content)
 	}
 	if log := s.h.read(wal); log != "" && !strings.HasPrefix(log, walHead(content)) {
@@ -253,6 +283,16 @@ func (s *standService) Start(context.Context) error {
 		return errors.New("the schema is not this release's")
 	}
 	s.running = version
+	// Whatever starts, at any time, starts on every write that was accepted.
+	if !s.fresh {
+		all := s.h.database()
+		for n := 1; n <= s.writes+1; n++ {
+			if strings.Count(all, fmt.Sprintf("write %d\n", n)) != 1 {
+				s.fault("%s started on a database where write %d of %d is not there once: %q", version, n, s.writes+1, all)
+				break
+			}
+		}
+	}
 	// What a server writes as it starts, held or not.
 	s.log("started " + version + "\n")
 	return nil
@@ -260,8 +300,8 @@ func (s *standService) Start(context.Context) error {
 
 // write is a client's write, stored in the log, when it is accepted.
 func (s *standService) write() {
-	if s.running == "" || s.held() {
-		return
+	if s.running == "" || s.held() || s.fresh {
+		return // (what a fresh database takes is another installation's)
 	}
 	s.writes++
 	s.log(fmt.Sprintf("write %d\n", s.writes+1))
@@ -321,6 +361,19 @@ func (h *standHost) canGoOn(what string) {
 	version := strings.TrimPrefix(h.read(filepath.Join(h.bin, "varlatch")), "varlatch ")
 	if order, _ := release.CompareVersions(version, journal.FormatSince); j.Pending() && j.Format != journal.FormatOne && order < 0 {
 		h.t.Fatalf("%s: varlatch %s is installed, and cannot read the journal\n%s", what, version, h.tree())
+	}
+}
+
+// byHand runs the commands printed, but systemctl's.
+func (h *standHost) byHand(lines []string) {
+	h.t.Helper()
+	for _, line := range lines {
+		line = strings.TrimPrefix(line, "sudo ")
+		if !strings.HasPrefix(line, "systemctl ") {
+			if out, err := exec.Command("sh", "-c", line).CombinedOutput(); err != nil {
+				h.t.Fatalf("%s: %v %s", line, err, out)
+			}
+		}
 	}
 }
 
@@ -969,14 +1022,14 @@ func TestARecordThatIsNotDurableEndsTheRun(t *testing.T) {
 // recovery goes on beside it.
 func TestWhatAKilledRunStartedHoldsTheLock(t *testing.T) {
 	h := newStandHost(t, standFrom, false, false)
-	u := &Upgrader{BinDir: h.bin, ConfigPath: h.conf}
+	u := &Upgrader{BinDir: h.bin, ConfigPath: h.conf, Service: h.svc}
 	programs := t.TempDir() // /dev/shm may run none
 	program := func(name, text string) string {
 		p := filepath.Join(programs, name)
 		h.put(p, "#!/bin/sh\n"+text, 0o755)
 		return p
 	}
-	if _, err := u.hold(); err != nil {
+	if _, err := u.hold(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	locked := filepath.Join(filepath.Dir(h.conf), "upgrade.lock")
@@ -1091,6 +1144,10 @@ func TestAPendingUpgradeOfFormatOne(t *testing.T) {
 			h.put(filepath.Join(work, "db", databaseFile), copyOf, 0o600)
 		}, false},
 		{"the database aside, its log not", journal.Prepared, func(h *standHost, work string) { aside(h, work, databaseFile) }, false},
+		{"both aside, the host rebooted", journal.Prepared, func(h *standHost, work string) {
+			aside(h, work, databaseFile, databaseFile+walSuffix)
+			h.reboot()
+		}, false},
 		{"both aside", journal.Prepared, func(h *standHost, work string) { aside(h, work, databaseFile, databaseFile+walSuffix) }, false},
 		{"a move left with both names", journal.Prepared, func(h *standHost, work string) {
 			aside(h, work, databaseFile, databaseFile+walSuffix)
@@ -1161,6 +1218,29 @@ func TestAPendingUpgradeOfFormatOne(t *testing.T) {
 					h.shadow.absorb()
 					return h, work
 				}
+				// stopped: both databases are kept, whichever is whose, and the
+				// commands printed put the original back.
+				stopped := func(h *standHost, j *journal.Journal, err error) {
+					t.Helper()
+					work := filepath.Join(h.data, "upgrades", "0011223344556677")
+					if err == nil || j.State != journal.Failed || !strings.Contains(err.Error(), "Both databases are kept") || h.svc.running != "" {
+						t.Fatalf("%+v, %v, %s runs\n%s", j, err, h.svc.running, h.tree())
+					}
+					original := h.read(filepath.Join(work, "original", databaseFile)) + h.read(filepath.Join(work, "original", databaseFile+walSuffix))
+					inPlace := h.database()
+					h.byHand(h.upgrader(nil).backByHand(h.journal()))
+					if h.journal() != nil || h.read(filepath.Join(h.data, databaseFile))+h.read(filepath.Join(h.data, databaseFile+walSuffix)) != original {
+						t.Fatalf("by hand:\n%s", h.tree())
+					}
+					if kept := h.read(filepath.Join(work, "replaced", databaseFile)); kept == "" || !strings.HasPrefix(inPlace, kept) {
+						t.Fatalf("the replaced one: %q of %q", kept, inPlace)
+					}
+					h.svc.fresh = false
+					if err := h.svc.Start(context.Background()); err != nil || h.svc.running != from {
+						t.Fatalf("%v, %s runs", err, h.svc.running)
+					}
+					os.RemoveAll(h.dir)
+				}
 				// Recovered, at once and with the recovery interrupted
 				// anywhere, killed or cut.
 				for n := 0; ; n++ {
@@ -1174,12 +1254,18 @@ func TestAPendingUpgradeOfFormatOne(t *testing.T) {
 							h.shadow.cut()
 						}
 						// (That release makes an empty database where it finds
-						// none: there is one in its place then.)
-						if exists(filepath.Join(h.data, databaseFile)) {
-							h.reboot()
-						}
+						// none.)
+						h.reboot()
 					}
 					j, err := h.upgrader(nil).Recover(context.Background())
+					if h.svc.fresh {
+						stopped(h, j, err)
+						continue
+					}
+					if forward := c.done && to == standTo; c.done && !forward {
+						stopped(h, j, err)
+						continue
+					}
 					if err != nil {
 						t.Fatalf("at %s: %+v, %v\n%s", at, j, err, h.tree())
 					}
@@ -1189,7 +1275,7 @@ func TestAPendingUpgradeOfFormatOne(t *testing.T) {
 					h.ends("at " + at)
 					os.RemoveAll(h.dir)
 				}
-				if !c.done {
+				if !c.done || to != standTo {
 					return
 				}
 				// A new release that does not serve: nothing of either database
@@ -1212,14 +1298,7 @@ func TestAPendingUpgradeOfFormatOne(t *testing.T) {
 						t.Fatalf("%s runs", h.svc.running)
 					}
 				}
-				for _, line := range h.upgrader(nil).backByHand(h.journal()) {
-					line = strings.TrimPrefix(line, "sudo ")
-					if !strings.HasPrefix(line, "systemctl ") {
-						if out, err := exec.Command("sh", "-c", line).CombinedOutput(); err != nil {
-							t.Fatalf("%s: %v %s", line, err, out)
-						}
-					}
-				}
+				h.byHand(h.upgrader(nil).backByHand(h.journal()))
 				if h.journal() != nil || h.read(filepath.Join(h.data, databaseFile))+h.read(filepath.Join(h.data, databaseFile+walSuffix)) != original {
 					t.Fatalf("by hand:\n%s", h.tree())
 				}
@@ -1229,4 +1308,121 @@ func TestAPendingUpgradeOfFormatOne(t *testing.T) {
 			})
 		}
 	}
+}
+
+// What an upgrade rests on is asked for before anything is changed.
+func TestWhatAnUpgradeRestsOn(t *testing.T) {
+	for _, c := range []struct {
+		name, want string
+		make       func(h *standHost, u *Upgrader)
+	}{
+		{"no boot id", "this host's boot id cannot be read", func(_ *standHost, u *Upgrader) { u.boot = func() string { return "" } }},
+		{"another configuration than the unit's", "is not the configuration varlatchd's unit starts it with, which is ", func(h *standHost, _ *Upgrader) {
+			h.svc.config = filepath.Join(h.dir, "other.conf")
+			h.put(h.svc.config, "", 0o600)
+		}},
+		{"the journal's directory cannot be synced", "cannot be made durable", func(h *standHost, u *Upgrader) { u.Fault = unsynced(filepath.Dir(h.conf)) }},
+		{"the binaries'", "cannot be made durable", func(h *standHost, u *Upgrader) { u.Fault = unsynced(h.bin) }},
+		{"the releases'", "cannot be made durable", func(h *standHost, u *Upgrader) { u.Fault = unsynced(filepath.Join(h.dir, "usr")) }},
+		{"the data directory", "cannot be made durable", func(h *standHost, u *Upgrader) { u.Fault = unsynced(h.data) }},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h := newStandHost(t, standFrom, false, false)
+			u := h.upgrader(nil)
+			c.make(h, u)
+			before := h.read(filepath.Join(h.bin, "varlatch"))
+			if _, err := u.Run(context.Background(), h.installed(), h.release()); err == nil || !strings.Contains(err.Error(), c.want) || !strings.Contains(err.Error(), "nothing was changed") {
+				t.Fatalf("%v", err)
+			}
+			if h.journal() != nil || h.svc.running != standFrom || h.read(filepath.Join(h.bin, "varlatch")) != before || exists(u.Releases()) {
+				t.Fatalf("something changed:\n%s", h.tree())
+			}
+		})
+	}
+	// The unit's by another name of the same file.
+	h := newStandHost(t, standFrom, false, false)
+	h.svc.config = filepath.Join(h.dir, "link.conf")
+	if err := os.Symlink(h.conf, h.svc.config); err != nil {
+		t.Fatal(err)
+	}
+	if j, err := h.upgrader(nil).Run(context.Background(), h.installed(), h.release()); err != nil || j.State != journal.Done {
+		t.Fatalf("%+v, %v", j, err)
+	}
+}
+
+// unsynced is a Fault whose directory dir cannot be synced.
+func unsynced(dir string) func(string) error {
+	return func(path string) error {
+		if path == dir+"/" {
+			return syscall.EINVAL
+		}
+		return nil
+	}
+}
+
+func TestConfigOfTheUnit(t *testing.T) {
+	for shown, want := range map[string]string{
+		"{ path=/usr/local/bin/varlatchd ; argv[]=/usr/local/bin/varlatchd serve --config /etc/varlatch/varlatchd.conf ; ignore_errors=no ; start_time=[n/a] ; pid=0 }\n": "/etc/varlatch/varlatchd.conf",
+		"{ path=/x ; argv[]=/x serve --config=/srv/v.conf ; ignore_errors=no }":                                                                                           "/srv/v.conf",
+		"{ path=/x ; argv[]=/x serve ; ignore_errors=no }":                                                                                                                defaultConfig,
+		"": "", "\n": "", "{ path=/x ; argv[]= ; ignore_errors=no }": "",
+	} {
+		if got, ok := configOf(shown); got != want && want != "" || ok != (want != "") {
+			t.Errorf("%q: %q %v", shown, got, ok)
+		}
+	}
+}
+
+// A damaged journal: varlatch says the ways out, whole, and they work.
+func TestADamagedJournal(t *testing.T) {
+	for _, c := range []struct {
+		name, point string
+	}{{"before the stop", "snapshot"}, {"with the original kept", "swapped"}} {
+		t.Run(c.name, func(t *testing.T) {
+			h := newStandHost(t, standFrom, false, true)
+			_, _ = h.upgrader(func(p string) bool { return p == c.point }).Run(context.Background(), h.installed(), h.release())
+			path := filepath.Join(filepath.Dir(h.conf), journal.File)
+			h.put(path, "{", 0o644)
+			h.svc.running = ""
+			_, err := h.upgrader(nil).Recover(context.Background())
+			if err == nil || strings.Contains(err.Error(), "run sudo varlatch upgrade") || !strings.Contains(err.Error(), "is damaged") || !strings.Contains(err.Error(), "sudo systemctl start varlatchd") {
+				t.Fatal(err)
+			}
+			var lines []string
+			for _, line := range strings.Split(err.Error(), "\n") {
+				if strings.HasPrefix(line, "  sudo ") {
+					lines = append(lines, strings.TrimPrefix(line, "  "))
+				}
+			}
+			h.byHand(lines)
+			if err := h.svc.Start(context.Background()); err != nil || h.svc.running != standFrom {
+				t.Fatalf("%v, %q runs\n%s", err, h.svc.running, h.tree())
+			}
+			// (Start looked for every write that was accepted.)
+			if len(h.svc.faults) > 0 {
+				t.Fatalf("%q\n%s", h.svc.faults, h.tree())
+			}
+		})
+	}
+}
+
+// A record that ends an upgrade is made durable before anything goes.
+func TestAnEndIsDurableBeforeAnythingGoes(t *testing.T) {
+	h := newStandHost(t, standFrom, false, false)
+	_, err := h.upgrader(func(p string) bool { return p == "done" }).Run(context.Background(), h.installed(), h.release())
+	if !errors.Is(err, errKilled) {
+		t.Fatal(err)
+	}
+	u := h.upgrader(nil)
+	u.Fault = unsynced(filepath.Dir(h.conf))
+	if _, err := u.Recover(context.Background()); err == nil || !strings.Contains(err.Error(), "could not be made durable") {
+		t.Fatal(err)
+	}
+	if left, _ := filepath.Glob(filepath.Join(h.data, "upgrades", "*", originalDir)); len(left) != 1 {
+		t.Fatalf("the original went: %v", left)
+	}
+	if _, err := h.upgrader(nil).Recover(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	h.ends("done")
 }

@@ -46,8 +46,8 @@ func staysRoot(cfg *config.Config, sub string, rest []string) bool {
 	case "tailnet":
 		return len(rest) > 0 && rest[0] == "reaches"
 	case "schema":
-		_, _, database, _ := schemaArguments(rest)
-		return database != "" && databaseIsRoots(cfg, database)
+		cmd, _, database, _ := schemaArguments(rest)
+		return cmd == "upgrade" && database != "" && databaseIsRoots(cfg, database)
 	}
 	return false
 }

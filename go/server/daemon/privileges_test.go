@@ -678,6 +678,9 @@ func TestAdminAsRootSchemaOfADatabase(t *testing.T) {
 	if out, status := upgrade(own); status != ExitOK || !strings.Contains(out, "ids 0 0 0 0") {
 		t.Errorf("root's own: %d %s", status, out)
 	}
+	if out, status := h.admin("schema", "identity", "--database", live, "--json"); status != ExitOK || !strings.Contains(out, owners) || !strings.Contains(out, `"installation":"inst_`) {
+		t.Errorf("identity: %d %s", status, out)
+	}
 	h.owned("schema upgrade --database")
 }
 

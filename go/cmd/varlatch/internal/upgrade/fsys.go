@@ -13,7 +13,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"syscall"
 )
 
 // fsys is the file system an upgrade works on: each change is one call,
@@ -152,8 +151,8 @@ func (f fsys) sync(path string) error {
 	return f.did("sync", path, "")
 }
 
-// syncDir makes a directory's entries durable: an error is one, but for a
-// file system that does not sync directories at all.
+// syncDir makes a directory's entries durable: a file system that syncs no
+// directory is an error as any other (probe asks before anything).
 func (f fsys) syncDir(dir string) error {
 	if runtime.GOOS == "windows" {
 		return nil
@@ -171,7 +170,7 @@ func (f fsys) syncDir(dir string) error {
 	if cerr := d.Close(); err == nil {
 		err = cerr
 	}
-	if err != nil && !errors.Is(err, syscall.EINVAL) && !errors.Is(err, syscall.ENOTSUP) {
+	if err != nil {
 		return fmt.Errorf("syncing the directory %s: %w", dir, err)
 	}
 	return f.did("sync-dir", dir, "")

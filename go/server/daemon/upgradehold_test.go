@@ -172,6 +172,18 @@ func TestServeDuringAnUpgrade(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			writeUpgrade(t, in.dir, j)
 			r := start(t, in)
+			// Why it is held, on /readyz and in doctor.
+			why := func(when, want, remedy string) {
+				t.Helper()
+				var answer struct {
+					Upgrade string `json:"upgrade"`
+				}
+				getJSON(t, "http://"+r.addr+"/readyz", &answer)
+				code, out, _ := runAdmin(t, "doctor", "--json", "--config", in.conf)
+				if answer.Upgrade != want || code == ExitOK || !strings.Contains(out, remedy) {
+					t.Fatalf("%s: /readyz says %q, want %q; doctor: %d %s", when, answer.Upgrade, want, code, out)
+				}
+			}
 			closed := func(when string) {
 				t.Helper()
 				for _, path := range []string{"/readyz", "/v1/meta", "/v1/whoami"} {
@@ -188,6 +200,7 @@ func TestServeDuringAnUpgrade(t *testing.T) {
 				}
 			}
 			closed("held")
+			why("held", maintenance.UpgradeHeld, "sudo varlatch upgrade finishes or undoes it")
 			next := *j
 			next.Step = upgradejournal.Started
 			writeUpgrade(t, in.dir, &next)
@@ -199,11 +212,13 @@ func TestServeDuringAnUpgrade(t *testing.T) {
 			}
 			time.Sleep(3 * upgradeHoldEvery)
 			closed("unreadable")
+			why("unreadable", maintenance.UpgradeJournalUnreadable, "it says what to do with the journal")
 			if err := os.Remove(filepath.Join(in.dir, upgradejournal.File)); err != nil {
 				t.Fatal(err)
 			}
 			time.Sleep(3 * upgradeHoldEvery)
 			closed("gone")
+			why("gone", maintenance.UpgradeJournalMissing, "sudo systemctl restart varlatchd")
 			// Its checks passed, which a power cut may take back.
 			next.Step = upgradejournal.Checked
 			writeUpgrade(t, in.dir, &next)

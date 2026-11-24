@@ -84,6 +84,8 @@ func (o dataOp) run(f fsys) (dataResult, error) {
 		return o.size()
 	case "begin":
 		return dataResult{}, o.begin(f)
+	case "probe":
+		return dataResult{}, f.syncDir(o.DataDir)
 	case "keep-snapshot":
 		return o.keepSnapshot(f)
 	case "copy-database":

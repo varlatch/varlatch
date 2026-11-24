@@ -23,7 +23,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/db"
 )
 
-const schemaUsage = "Usage: varlatchd admin schema status [--json] [--config <file>] | varlatchd admin schema upgrade [--json] [--database <file>] [--config <file>]"
+const schemaUsage = "Usage: varlatchd admin schema status [--json] [--config <file>] | varlatchd admin schema upgrade [--json] [--database <file>] [--config <file>] | varlatchd admin schema identity --database <file> [--json] [--config <file>]"
 
 // schemaArgs checks `admin schema ...`'s arguments (--config taken out):
 // --json, and for upgrade --database <file>.
@@ -33,19 +33,22 @@ func schemaArgs(rest []string) (cmd string, asJSON bool, msg string) {
 }
 
 func schemaArguments(rest []string) (cmd string, asJSON bool, database, msg string) {
-	if len(rest) == 0 || rest[0] != "status" && rest[0] != "upgrade" {
+	if len(rest) == 0 || rest[0] != "status" && rest[0] != "upgrade" && rest[0] != "identity" {
 		return "", false, "", schemaUsage
 	}
 	for i := 1; i < len(rest); i++ {
 		switch a := rest[i]; {
 		case a == "--json" && !asJSON:
 			asJSON = true
-		case a == "--database" && rest[0] == "upgrade" && database == "" && i+1 < len(rest) && rest[i+1] != "":
+		case a == "--database" && rest[0] != "status" && database == "" && i+1 < len(rest) && rest[i+1] != "":
 			database = rest[i+1]
 			i++
 		default:
 			return "", false, "", schemaUsage
 		}
+	}
+	if rest[0] == "identity" && database == "" {
+		return "", false, "", schemaUsage
 	}
 	return rest[0], asJSON, database, ""
 }
@@ -82,6 +85,17 @@ func runSchema(cfg *config.Config, rest []string, stdout, stderr io.Writer) int 
 	fail := func(status int, format string, args ...any) int {
 		fmt.Fprintf(stderr, what+": "+format+"\n", args...)
 		return status
+	}
+	if cmd == "identity" {
+		id, err := readIdentity(database)
+		if err != nil {
+			return fail(ExitFailure, "%s: %v", database, err)
+		}
+		if asJSON {
+			return printJSON(stdout, stderr, what, id)
+		}
+		fmt.Fprintf(stdout, "%s is the installation %s's, with %d audit events.\n", database, id.Installation, id.History)
+		return ExitOK
 	}
 	binary := schemaJSON{db.SchemaVersion, db.CompatibleFrom}
 	path := cfg.DatabasePath()
@@ -158,6 +172,35 @@ func runSchema(cfg *config.Config, rest []string, stdout, stderr io.Writer) int 
 		fmt.Fprintf(stdout, "The database's schema is version %d, newer than this varlatchd's %d, and this varlatchd may open it: nothing to do.\n", up.From, db.SchemaVersion)
 	}
 	return ExitOK
+}
+
+// identityJSON is whose a database is, and how far its history goes: its
+// installation and its last audit position. `varlatch upgrade` compares an
+// original with the copy in its place.
+type identityJSON struct {
+	Installation string `json:"installation"`
+	History      int64  `json:"history"`
+}
+
+// readIdentity reads a database's identity, its log with it, without
+// changing it.
+func readIdentity(path string) (id identityJSON, err error) {
+	if _, err := os.Stat(path); err != nil {
+		return id, err
+	}
+	u := url.URL{Scheme: "file", Path: path, RawQuery: "mode=ro&_pragma=busy_timeout(5000)"}
+	conn, err := sql.Open("sqlite", u.String())
+	if err != nil {
+		return id, err
+	}
+	defer conn.Close()
+	if err := conn.QueryRow("SELECT id FROM installation").Scan(&id.Installation); err != nil {
+		return id, fmt.Errorf("its installation cannot be read: %w", err)
+	}
+	if err := conn.QueryRow("SELECT coalesce(max(event_order), 0) FROM audit_events").Scan(&id.History); err != nil {
+		return id, fmt.Errorf("its audit events cannot be read: %w", err)
+	}
+	return id, nil
 }
 
 // readSchema reads the database's schema_version without changing
