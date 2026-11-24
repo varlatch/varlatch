@@ -36,13 +36,15 @@ sudo varlatch upgrade
 `upgrade` takes an encrypted snapshot before it stops the service or changes
 the database and the binaries, keeps the new release only when its health
 checks pass, and otherwise goes back. When it cannot go back it says what is
-left: give the human that message. Until an interrupted upgrade is over the
-server does not start or answers 503: running `sudo varlatch upgrade` again
-finishes or undoes it. Never remove or edit `/etc/varlatch/upgrade.json`.
+left: give the human that message. Interrupted after it stopped the server
+and before its checks passed, it leaves the server stopped or answering 503:
+running `sudo varlatch upgrade` again finishes or undoes it. Never remove or
+edit `/etc/varlatch/upgrade.json`.
 
-`sudo varlatch upgrade --rollback` returns to the release before. It can lose
-every change made since the upgrade, and lists them first: it is the human's
-to decide.
+`sudo varlatch upgrade --rollback` returns to the release before. When it
+restores the snapshot from before the upgrade, every change since is lost and
+what was revoked since works again: it is the human's to decide, and they
+keep clients away before they confirm.
 
 ## Backups
 

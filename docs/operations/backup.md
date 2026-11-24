@@ -460,6 +460,11 @@ Every change since the archive is lost, revocations included. First
 sudo systemctl stop varlatchd
 sudo cp /var/lib/varlatch/backups/ARCHIVE-ID.vltbak /root/
 sudo varlatch admin backup restore --in /root/ARCHIVE-ID.vltbak
+```
+
+Only when it says `Restore completed`:
+
+```sh
 sudo systemctl start varlatchd
 ```
 
@@ -474,12 +479,13 @@ restore and changes nothing; `varlatchd` may run meanwhile.
 It refuses while `varlatchd` runs, a wrong key, an archive it cannot read,
 and an archive of another installation, and then changes nothing. It refuses
 too while an [upgrade or a rollback is not over](upgrade.md#if-an-upgrade-is-interrupted),
-which would replace what you restore: run `sudo varlatch upgrade` first, or,
-to restore instead of that, move its record aside with the command it
-prints. A restore
-that fails or is killed later, while it replaces the database, leaves the
-installation closed: it answers `503` until you run the same restore again
-with the same archive.
+which would replace what you restore. Then run `sudo varlatch upgrade`, which
+starts `varlatchd` again, so stop it again before you retry; or, to restore
+instead of that, move the upgrade's record aside with the command it prints.
+
+A restore that fails or is killed later, while it replaces the database,
+leaves the installation closed: it answers `503` until the restore completes.
+Stop `varlatchd`, and run the same restore again with the same archive.
 
 ### Rehearse a restore
 
