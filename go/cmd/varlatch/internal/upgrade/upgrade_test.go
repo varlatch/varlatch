@@ -735,3 +735,40 @@ func TestUpgradeAsRootWorksAsTheOwner(t *testing.T) {
 		t.Fatalf("written through a link: %v", entries)
 	}
 }
+
+// The installed release on a database of a newer schema it opens (a
+// rollback-safe release wrote it, and the binaries went back): it upgrades
+// again, not to a release below the database's schema, and takes its
+// snapshot on the way.
+func TestUpgradeFromANewerSchema(t *testing.T) {
+	h := newHost(t)
+	u := h.upgrader(nil)
+	if err := h.svc.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	newer := filepath.Join(h.dir, "varlatchd-newer")
+	if err := os.WriteFile(newer, build(t, "to"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := u.admin(context.Background(), newer, "admin", "schema", "upgrade"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.svc.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	u.mustServe(t, fromVersion, fromSchema)
+	inst, err := u.Inspect(context.Background())
+	if err != nil || inst.Version != fromVersion || inst.Schema != fromSchema || inst.Database != toSchema {
+		t.Fatalf("inspect: %+v, %v", inst, err)
+	}
+	low := h.release(t, "to", safe)
+	low.Manifest.SchemaVersion = fromSchema
+	if _, err := u.Run(context.Background(), inst, low); err == nil || !strings.Contains(err.Error(), fmt.Sprintf("the database's schema is version %d", toSchema)) || !strings.Contains(err.Error(), "nothing was changed") {
+		t.Fatalf("a release below the database's schema: %v", err)
+	}
+	u.mustServe(t, fromVersion, fromSchema)
+	if j, err := u.Run(context.Background(), inst, h.release(t, "to", safe)); err != nil || j.State != journal.Done {
+		t.Fatalf("the upgrade: %+v, %v", j, err)
+	}
+	u.mustServe(t, toVersion, toSchema)
+}
