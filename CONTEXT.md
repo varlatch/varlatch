@@ -11,7 +11,7 @@ The security authority of Varlatch: authentication, identities, credentials, org
 _Avoid_: vault, crypto service, control plane
 
 **Application Plane**:
-The non-authoritative part of Varlatch: the dashboard's code in a person's browser, and the Change Signals it receives. Anything that feeds an authorization decision, including Contracts, tiers, and the Organization/Project/Environment skeleton, is authoritative in the Secret Plane and only displayed here. Nothing in the Application Plane can independently grant, change, or forge access to secrets; corrupting it may break the UI, never authorization. It stores nothing. (Up to 0.23.0 it was a separate backend, Convex, that held Mirrors.)
+The non-authoritative part of Varlatch: the dashboard's code in a person's browser, and the Change Signals it receives. Anything that feeds an authorization decision, including Contracts, tiers, and the Organization/Project/Environment skeleton, is authoritative in the Secret Plane and only displayed here. Nothing in the Application Plane can independently grant, change, or forge access to secrets; corrupting it may break the UI, never authorization. It holds no authoritative state: the browser keeps conveniences only (the theme, the sidebar, the last organization, recent pages). (Up to 0.23.0 it was a separate backend, Convex, that held Mirrors.)
 _Avoid_: control plane (implies authority it must not have), backend, app server
 
 **varlatchd**:
