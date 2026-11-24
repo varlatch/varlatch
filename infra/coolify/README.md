@@ -375,7 +375,7 @@ pins the published image by digest using Coolify environment variables.
      setting `listen_https` together with `listen = 0.0.0.0:8686` makes
      `varlatchd` refuse to start (exit `78`) and crash-loop.
    - `varlatchd.compose.yml` omits a Docker `healthcheck` because the image is
-     distroless (`gcr.io/distroless/static-debian12`) and contains no shell,
+     distroless (`gcr.io/distroless/static-debian13`) and contains no shell,
      `curl`, or HTTP probe subcommand. Verify readiness externally at
      `GET https://app.<your-domain>/readyz` (expect HTTP `200`).
    - Tailnet listeners (`tailnet = on`, `tailnet_port`, `tailnet_https_port` in

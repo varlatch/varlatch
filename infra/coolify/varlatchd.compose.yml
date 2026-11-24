@@ -8,7 +8,7 @@
 # it stops before anything starts, naming the variable.
 # VARLATCH_IMAGE_REGISTRY is optional and defaults to ghcr.io/varlatch.
 #
-# The image is distroless (gcr.io/distroless/static-debian12) and has no
+# The image is distroless (gcr.io/distroless/static-debian13) and has no
 # shell, curl, or HTTP probe subcommand, so no container healthcheck is
 # defined here. Verify readiness externally at GET /readyz (this also
 # avoids marking the container unhealthy while it starts isolated behind

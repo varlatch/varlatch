@@ -274,7 +274,7 @@ linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64, windows/arm
 | --- | --- | --- | --- |
 | Go standard library and runtime | the release's Go toolchain | BSD-3-Clause | varlatch, varlatchd |
 | filippo.io/edwards25519 | v1.2.0 | BSD-3-Clause | varlatchd |
-| github.com/andybalholm/brotli | v1.1.0 | MIT | varlatch |
+| github.com/andybalholm/brotli | v1.2.7 | MIT | varlatch |
 | github.com/apapsch/go-jsonmerge/v2 | v2.0.0 | MIT | varlatchd |
 | github.com/asaskevich/govalidator | v0.0.0-20230301143203-a9d515a09cc2 | MIT | varlatch, varlatchd |
 | github.com/aws/aws-sdk-go-v2 | v1.48.0 | Apache-2.0 | varlatch, varlatchd |
@@ -341,7 +341,7 @@ linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64, windows/arm
 | github.com/in-toto/attestation | v1.2.0 | Apache-2.0 | varlatch, varlatchd |
 | github.com/in-toto/in-toto-golang | v0.11.0 | Apache-2.0 | varlatch, varlatchd |
 | github.com/jsimonetti/rtnetlink | v1.4.2 | MIT | varlatchd |
-| github.com/klauspost/compress | v1.20.1 | Apache-2.0 AND BSD-3-Clause AND MIT | varlatchd |
+| github.com/klauspost/compress | v1.20.2 | Apache-2.0 AND BSD-3-Clause AND MIT | varlatchd |
 | github.com/klauspost/cpuid/v2 | v2.4.0 | MIT | varlatchd |
 | github.com/libdns/libdns | v1.1.1 | MIT | varlatchd |
 | github.com/mdlayher/netlink | v1.11.2 | MIT | varlatchd |
@@ -388,15 +388,15 @@ linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64, windows/arm
 | go.yaml.in/yaml/v3 | v3.0.5 | Apache-2.0 AND MIT | varlatch, varlatchd |
 | go4.org/mem | v0.0.0-20240501181205-ae6ca9944745 | Apache-2.0 | varlatchd |
 | go4.org/netipx | v0.0.0-20260823151212-3075585bcbeb | BSD-3-Clause | varlatchd |
-| golang.org/x/crypto | v0.58.0 | BSD-3-Clause | varlatch, varlatchd |
+| golang.org/x/crypto | v0.59.0 | BSD-3-Clause | varlatch, varlatchd |
 | golang.org/x/exp | v0.0.0-20261014143641-f0251eb4aa3e | BSD-3-Clause | varlatchd |
 | golang.org/x/mod | v0.42.0 | BSD-3-Clause | varlatch, varlatchd |
-| golang.org/x/net | v0.61.0 | BSD-3-Clause | varlatch, varlatchd |
+| golang.org/x/net | v0.62.0 | BSD-3-Clause | varlatch, varlatchd |
 | golang.org/x/oauth2 | v0.37.0 | BSD-3-Clause | varlatchd |
-| golang.org/x/sync | v0.24.0 | BSD-3-Clause | varlatch, varlatchd |
-| golang.org/x/sys | v0.49.0 | BSD-3-Clause | varlatch, varlatchd |
-| golang.org/x/term | v0.47.0 | BSD-3-Clause | varlatch, varlatchd |
-| golang.org/x/text | v0.43.0 | BSD-3-Clause | varlatch, varlatchd |
+| golang.org/x/sync | v0.25.0 | BSD-3-Clause | varlatch, varlatchd |
+| golang.org/x/sys | v0.50.0 | BSD-3-Clause | varlatch, varlatchd |
+| golang.org/x/term | v0.48.0 | BSD-3-Clause | varlatch, varlatchd |
+| golang.org/x/text | v0.44.0 | BSD-3-Clause | varlatch, varlatchd |
 | golang.org/x/time | v0.16.0 | BSD-3-Clause | varlatchd |
 | google.golang.org/genproto/googleapis/api | v0.0.0-20261012220534-4341edf3f941 | Apache-2.0 | varlatch, varlatchd |
 | google.golang.org/genproto/googleapis/rpc | v0.0.0-20261005182115-fad411399dd8 | Apache-2.0 | varlatch, varlatchd |
@@ -5425,7 +5425,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ````
 
-### github.com/andybalholm/brotli@v1.1.0 (Go)
+### github.com/andybalholm/brotli@v1.2.7 (Go)
 
 ````text
 Copyright (c) 2009, 2010, 2013-2016 by the Brotli Authors.
@@ -7877,7 +7877,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ````
 
-### github.com/klauspost/compress@v1.20.1 (Go)
+### github.com/klauspost/compress@v1.20.2 (Go)
 
 ````text
 Copyright (c) 2012 The Go Authors. All rights reserved.
@@ -10404,7 +10404,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ````
 
-### golang.org/x/crypto@v0.58.0, golang.org/x/exp@v0.0.0-20261014143641-f0251eb4aa3e, golang.org/x/mod@v0.42.0, golang.org/x/net@v0.61.0, golang.org/x/sync@v0.24.0, golang.org/x/sys@v0.49.0, golang.org/x/term@v0.47.0, golang.org/x/text@v0.43.0, golang.org/x/time@v0.16.0 (Go)
+### golang.org/x/crypto@v0.59.0, golang.org/x/exp@v0.0.0-20261014143641-f0251eb4aa3e, golang.org/x/mod@v0.42.0, golang.org/x/net@v0.62.0, golang.org/x/sync@v0.25.0, golang.org/x/sys@v0.50.0, golang.org/x/term@v0.48.0, golang.org/x/text@v0.44.0, golang.org/x/time@v0.16.0 (Go)
 
 ````text
 --- LICENSE ---

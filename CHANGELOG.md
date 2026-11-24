@@ -7,6 +7,17 @@ fixes.
 
 ## Unreleased
 
+### Security
+
+- **Dependencies with published advisories are updated:** `klauspost/compress`
+  (GO-2026-6865), `andybalholm/brotli` (GO-2026-6888), `golang.org/x/net`
+  (GO-2026-6860, GO-2026-6866) and `golang.org/x/crypto` (GO-2026-5932). The
+  prereleases before this one called the affected code of the first two, in
+  `varlatchd` and in the CLI's Broker; the others were linked and not called.
+  The image's base is distroless on Debian 13, whose certificate authorities and
+  time zones are current. A nightly check now names any advisory that concerns
+  code the programs call.
+
 ### API
 
 - **`GET /v1/installation/listeners` has a new node check reason,
