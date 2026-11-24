@@ -80,6 +80,11 @@ fixes.
   `tailnet repin`; `varlatch tailnet --help` has `repin` now, and `varlatch
   help migrate` prints its help. `varlatch agents guide self-hosting` gives
   commands the Go CLI has.
+- **`varlatch setup` with a tailnet asks for the address people open**
+  (`--public-url`), without which no passkey could be enrolled, and copies
+  the node's auth key to `/etc/varlatch/tailnet-auth-key` for the service,
+  wherever the file you give is kept. `--tailnet-https-port` turns the
+  tailnet browser endpoint on.
 - **`varlatch migrate` finds a Coolify installation's Compose project.** A
   directory Coolify deploys from can hold the repository's
   `docker-compose.yml` beside the file that runs, and plain `docker compose`
@@ -209,6 +214,13 @@ fixes.
   Deadlines go on meanwhile, as on a stopped server: at the resume, due
   deletions run, an export being drained past its deadline is given up, and
   webhooks may repeat events.
+- **Messages name a Go installation's settings.** The outbound policy's
+  refusals, the audit export and the GitHub App registration told the host
+  operator about environment variables of 0.23.0; they name `outbound_allow`,
+  `audit_export` and `public_url` in `varlatchd.conf`, and so does the CLI.
+- **`varlatch doctor` reads the release check** that `varlatch upgrade
+  --check` records (`release.latest`): it fails, as an advisory, on a newer
+  release, and says how to upgrade a service or an image.
 - **The container image works with a read-only root filesystem.** SQLite
   had nowhere to put its temporary files there, so a larger write failed
   with a server error while smaller ones went on: enrolling the first

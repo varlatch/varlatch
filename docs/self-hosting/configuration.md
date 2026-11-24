@@ -321,11 +321,10 @@ To add the node to an installation:
 3. Once the node has joined, delete the key file and its line: the node
    keeps its identity in `tailnet/` in the data directory.
 
-`varlatch setup --ingress tailnet` writes these settings too. Give it
-`--public-url` as well: it does not ask for it, and people need an address
-to open. The `varlatch` group does not exist before setup, so make the key
-file readable when the journal says `permission denied`, then restart the
-service.
+`varlatch setup --ingress tailnet` does this on a new host: it asks for the
+address people open and for the auth key's file, and copies the key to
+`/etc/varlatch/tailnet-auth-key` for the service. Your own file is not
+needed afterwards.
 
 At its first join `varlatchd` pins the tailnet. If it finds itself in
 another one later, the listener closes until you decide with `sudo
@@ -389,6 +388,8 @@ Certificate Transparency logs.
 The endpoint's port, different from `tailnet_port`. Unset, the endpoint is
 off. Your tailnet policy must let people's devices connect to it. It cannot
 be used with a self-hosted control server.
+`varlatch setup --tailnet-https-port 8688` sets it on a new host; on a host
+set up without it, set it here and restart `varlatchd`.
 
 ### `tailnet_browser_origins`
 

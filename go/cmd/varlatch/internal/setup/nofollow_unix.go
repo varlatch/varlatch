@@ -15,6 +15,10 @@ import (
 // noFollow refuses a symbolic link where a file is opened.
 const noFollow = syscall.O_NOFOLLOW
 
+// nonBlock opens a FIFO without waiting for its writer, so that it can be
+// refused.
+const nonBlock = syscall.O_NONBLOCK
+
 // readNoFollow reads a file, never through a symbolic link (O_NOFOLLOW),
 // at most 1 MiB.
 func readNoFollow(path string) ([]byte, error) {

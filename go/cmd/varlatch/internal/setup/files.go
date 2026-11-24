@@ -26,7 +26,7 @@ func stagedName(path string) (string, error) {
 
 // stagedFile is stagedName's name for one of the files setup writes in
 // /etc/varlatch: what a run that ended mid-write can leave there.
-var stagedFile = regexp.MustCompile(`^\.(root-kek|backup-key|setup\.json)\.[0-9a-f]{12}\.tmp$`)
+var stagedFile = regexp.MustCompile(`^\.(root-kek|backup-key|tailnet-auth-key|setup\.json)\.[0-9a-f]{12}\.tmp$`)
 
 // isStagedName says whether name is such a leftover.
 func isStagedName(name string) bool { return stagedFile.MatchString(name) }

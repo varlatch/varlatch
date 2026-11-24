@@ -68,7 +68,8 @@ func TestOutboundWordsAreTheProtocols(t *testing.T) {
 			t.Errorf("%s: %q, the protocol %q", m.Reason, got, m.Label)
 		}
 	}
-	if outboundHostNote != v.HostNote {
+	// The setting named as a Go installation's (go/README.md, host-settings).
+	if want := strings.Replace(v.HostNote, "VARLATCH_OUTBOUND_ALLOW", "outbound_allow in varlatchd.conf", 1); outboundHostNote != want {
 		t.Errorf("host note %q, the protocol %q", outboundHostNote, v.HostNote)
 	}
 }
