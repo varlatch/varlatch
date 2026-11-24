@@ -5935,8 +5935,9 @@ export interface operations {
                 "application/json": {
                     agentIdentityId: string;
                     items: string[];
+                    /** @description Hosts: host, host:port, *.suffix, an IP address; no port is 443. Or, for a Broker that types (capability capabilities.destination-kinds, ADR-0064), pages, web:<http or https>://<host or *.suffix>[:port][/path], the path a prefix of whole segments, and desktop applications on the Broker's machine, app:<name>@<the Broker's identity ID>. Not hosts and the others in one Capability (VALIDATION_FAILED, reason mixed-destinations), nor an application of another machine (app-machine). A server without the capability refuses the last two kinds. */
                     destinations: string[];
-                    /** @description Required (capability capabilities.targets). For every item, 1 to 4 substitution targets: header:<name> (never a transport-owned header such as Host, Content-Length, Transfer-Encoding, Content-Type, or connection and proxy headers), query:<name>, json:<RFC 6901 pointer>, or form:<name>. Recorded immutably on the Capability; the Broker substitutes a Placeholder only at its targets. */
+                    /** @description Required (capability capabilities.targets). For every item, 1 to 4 substitution targets: header:<name> (never a transport-owned header such as Host, Content-Length, Transfer-Encoding, Content-Type, or connection and proxy headers), query:<name>, json:<RFC 6901 pointer>, or form:<name>, in a request; or (capability capabilities.target-kinds, ADR-0064) pipe:<RFC 6901 pointer>, in a JSON document handed to a process over a pipe, or field:<name>, typed into a field. A field goes with pages and applications, a pipe with hosts and applications, the others with hosts: a target no destination takes is refused (VALIDATION_FAILED, reason target-without-destination). A server without the capability refuses pipe and field. Recorded immutably on the Capability; the Broker substitutes a Placeholder only at its targets. */
                     targets: {
                         [key: string]: string[];
                     };
@@ -6017,11 +6018,20 @@ export interface operations {
             content: {
                 "application/json": {
                     capabilitySecret: string;
+                    /** @description Where the values go, as the Broker says: host and port; or (capability capabilities.destination-kinds, ADR-0064) the page, url with topUrl, or the application, app with window, on the Broker's own machine. One of the three; a server without the capability refuses the last two for want of host and port. None of the Capability's destinations: PERMISSION_DENIED, reason destination-mismatch, recorded with what was reported. */
                     destination: {
-                        host: string;
-                        port: number;
+                        host?: string;
+                        port?: number;
+                        /** @description The address of the page whose field it is, as the browser has it (a frame's own). Compared by scheme, host, port and path; its query and fragment are not compared nor recorded. One that cannot be read, or could be read two ways, is none of any. */
+                        url?: string;
+                        /** @description The address of the page around it, when that is another one: a destination has to name it too. */
+                        topUrl?: string;
+                        /** @description The application's name, compared exactly. */
+                        app?: string;
+                        /** @description Its window's title: recorded, shortened, and not compared. */
+                        window?: string;
                     };
-                    /** @description Each substitution the Broker will make, as an item and one of its recorded targets. Only these items are returned; references inside them still resolve against the other Secrets on the Capability, each dependency audited before it is decrypted. A Capability without targets (issued before they were required) is refused with reason capability-without-targets; a placement the Capability does not hold with placement-not-targeted. A single-use Capability exercised before is refused with already-used, and one whose issuer may no longer issue here with issuer-not-allowed. */
+                    /** @description Each substitution the Broker will make, as an item and one of its recorded targets. Only these items are returned; references inside them still resolve against the other Secrets on the Capability, each dependency audited before it is decrypted. A Capability without targets (issued before they were required) is refused with reason capability-without-targets; a placement the Capability does not hold with placement-not-targeted, and one whose target is none of the destination's kind with placement-not-for-destination. A single-use Capability exercised before is refused with already-used, and one whose issuer may no longer issue here with issuer-not-allowed. */
                     placements?: {
                         item: string;
                         target: string;
