@@ -291,7 +291,7 @@ Changes since 0.50.0-rc.2, by pull request:
   lifted last, only while that gate is there.
 - **`varlatch migrate` needs Docker Compose 2.32.0 or later (#436)**, and
   refuses an earlier one before anything is done.
-<!-- SLOT #451 (open, head 8a182138, its own text; recheck against the merged PR) -->
+<!-- SLOT #451 (open, head 427f857c, its own text, the same as at 8a182138; recheck against the merged PR) -->
 - **`varlatch setup` on a terminal shows the first administrator's link
   (#451).** In 0.50.0-rc.2 and earlier it showed `/enroll#[redacted]`, so an
   interactive setup could not go on without a link from `varlatchd admin
