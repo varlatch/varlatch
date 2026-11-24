@@ -626,29 +626,46 @@ func (s *Service) manifest(ctx context.Context, id, createdAt string, meta metad
 }
 
 // Compatible is whether this release restores an archive: a Go archive
-// of this API major whose schema this release opens, with database its
-// database. A newer schema is one only when the database says so
-// (compatible_from): a rollback-safe release wrote it, and this one serves
-// it after the rollback. The TypeScript server's archives are converted by
+// of this API major, whose database is of the schema its manifest names, one
+// this release opens as it does at startup (daemon's readiness): its own, or
+// a newer one whose compatible_from lets it (a rollback-safe release wrote
+// it, and this one serves it after the rollback). database is the archive's
+// database, as opened. The TypeScript server's archives are converted by
 // step 7, not restored.
 func Compatible(ctx context.Context, m backup.Manifest, database string) bool {
 	r, err := m.GoRelease()
-	if err != nil || r.APIMajor != APIMajor || r.DatabaseSchema < db.SchemaVersion {
+	if err != nil || r.APIMajor != APIMajor {
 		return false
 	}
-	if r.DatabaseSchema == db.SchemaVersion {
-		return true
+	version, compatibleFrom, err := schemaOf(ctx, database)
+	if err != nil || version != int64(r.DatabaseSchema) {
+		return false
 	}
-	conn, err := sql.Open("sqlite", fileURI(database)+"?mode=ro&immutable=1")
+	return version == db.SchemaVersion || version > db.SchemaVersion && compatibleFrom <= db.SchemaVersion
+}
+
+// schemaOf reads a database file's schema_version, the record startup reads
+// (its table, its one row), and that it is one varlatchd writes.
+func schemaOf(ctx context.Context, path string) (version, compatibleFrom int64, err error) {
+	conn, err := sql.Open("sqlite", fileURI(path)+"?mode=ro&immutable=1")
 	if err != nil {
-		return false
+		return 0, 0, err
 	}
 	defer conn.Close()
-	var version, compatibleFrom int
-	if err := conn.QueryRowContext(ctx, "SELECT version, compatible_from FROM schema_version").Scan(&version, &compatibleFrom); err != nil {
-		return false
+	var tables int
+	if err := conn.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name = 'schema_version'").Scan(&tables); err != nil {
+		return 0, 0, err
 	}
-	return version == r.DatabaseSchema && compatibleFrom <= db.SchemaVersion
+	if tables != 1 {
+		return 0, 0, db.ErrNotVarlatch
+	}
+	if err := conn.QueryRowContext(ctx, "SELECT version, compatible_from FROM schema_version WHERE singleton = 1").Scan(&version, &compatibleFrom); err != nil {
+		return 0, 0, err
+	}
+	if version < 1 || compatibleFrom < 1 || compatibleFrom > version {
+		return 0, 0, fmt.Errorf("the recorded version %d (compatible from %d) is not a varlatch schema version", version, compatibleFrom)
+	}
+	return version, compatibleFrom, nil
 }
 
 // verify opens the archive again (its integrity), and checks this release

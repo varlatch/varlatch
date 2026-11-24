@@ -1319,7 +1319,14 @@ jobs:
           case "$EVENT" in schedule | workflow_dispatch) suites="$suites sync deletion webhooks" ;; esac
           # shellcheck disable=SC2086 # one argument per suite
           G6_ROLLBACK_SAFE=$safe sh go/release/g6.sh "$old" "$new" "$RUNNER_TEMP/g6" $suites
-          if [ -z "$previous" ]; then
+          if [ -n "$previous" ]; then
+            # The previous release has this release's schema until a step is
+            # added: this commit's varlatchd on a database a schema step (the
+            # fixture's) upgraded, cheaply (no conformance runs): opened,
+            # archived, restored and upgraded again.
+            (cd go && go build -tags conformance,g6fixture -o "$RUNNER_TEMP/varlatchd-g6fixture" ./cmd/varlatchd)
+            G6_ROLLBACK_SAFE=true G6_CONFORMANCE=off sh go/release/g6.sh "$RUNNER_TEMP/varlatchd" "$RUNNER_TEMP/varlatchd-g6fixture" "$RUNNER_TEMP/g6-fixture"
+          else
             # The not-rollback-safe path, cheaply (no conformance runs): the
             # same fixture step declared not rollback-safe (g6unsafe:
             # compatibleFrom 2) passes declared so, since the previous

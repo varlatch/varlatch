@@ -113,6 +113,15 @@ func RollbackSafe(m release.Manifest, installed Installed) bool {
 	return m.CompatibleFrom <= installed.Schema
 }
 
+// SchemaRefusal refuses a release whose schema is below the database's:
+// its varlatchd could not be given the database. nil for any other.
+func SchemaRefusal(inst Installed, version string, m release.Manifest) error {
+	if m.SchemaVersion >= inst.Database {
+		return nil
+	}
+	return &Error{Message: fmt.Sprintf("the database's schema is version %d (a release later than %s wrote it), and %s's is %d: upgrade to a release of schema %d or later; nothing was changed", inst.Database, inst.Version, version, m.SchemaVersion, inst.Database)}
+}
+
 // Error is an upgrade that did not happen, or did not end as asked:
 // Journal says where it stands.
 type Error struct {
@@ -279,8 +288,8 @@ func (u *Upgrader) Run(ctx context.Context, inst Installed, rel Release) (*journ
 	if m.Version != rel.Version {
 		return nil, &Error{Message: fmt.Sprintf("the release's manifest is for %s, not %s; nothing was changed", m.Version, rel.Version)}
 	}
-	if m.SchemaVersion < inst.Database {
-		return nil, &Error{Message: fmt.Sprintf("the database's schema is version %d (a release later than %s wrote it), and %s's is %d: upgrade to a release of schema %d or later; nothing was changed", inst.Database, inst.Version, rel.Version, m.SchemaVersion, inst.Database)}
+	if err := SchemaRefusal(inst, rel.Version, m); err != nil {
+		return nil, err
 	}
 	// <data>/upgrades is checked before anything reads or removes there:
 	// prune must never follow a link out of the data directory.

@@ -140,6 +140,10 @@ func (r *Run) upgrade() error {
 	if err != nil {
 		return upgradeFailure(err)
 	}
+	// Before anything is asked or recorded (the migration's window below).
+	if err := upgrade.SchemaRefusal(inst, rel.Version, rel.Manifest); err != nil {
+		return upgradeFailure(err)
+	}
 	safe := upgrade.RollbackSafe(rel.Manifest, inst)
 	// Decision 17: a release that ends a migration's rollback window is
 	// upgraded to only once the operator confirms it, while the window is

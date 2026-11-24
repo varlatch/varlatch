@@ -3,6 +3,7 @@
 package backups
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -17,6 +18,7 @@ import (
 	"github.com/varlatch/varlatch/go/lib/envelope"
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/db"
+	"github.com/varlatch/varlatch/go/server/ids"
 	"github.com/varlatch/varlatch/go/server/maintenance"
 	"github.com/varlatch/varlatch/go/server/orgs"
 	"github.com/varlatch/varlatch/go/server/write"
@@ -308,6 +310,102 @@ func TestNewerSchema(t *testing.T) {
 			}
 			if v := queryOne(t, cfg.DatabasePath(), "SELECT version FROM schema_version"); v != fmt.Sprint(c.version) {
 				t.Errorf("the restored schema is %s", v)
+			}
+		})
+	}
+}
+
+// resealed is an archive of f's with its database changed and its manifest
+// naming schema, sealed again with f's keys.
+func (f *fixture) resealed(t *testing.T, schema int, change ...string) string {
+	t.Helper()
+	ctx := context.Background()
+	s := f.service(nil)
+	res, err := s.Run(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o, err := backup.Open(res.Path, f.bekOf(t), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer o.Close()
+	snapshot, configuration := o.Path(backup.ComponentDatabase), o.Path(backup.ComponentConfiguration)
+	meta, err := readMetadata(ctx, snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := sql.Open("sqlite", fileURI(snapshot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range change {
+		if _, err := conn.Exec(stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	conn.Close()
+	meta.schemaVersion = schema
+	manifest, err := s.manifest(ctx, ids.UUID(), res.CreatedAt, meta, snapshot, configuration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "resealed.vltbak")
+	if err := backup.Seal(path, manifest, []string{snapshot, configuration}, f.bekOf(t), backup.SealOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// An archive whose database is not of the schema its manifest names, or of
+// one startup would refuse, is refused before the gate opens and the
+// database is replaced.
+func TestRestoreChecksTheArchivesSchema(t *testing.T) {
+	ctx := context.Background()
+	newer := fmt.Sprint(db.SchemaVersion + 1)
+	current := fmt.Sprint(db.SchemaVersion)
+	for _, c := range []struct {
+		name   string
+		schema int
+		change []string
+		ok     bool
+	}{
+		{"as made", db.SchemaVersion, nil, true},
+		{"the manifest's is this release's, the database's too new", db.SchemaVersion, []string{"UPDATE schema_version SET version = " + newer + ", compatible_from = " + newer}, false},
+		{"the manifest's is this release's, the database's newer", db.SchemaVersion, []string{"UPDATE schema_version SET version = " + newer + ", compatible_from = 1"}, false},
+		{"the manifest's is newer, the database's this release's", db.SchemaVersion + 1, nil, false},
+		{"both newer, this release opens it", db.SchemaVersion + 1, []string{"UPDATE schema_version SET version = " + newer + ", compatible_from = " + current}, true},
+		{"both newer, this release does not", db.SchemaVersion + 1, []string{"UPDATE schema_version SET version = " + newer + ", compatible_from = " + newer}, false},
+		{"no row", db.SchemaVersion, []string{"DELETE FROM schema_version"}, false},
+		{"a view in its place", db.SchemaVersion, []string{"DROP TABLE schema_version", "CREATE VIEW schema_version AS SELECT 1 AS singleton, " + current + " AS version, 1 AS compatible_from"}, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFixture(t)
+			archive := f.resealed(t, c.schema, c.change...)
+			// Over a database that is there: the same installation's.
+			cfg := f.target(t)
+			if _, err := Restore(ctx, cfg, f.resealed(t, db.SchemaVersion), f.bekOf(t), f.rootKEK, nil); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.ReadFile(cfg.DatabasePath())
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = Restore(ctx, cfg, archive, f.bekOf(t), f.rootKEK, nil)
+			if c.ok {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), "cannot restore an archive") {
+				t.Fatalf("%v", err)
+			}
+			if after, err := os.ReadFile(cfg.DatabasePath()); err != nil || !bytes.Equal(before, after) {
+				t.Errorf("the database was changed (%v)", err)
+			}
+			if l := listing(t, cfg.DataDir); l != "varlatch.db" {
+				t.Errorf("the data directory holds %q", l)
 			}
 		})
 	}
