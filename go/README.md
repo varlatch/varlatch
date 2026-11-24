@@ -1889,9 +1889,10 @@ may use; it never adds to the Agent's Grants.
     Capability's carries `once:` (`used:` once spent); they combine as
     `for:once:` / `for:used:`. The single use is spent in
     `capability.exercised`'s own job, so of several exercises at once one is
-    granted. A refusal after that event (an unresolved reference) gives the
-    use back, never touching `revoked_at`; any other failure leaves it spent.
-    An older server matches no secret against any prefixed hash.
+    granted. An exercise whose placed items have no value gives nothing and
+    leaves it unused. A refusal after that event (an unresolved reference)
+    gives the use back, never touching `revoked_at`; any other failure leaves
+    it spent. An older server matches no secret against any prefixed hash.
   - `server/capabilities` `delegation_test.go` covers all of it over HTTP.
 - **Parity.** `capabilities-v0.22.0.json`
   (go-capabilities-fixture.test.ts) replays 154 requests: issuance in

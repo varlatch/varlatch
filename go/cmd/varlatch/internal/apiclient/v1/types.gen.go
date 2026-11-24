@@ -6545,7 +6545,7 @@ type IssueCapabilityJSONBody struct {
 	} `json:"precondition,omitempty"`
 	RunId *string `json:"runId,omitempty"`
 
-	// SingleUse Exercised once (capability capabilities.single-use). A granted exercise uses it up, even when its response is lost or the server fails after recording it; a refused one does not. A server without the capability ignores this member: check it, or that the answer says singleUse.
+	// SingleUse Exercised once (capability capabilities.single-use). A granted exercise uses it up, even when its response is lost or the server fails after recording it; a refused one, or one whose items have no value, does not. A server without the capability ignores this member: check it, or that the answer says singleUse.
 	SingleUse *bool `json:"singleUse,omitempty"`
 
 	// Targets Required (capability capabilities.targets). For every item, 1 to 4 substitution targets: header:<name> (never a transport-owned header such as Host, Content-Length, Transfer-Encoding, Content-Type, or connection and proxy headers), query:<name>, json:<RFC 6901 pointer>, or form:<name>. Recorded immutably on the Capability; the Broker substitutes a Placeholder only at its targets.

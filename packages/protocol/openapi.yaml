@@ -933,7 +933,7 @@ paths:
                     Exercised once (capability capabilities.single-use). A
                     granted exercise uses it up, even when its response is
                     lost or the server fails after recording it; a refused
-                    one does not. A server without the capability ignores
+                    one, or one whose items have no value, does not. A server without the capability ignores
                     this member: check it, or that the answer says singleUse.
                 precondition:
                   type: object

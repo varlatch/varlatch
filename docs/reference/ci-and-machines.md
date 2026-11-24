@@ -141,7 +141,8 @@ Then, for each job:
 
    Anything else the credential asks for is refused, reads included. A
    granted exercise of a single-use Capability uses it up even when the
-   answer is lost: issue another one then. A refused exercise does not.
+   answer is lost: issue another one then. A refused exercise, or one that
+   delivers no item (none of the placed items has a value), does not.
 4. The orchestrator revokes what it issued when the job ends
    (`DELETE …/capabilities/{id}`), and sees what it issued with
    `GET …/capabilities`. Expiry is the fallback.

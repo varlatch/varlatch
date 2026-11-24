@@ -266,7 +266,8 @@ limits each party, and no further than this:
   broker's, another run's or a wrong secret's is; the secret is 32 random
   bytes. Each attempt is in the audit log.
 - **A granted exercise of a single-use Capability uses it up** even when the
-  broker never receives the answer. A refused one does not.
+  broker never receives the answer. A refused exercise, or one that delivers
+  no item (none of the placed items has a value), does not.
 
 ## 7. Reviewing a claim
 

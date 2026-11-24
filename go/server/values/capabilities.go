@@ -485,7 +485,11 @@ func (s *Service) ExerciseCapability(ctx context.Context, req Request, capabilit
 	exercised = append(exercised, issuer()...)
 	var spend beforeAudit
 	ended := "already-used"
-	if singleUse {
+	// A single-use Capability spends its use only when at least one item is
+	// delivered: an exercise whose placed items all have no value leaves it
+	// unused.
+	shouldSpend := singleUse && len(selected) > 0
+	if shouldSpend {
 		exercised = append(exercised, jsvalue.Member{Key: "singleUse", Value: true})
 		// The use is spent in capability.exercised's own job: two exercises
 		// at once, and only one of them has it. From here on it stays
@@ -521,7 +525,7 @@ func (s *Service) ExerciseCapability(ctx context.Context, req Request, capabilit
 	if err != nil {
 		return nil, err
 	}
-	spent = singleUse
+	spent = shouldSpend
 
 	type out struct {
 		item     Item

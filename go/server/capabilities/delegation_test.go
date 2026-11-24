@@ -943,6 +943,28 @@ func TestTokenUsesArePruned(t *testing.T) {
 	}
 }
 
+// Single-use Capabilities are not spent when an exercise delivers nothing
+// (every placed item has no value).
+func TestSingleUseNotSpentWhenNothingDelivered(t *testing.T) {
+	w := newWorld(t)
+	c := w.issue("broker", with{
+		"singleUse": true,
+		"items":     []string{"NOT_THERE", "SECRET_A"},
+		"targets":   map[string]any{"NOT_THERE": []string{"header:x"}, "SECRET_A": []string{"header:authorization"}},
+	})
+	empty := w.want("empty", w.exercise("broker", c, with{"placements": []any{map[string]any{"item": "NOT_THERE", "target": "header:x"}}}), 200, "")
+	if items, _ := empty.body["items"].([]any); len(items) != 0 {
+		t.Fatalf("expected no items: %s", empty.raw)
+	}
+	for _, i := range w.call("GET", capsPath, "alice", nil).body["items"].([]any) {
+		if m := i.(map[string]any); m["id"] == c.id && m["used"] != false {
+			t.Fatalf("listed as used after empty exercise: %v", m)
+		}
+	}
+	w.wantValue("then real value", w.exercise("broker", c, nil))
+	w.want("spent now", w.exercise("broker", c, nil), 403, "PERMISSION_DENIED")
+}
+
 func TestATokenIsExchangedOnceUnderConcurrency(t *testing.T) {
 	w := newWorld(t)
 	w.want("bind", w.bind("broker", with{"exerciseOnly": true}), 201, "")

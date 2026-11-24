@@ -5397,7 +5397,7 @@ export interface operations {
                     runId?: string;
                     /** @description The Broker the Capability is issued for (capability capabilities.delegate): a broker identity of the Organization that is not retired. Naming any but the caller itself needs capability.issue. Required when the caller is not a Broker. While the Capability lives, every exercise also needs its issuer to be live and to hold capability.issue here. */
                     brokerIdentityId?: string;
-                    /** @description Exercised once (capability capabilities.single-use). A granted exercise uses it up, even when its response is lost or the server fails after recording it; a refused one does not. A server without the capability ignores this member: check it, or that the answer says singleUse. */
+                    /** @description Exercised once (capability capabilities.single-use). A granted exercise uses it up, even when its response is lost or the server fails after recording it; a refused one, or one whose items have no value, does not. A server without the capability ignores this member: check it, or that the answer says singleUse. */
                     singleUse?: boolean;
                     /** @description Agent-safe strict preflight (capability retrieval.preflight): the state a preflight strict retrieval saw. Issuance compares it in its own snapshot, without decrypting anything, and refuses with STATE_CHANGED (details.categories names only what changed) when it differs. It confers no authority. */
                     precondition?: {
