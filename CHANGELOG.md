@@ -476,6 +476,27 @@ Changes since 0.50.0-rc.3, by pull request:
   `go/test/rehearsal/published.sh` runs G5's restored rehearsal on 0.23.0's
   published images in `release.yml` and nightly in `go.yml`.
 <!-- END SLOT AUDIT-10-11 -->
+<!-- SLOT GO-CONTAINER-READONLY (ci/go-container-readonly, local head da7e7e61; add PR number, pin pushed head, recheck against the merged PR, then remove both markers; or drop) -->
+- **Nightly `go-container` conformance runs with `--read-only` and no
+  tmpfs.** `scripts/conformance/targets/go-container.mjs` runs its `serve`
+  and `admin` containers with a read-only root filesystem and no `--tmpfs`,
+  matching how the image is checked after #457. No change to what is
+  shipped.
+<!-- END SLOT GO-CONTAINER-READONLY -->
+<!-- SLOT REHEARSAL-WRITES (test/rehearsal-writes, local head 1d8e37c5; add PR number, pin pushed head, recheck against the merged PR, then remove both markers; or drop) -->
+- **The migration's rehearsals: step times, in-memory mode and writes on
+  Go.** Adds per-step timings to the rehearsal report, an in-memory copy
+  mode (`VL_RH_MEMORY=1`), and checks that writes on the Go server past
+  SQLite's in-memory cache succeed under a read-only root filesystem and
+  appear on 0.23.0 after a rollback. No change to what is shipped.
+<!-- END SLOT REHEARSAL-WRITES -->
+<!-- SLOT UPGRADE-SYSTEMD-B7 (test/upgrade-systemd-c, local head 7f9507c2; add PR number, pin pushed head, recheck against the merged PR, then remove both markers; or drop) -->
+- **Systemd upgrade and rollback test workflow (B7).** Adds
+  `go/install/build-upgrade.sh`, `go/install/test-upgrade.sh` and the
+  `upgrade-systemd.yml` workflow to test upgrades, crash points, undos,
+  rollbacks, by-hand recovery steps, uninstall and restore on a
+  GitHub-hosted runner. No change to what is shipped.
+<!-- END SLOT UPGRADE-SYSTEMD-B7 -->
 
 - **Prerelease only.** It is published as a GitHub prerelease and never
   becomes the latest release. What follows the latest release (`varlatch
