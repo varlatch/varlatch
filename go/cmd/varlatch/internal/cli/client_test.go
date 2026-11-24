@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -168,13 +169,27 @@ func TestNotAuthenticated(t *testing.T) {
 	}
 }
 
-func TestUnreachableServer(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+// refusing is an address that refuses a connection for as long as the test
+// runs. A listener's port, closed, is anyone's again, and another test's
+// server may get it (a connected socket's port is given away too). A listener
+// is given no port below 1024 it did not ask for; Fetch's bad ports end at 995
+// there.
+func refusing(t *testing.T) string {
+	t.Helper()
+	for port := 1023; port > 1000; port-- {
+		addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+		conn, err := net.Dial("tcp", addr)
+		if err != nil {
+			return addr
+		}
+		conn.Close() // a service of this host's
 	}
-	server := "http://" + ln.Addr().String()
-	ln.Close()
+	t.Fatal("every port from 1001 to 1023 is in use")
+	return ""
+}
+
+func TestUnreachableServer(t *testing.T) {
+	server := "http://" + refusing(t)
 	r, _ := testRun(MapEnv{"VARLATCH_CONFIG_DIR": t.TempDir(), "VARLATCH_TOKEN": "vlt_svc_x"})
 	api, err := r.connectClient(server)
 	if err != nil {

@@ -154,6 +154,82 @@ func (r *tailnetRunner) browserEndpoint() *httpserver.BrowserEndpoint {
 	return &httpserver.BrowserEndpoint{Host: r.manager.BrowserHost, Port: r.cfg.HTTPSPort, Origins: r.cfg.BrowserOrigins}
 }
 
+// joinNotice is how long the node may take to join before it is said to
+// wait; then it is looked at every tailnet.CheckEvery. Tests shorten it.
+var joinNotice = 15 * time.Second
+
+// What the report and doctor say of a node that has not joined.
+const (
+	waitingDetail = "The node is waiting for control: its control server has not answered since varlatchd started. Tailnet access is closed; the tailnet listener opens by itself when the node joins. After 5 minutes of this, the control server may also be refusing the node without saying so: check the auth key and the control server."
+	limitedDetail = "The node is waiting for control: its control server limits its registrations (rate limited), and varlatchd tries again by itself. Tailnet access is closed; the tailnet listener opens by itself when the node joins."
+	loginDetail   = "The node must be logged in or approved at its control server (its key expired, the node was removed there, or it awaits approval). Tailnet access is closed; the tailnet listener opens by itself once it is."
+	refusedDetail = "The node's control server refused it. Tailnet access stays closed until that is put right (the auth key, most often: varlatch doctor says how; see also the control server's own log) and varlatchd is restarted."
+)
+
+// join waits for the node to join its tailnet, and says meanwhile why it
+// has not (the log, the report, doctor). A control server that does not
+// answer, or puts the node off, is waited for without end, so the listener
+// opens when it recovers; one that refuses the node ends the wait.
+func (r *tailnetRunner) join(ctx context.Context) error {
+	up, put := make(chan error, 1), make(chan error, 1)
+	go func() {
+		up <- r.node.Join(ctx, func(err error) {
+			select {
+			case put <- err:
+			default:
+			}
+		})
+	}()
+	said := ""
+	waits := func(reason, detail string, args ...any) {
+		r.manager.SetJoin(reason, detail)
+		r.manager.Check(ctx)
+		if detail != said {
+			said = detail
+			r.log.Warn("the tailnet node has not joined its tailnet; the tailnet listener opens when it has", append([]any{"reason", reason}, args...)...)
+		}
+	}
+	notice := time.NewTimer(joinNotice)
+	defer notice.Stop()
+	for {
+		select {
+		case err := <-up:
+			if err == nil {
+				r.manager.SetJoin("", "")
+				return nil
+			}
+			var refused *tailnet.RefusedError
+			if ctx.Err() == nil && errors.As(err, &refused) {
+				r.manager.SetJoin(tailnet.JoinRefused, refusedDetail)
+				r.manager.Listening(false)
+				r.manager.Check(ctx)
+			}
+			if ctx.Err() == nil {
+				r.log.Error("the tailnet node did not join its tailnet; the tailnet listener is not serving", "error", err)
+			}
+			return err
+		case err := <-put:
+			detail := waitingDetail
+			if tailnet.RateLimited(err) {
+				detail = limitedDetail
+			}
+			waits(tailnet.WaitingForControl, detail, "error", err)
+		case <-notice.C:
+			notice.Reset(tailnet.CheckEvery)
+			st, err := r.node.Status(ctx)
+			switch {
+			case err == nil && st.AuthNeeded:
+				waits(tailnet.LoginNeeded, loginDetail)
+			case said == limitedDetail:
+				// Still what is known.
+				r.manager.Check(ctx)
+			default:
+				waits(tailnet.WaitingForControl, waitingDetail)
+			}
+		}
+	}
+}
+
 // serve waits for the node to join its tailnet, checks (or records) the
 // pin, then serves handler on the node's addresses and, when configured,
 // browser over HTTPS with the node's certificate, and checks the node
@@ -161,9 +237,9 @@ func (r *tailnetRunner) browserEndpoint() *httpserver.BrowserEndpoint {
 // takes the tailnet listener down with it.
 func (r *tailnetRunner) serve(ctx context.Context, handler, browser http.Handler) {
 	defer close(r.done)
-	if err := r.node.Up(ctx); err != nil {
-		if ctx.Err() == nil {
-			r.log.Error("the tailnet node did not join its tailnet; the tailnet listener is not serving", "error", err)
+	if err := r.join(ctx); err != nil {
+		if ctx.Err() == nil && r.held {
+			r.listened <- err
 		}
 		return
 	}

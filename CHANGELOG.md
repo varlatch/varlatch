@@ -136,6 +136,21 @@ fixes.
 - **`varlatch migrate --rollback` makes the dashboard again** once the
   rebuilt server starts. Its nginx resolves the server's address once, and
   one that kept running could answer 502 when the address had changed.
+- **`varlatch setup` on a terminal shows the first administrator's link.**
+  In 0.50.0-rc.2 and earlier it showed `/enroll#[redacted]`, so an
+  interactive setup could not go on without a link from `varlatchd admin
+  bootstrap --revoke-unused`. Setup without a terminal, and the links of
+  `varlatch invite`, `move` and `admin reenroll`, were not affected. In
+  assisted mode setup neither asks nor shows anything on the terminal, as
+  without one: a coding agent would read the link and the keys.
+- **`varlatch migrate` says what an undo, a rollback and a wait are doing.**
+  Each step says when it starts, every 15 seconds while it lasts (how long
+  so far, and what it waits for) and when it ends, where a minute or more
+  could pass without a line; so do the final copy and `--finish`'s archive.
+  Not with `--json`. A pipe nobody reads holds no step up, and a closed one
+  no longer ends `varlatch migrate` half way. An undo stopped anywhere is
+  finished by `--resume` or `--abort`, as before, and the tests now stop it
+  between its steps.
 - **`install.sh` updates an existing Go install again.** In 0.50.0-rc.2 it
   refused to replace any Go varlatch already installed, a run over its own
   fresh install included, with "varlatch is installed with Homebrew; update
@@ -148,6 +163,13 @@ fixes.
   `/opt/homebrew/` or `/home/linuxbrew/.linuxbrew/`. It still refuses the
   TypeScript CLI's formula's wrapper script, which says it is Homebrew's.
   `install.ps1` was not affected.
+- **`varlatch self-update` on Windows waits for a file another process
+  holds.** A virus scanner or an indexer reading the new binary made it
+  fail with "The process cannot access the file because it is being used by
+  another process". It now tries again for up to 5 seconds, with the old
+  binary in its place between the tries, and then fails as before. If the
+  old binary cannot be put back, it now says where that is, where it said
+  that nothing had changed.
 
 ### Server
 
@@ -159,6 +181,44 @@ fixes.
   `infra/coolify/varlatchd.compose.yml` sets `stop_grace_period: 30s`, as
   the systemd unit has it; Docker's default, 10 seconds, can cut off
   requests in flight. For `docker run`, give `--stop-timeout 30`.
+
+### Tailnet
+
+- **varlatchd's tailnet node no longer starts on a cached network map.**
+  Tailscale's embedded client keeps the node's own map on disk and, at the
+  next start, was up on it before it had spoken to the control plane. A node
+  renamed, retagged or moved since could read back as it was: `varlatchd
+  admin tailnet enroll` refused (or held) a node by a name of an earlier
+  start, which failed a handoff resumed after an undo, and varlatchd judged
+  its pin, tags and name by that map until the new one came. A map on disk is
+  never read now, and the tailnet listener opens only once the control plane
+  has answered. The client may still write the node's own map (its name,
+  tags and addresses, no peers) while it runs, for which it has no switch;
+  varlatchd removes it when the node starts and when it stops. A restart
+  while the control plane is unreachable keeps the tailnet listener closed
+  until it answers.
+- **The tailnet listener opens when the control plane recovers, without a
+  restart.** A control plane that limited the node's registration (HTTP 429)
+  while varlatchd started left the tailnet listener closed until varlatchd
+  was restarted. It is waited for now, however long it takes, and the host
+  commands and the restore's probe wait too, within their own time. The log,
+  `varlatch doctor` and the listeners report's `warnings` say what the node
+  waits for: its control plane, or a login or an approval there. A node the
+  control plane refuses (an auth key it does not take) keeps the listener
+  closed as before, and they say so until varlatchd is restarted. The
+  control plane's own words are no longer logged or shown by `varlatchd admin
+  tailnet open` and the other host commands: such an answer can repeat the
+  auth key it was given.
+- **The handoff's host commands wait for the control plane's change to reach
+  the node**, for 30 seconds at most, and refuse as before, naming what the
+  node is and what it must be, when it does not. `admin tailnet enroll` takes
+  the node's name and, on a self-hosted control server, its tags from one
+  reading of the node, and pins that one: it could succeed with the name seen
+  first and the tags later, under another name. `admin tailnet certificate
+  obtain` and `take-name` wait for the name and for the control plane to list
+  exactly that name among the node's certificate domains: before it does, the
+  node itself refuses the certificate, so the handoff's three attempts could
+  be spent at once.
 
 ### Documentation
 
@@ -558,9 +618,12 @@ Changes since 0.50.0-rc.1, by pull request:
 - **The switch, more robust (#416, #420, #423).** The sidecar is started
   for that step only when `varlatchd` shares its network; the restarted
   `varlatchd` is waited for, at most a minute, before the source is
-  marked; and every stop of the sidecar runs even when the run is
-  interrupted, so the old node never stays on the tailnet until
-  `--resume`. `ps` or `docker compose config` failing is said as such,
+  marked; and a stop of the sidecar is not cut short by a step that ran
+  out of its time. (Corrected: this entry said that the old node never
+  stays on the tailnet after an interrupted run. Ctrl-C or a kill ends
+  `varlatch migrate` at once, wherever it is, so the old node can stay on
+  the tailnet, under its temporary name, until `varlatch migrate --resume`
+  goes on from the journal and stops the sidecar.) `ps` or `docker compose config` failing is said as such,
   without their output, and more than one `varlatchd` container is
   refused.
 - **A migration after a rollback (#414).** After `--rollback` and

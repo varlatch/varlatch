@@ -29,8 +29,8 @@ import (
 //     anything but printJSON, and a redactedJSON made anywhere but
 //     redactJSON;
 //   - outShowing, the one writer that lets a token through, reached
-//     (called or taken as a method value) anywhere but inviteCommand and
-//     showReenrollLinks, and
+//     (called or taken as a method value) anywhere but inviteCommand,
+//     showReenrollLinks and showEnrollLink, and
 //     redactOutputShowing reached anywhere but outShowing;
 //   - os.NewFile (a stream by its descriptor) outside newFileSites,
 //     syscall.Write and unix.Write;
@@ -188,11 +188,12 @@ func TestEveryWriteGoesThroughTheFailSafe(t *testing.T) {
 func isStream(name string) bool { return name == "Stdout" || name == "Stderr" }
 
 // showingSites: where the token-showing writer and its redactor may be
-// reached. outShowing prints invite's enrollment token and a move's
-// re-enrollment links (one token each, slice 6.9); nothing else may print
-// a token through it.
+// reached. outShowing prints invite's enrollment token, a move's
+// re-enrollment links (one token each, slice 6.9) and the first
+// administrator's enrollment link (setup on a terminal); nothing else may
+// print a token through it.
 var showingSites = map[string][]string{
-	"outShowing":          {"internal/cli/admin.go:inviteCommand", "internal/cli/move.go:showReenrollLinks"},
+	"outShowing":          {"internal/cli/admin.go:inviteCommand", "internal/cli/move.go:showReenrollLinks", "internal/cli/setup.go:showEnrollLink"},
 	"redactOutputShowing": {"internal/cli/cli.go:outShowing"},
 }
 

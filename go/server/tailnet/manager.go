@@ -41,6 +41,15 @@ type DERPNode interface {
 // control server does not carry exactly tailnet_tags (RequireTags).
 const TagsDiffer = closed.TagsDiffer
 
+// Why a node that has not joined its tailnet keeps access closed (package
+// closed says more).
+const (
+	NotEnrolled       = closed.NotEnrolled
+	WaitingForControl = closed.WaitingForControl
+	LoginNeeded       = closed.LoginNeeded
+	JoinRefused       = closed.JoinRefused
+)
+
 // Files of the tailnet in the data directory.
 const (
 	// PinFile is the pin; StateDir the node's state (secret, never in a
@@ -106,6 +115,9 @@ type Manager struct {
 	// configured host name, the port, its certificate, and whether it
 	// bound its port.
 	browser *browserEndpoint
+	// joinReason is why the node is not on its tailnet yet, "" once it has
+	// been (SetJoin); joinDetail says it.
+	joinReason, joinDetail string
 	// hostname is the configured name, for the read-back (NameSuffixed);
 	// held, the temporary name a handoff holds the node under.
 	hostname  string
@@ -219,11 +231,50 @@ func (m *Manager) openLocked() bool {
 // (ADR-0059 amendment 11). Another set, none included, closes access until
 // they match (fail closed), checked at each check; never latched.
 func (m *Manager) RequireTags(tags []string) {
-	want := slices.Clone(tags)
-	slices.Sort(want)
 	m.mu.Lock()
-	m.requireTags = slices.Compact(want)
+	m.requireTags = tagSet(tags)
 	m.mu.Unlock()
+}
+
+// tagSet is tags sorted, each once.
+func tagSet(tags []string) []string {
+	set := slices.Clone(tags)
+	slices.Sort(set)
+	return slices.Compact(set)
+}
+
+// SameTags is whether a and b are the same set of tags.
+func SameTags(a, b []string) bool { return slices.Equal(tagSet(a), tagSet(b)) }
+
+// SetJoin says why the node is not on its tailnet yet (WaitingForControl,
+// LoginNeeded or JoinRefused) and what that means, for Closed, Explain and
+// the report; "" once it has joined. JoinRefused stays: the listener's
+// goroutine ended with it, so nothing listens until varlatchd is started
+// again, though tsnet goes on trying and the node may come to run.
+func (m *Manager) SetJoin(reason, detail string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.joinReason != JoinRefused {
+		m.joinReason, m.joinDetail = reason, detail
+	}
+}
+
+// NeverJoined is whether the node has no identity yet: no tailnet was ever
+// pinned for it, and the last check found that no control server ever
+// registered it. False whenever that is not known.
+func (m *Manager) NeverJoined() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.pin != nil && m.pin.Enrolling && m.status != nil && !m.status.HaveNodeKey && m.status.SelfID == ""
+}
+
+// joinLocked is why the node is not on its tailnet yet, and what that
+// means: nothing once a check found it on one, except after a refusal.
+func (m *Manager) joinLocked() (reason, detail string) {
+	if m.observed != nil && m.joinReason != JoinRefused {
+		return "", ""
+	}
+	return m.joinReason, m.joinDetail
 }
 
 // settleLocked starts a new open period when access opened or closed: the
@@ -331,13 +382,19 @@ func (g admissionGuard) Release() { g.m.cut.RUnlock() }
 func (m *Manager) Closed() string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	joining, _ := m.joinLocked()
 	switch {
+	case joining == JoinRefused:
+		// Whatever else closes it, nothing listens until a restart.
+		return joining
 	case m.missing:
 		return PinMissing
-	case m.pin == nil || m.pin.Enrolling:
-		return "not-enrolled"
-	case m.pin.Closed != nil:
+	case m.pin != nil && m.pin.Closed != nil:
 		return m.pin.Closed.Reason
+	case joining != "":
+		return joining
+	case m.pin == nil || m.pin.Enrolling:
+		return NotEnrolled
 	case m.observed == nil:
 		return PinUnknown
 	case m.verdict == "" && m.tagsDiffer:
@@ -347,22 +404,34 @@ func (m *Manager) Closed() string {
 }
 
 // Explain is what the last check found that a status line names: why the
-// tags close access (detail, "" when they do not), and the warnings that
+// tags close access, or why the node has not joined its tailnet (detail, ""
+// when neither), and the warnings that
 // close nothing (Tailscale's DERP servers in a self-hosted control
 // server's DERP map).
 func (m *Manager) Explain() (detail string, warnings []string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.tagsDetailLocked(), m.warningsLocked()
+	reason, detail := m.joinLocked()
+	if d := m.tagsDetailLocked(); d != "" && reason != JoinRefused {
+		detail = d
+	}
+	return detail, m.warningsLocked()
 }
 
 func (m *Manager) tagsDetailLocked() string {
 	if !m.tagsDiffer {
 		return ""
 	}
+	return TagsDetail(m.nodeTags, m.requireTags)
+}
+
+// TagsDetail says that a node's tags, have, are not tailnet_tags, want, and
+// what to do.
+func TagsDetail(have, want []string) string {
+	have, want = tagSet(have), tagSet(want)
 	return fmt.Sprintf("The node's tags (%s) are not tailnet_tags (%s): on a self-hosted control server they are its pre-auth key's. Tailnet access is closed until they match: "+
 		"give the node tailnet_tags in Headscale (headscale nodes tag -i <node id> -t %s), or enrol it again with a tagged pre-auth key.",
-		tagList(m.nodeTags), tagList(m.requireTags), strings.Join(m.requireTags, ","))
+		tagList(have), tagList(want), strings.Join(want, ","))
 }
 
 func (m *Manager) warningsLocked() []string {
@@ -532,10 +601,8 @@ func (m *Manager) checkLocked(ctx context.Context) {
 	// On a self-hosted control server the node's tags are its pre-auth
 	// key's: any other set than tailnet_tags (none included) closes access
 	// until they match (ADR-0059 amendment 11, step 7.5c c3).
-	tags := slices.Clone(st.Tags)
-	slices.Sort(tags)
-	tags = slices.Compact(tags)
-	differ := m.requireTags != nil && st.BackendState == "Running" && !slices.Equal(tags, m.requireTags)
+	tags := tagSet(st.Tags)
+	differ := m.requireTags != nil && st.BackendState == "Running" && !SameTags(tags, m.requireTags)
 	switch {
 	case differ && !m.tagsDiffer:
 		m.log.Error("the tailnet node's tags are not tailnet_tags: tailnet access is closed until they match (give the node tailnet_tags in Headscale, or enrol it again with a tagged pre-auth key)",
@@ -858,6 +925,9 @@ func (m *Manager) reportLocked() jsvalue.Object {
 	if d := m.tagsDetailLocked(); d != "" {
 		warnings = append(warnings, d)
 	}
+	if _, d := m.joinLocked(); d != "" {
+		warnings = append(warnings, d)
+	}
 	for _, w := range m.warningsLocked() {
 		warnings = append(warnings, w)
 	}
@@ -936,7 +1006,8 @@ func (m *Manager) persistLocked() {
 	observed, _ := report.Get("observed")
 	checks, _ := observed.(jsvalue.Object).Get("checks")
 	node, _ := observed.(jsvalue.Object).Get("node")
-	key := string(jsvalue.Stringify(jsvalue.Object{{Key: "checks", Value: checks}, {Key: "node", Value: node}, {Key: "pin", Value: m.verdict}, {Key: "open", Value: m.open}}))
+	joining, _ := m.joinLocked()
+	key := string(jsvalue.Stringify(jsvalue.Object{{Key: "checks", Value: checks}, {Key: "node", Value: node}, {Key: "pin", Value: m.verdict}, {Key: "open", Value: m.open}, {Key: "join", Value: joining}}))
 	now := m.now()
 	if m.persisted.json == key && now.Sub(m.persisted.at) < refreshFile {
 		return

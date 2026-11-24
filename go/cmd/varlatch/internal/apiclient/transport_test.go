@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -159,13 +160,27 @@ func TestRedirectsAsFetchFollows(t *testing.T) {
 	}
 }
 
-func TestFailuresToConnect(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+// refusing is an address that refuses a connection for as long as the test
+// runs. A listener's port, closed, is anyone's again, and another test's
+// server may get it (a connected socket's port is given away too). A listener
+// is given no port below 1024 it did not ask for; Fetch's bad ports end at 995
+// there.
+func refusing(t *testing.T) string {
+	t.Helper()
+	for port := 1023; port > 1000; port-- {
+		addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+		conn, err := net.Dial("tcp", addr)
+		if err != nil {
+			return addr
+		}
+		conn.Close() // a service of this host's
 	}
-	refused := "http://" + ln.Addr().String()
-	ln.Close()
+	t.Fatal("every port from 1001 to 1023 is in use")
+	return ""
+}
+
+func TestFailuresToConnect(t *testing.T) {
+	refused := "http://" + refusing(t)
 	closing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		conn, _, _ := w.(http.Hijacker).Hijack()
 		conn.Close()
