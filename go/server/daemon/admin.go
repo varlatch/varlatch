@@ -250,7 +250,7 @@ func admin(args []string, stdout, stderr io.Writer) int {
 		asJSON, _ := doctorArgs(rest)
 		return runDoctor(cfg, path, asJSON, stdout, stderr)
 	case sub == "backup" && rest[0] == "restore":
-		return restoreOffline(cfg, rest[1:], stdout, stderr)
+		return restoreOffline(cfg, filepath.Dir(path), rest[1:], stdout, stderr)
 	case sub == "schema":
 		return runSchema(cfg, rest, stdout, stderr)
 	case sub == "migrate" && (rest[0] == "open" || rest[0] == "barrier" || rest[0] == "release"):

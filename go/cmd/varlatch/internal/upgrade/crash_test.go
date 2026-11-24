@@ -15,11 +15,13 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/varlatch/varlatch/go/lib/backup"
 	"github.com/varlatch/varlatch/go/lib/release"
 	journal "github.com/varlatch/varlatch/go/lib/upgradejournal"
 )
@@ -82,9 +84,14 @@ func (h *standHost) run(binary string, args ...string) ([]byte, error) {
 		h.snapshot = h.svc.writes + 1
 		return fmt.Appendf(nil, `{"path":%q,"createdAt":"2026-11-24T00:00:00Z","archiveId":"archive-1","capture":{"dumpBytes":100}}`, archive), nil
 	case "backup restore":
+		if slices.Contains(args, "--json") {
+			archive := h.read(args[len(args)-1])
+			return fmt.Appendf(nil, `{"archiveId":"archive-1","installation":"inst_original","history":%d,"sessions":0}`, strings.Count(archive, "write ")), nil
+		}
 		return nil, h.restore(args)
-	case "changes --since":
-		return fmt.Appendf(nil, `{"since":%q,"total":%d,"byType":{},"latest":[],"revocationsTotal":0,"revocations":[]}`, args[3], strings.Count(h.database(), "write ")), nil
+	case "changes --after":
+		after, _ := strconv.Atoi(args[3])
+		return fmt.Appendf(nil, `{"after":%d,"total":%d,"byType":{},"latest":[],"revocationsTotal":0,"revocations":[]}`, after, strings.Count(h.database(), "write ")-after), nil
 	case "schema status":
 		content, database := h.database(), "null"
 		n := 0
@@ -171,8 +178,8 @@ func (h *standHost) restore(args []string) error {
 		}},
 		{"reconciled", func() { h.svc.log("restored\n") }},
 		{"held", func() {
-			h.put(filepath.Join(h.data, holdFile), `{"archiveId":"archive-1","restoredAt":"t"}`, 0o600)
-			h.shadow.stored(h.data, filepath.Join(h.data, holdFile))
+			h.put(filepath.Join(h.data, backup.HoldFile), `{"archiveId":"archive-1","restoredAt":"t"}`, 0o600)
+			h.shadow.stored(h.data, filepath.Join(h.data, backup.HoldFile))
 		}},
 		{"done", func() {
 			_ = os.RemoveAll(filepath.Join(h.data, ".restore-work"))
@@ -189,7 +196,7 @@ func (h *standHost) restore(args []string) error {
 }
 
 func standStatus(version string, schema int) string {
-	return fmt.Sprintf(`{"version":"%s","schemaVersion":%d,"serving":true,"ready":{"schema":true,"rootKek":true,"installation":true}}`, version, schema)
+	return fmt.Sprintf(`{"version":"%s","schemaVersion":%d,"serving":true,"installation":"inst_original","ready":{"schema":true,"rootKek":true,"installation":true}}`, version, schema)
 }
 
 func newStandHost(t *testing.T, from string, badTo, wal bool) *standHost {
@@ -497,10 +504,10 @@ func (h *standHost) ends(what string) {
 		if !j.RollbackSafe {
 			lost = func(n int) bool { return n > h.snapshot && n <= h.rolled }
 		}
-		if got := exists(filepath.Join(h.data, holdFile)); got == j.RollbackSafe {
+		if got := exists(filepath.Join(h.data, backup.HoldFile)); got == j.RollbackSafe {
 			fail("held: %v", got)
 		}
-	} else if exists(filepath.Join(h.data, holdFile)) {
+	} else if exists(filepath.Join(h.data, backup.HoldFile)) {
 		fail("held")
 	}
 	if j.Pending() {
@@ -923,7 +930,7 @@ func TestARestoreIsNotUndoneOver(t *testing.T) {
 	for _, point := range []string{"stopped", "kept", "swapped"} {
 		h := newStandHost(t, standFrom, false, false)
 		_, _ = h.upgrader(func(p string) bool { return p == point }).Run(context.Background(), h.installed(), h.release())
-		h.put(filepath.Join(h.data, holdFile), "{}", 0o644)
+		h.put(filepath.Join(h.data, backup.HoldFile), "{}", 0o644)
 		before := h.tree()
 		step := h.journal().Step
 		j, err := h.upgrader(nil).Recover(context.Background())
@@ -1401,7 +1408,7 @@ func TestAPendingUpgradeOfFormatOne(t *testing.T) {
 				inPlace, original := h.database(), h.read(filepath.Join(work, "original", databaseFile))+h.read(filepath.Join(work, "original", databaseFile+walSuffix))
 				for range 2 {
 					j, err := h.upgrader(nil).Recover(context.Background())
-					if err == nil || j.State != journal.Failed || !strings.Contains(err.Error(), "Both databases are kept") || !strings.Contains(err.Error(), "sudo systemctl start varlatchd") {
+					if err == nil || j.State != journal.Failed || !strings.Contains(err.Error(), "Both databases are kept") || !strings.Contains(err.Error(), "sudo systemctl enable --now varlatchd") {
 						t.Fatalf("%+v, %v", j, err)
 					}
 					if !strings.HasPrefix(h.database(), inPlace) || h.read(filepath.Join(work, "original", databaseFile))+h.read(filepath.Join(work, "original", databaseFile+walSuffix)) != original {
@@ -1720,7 +1727,7 @@ func TestADamagedJournal(t *testing.T) {
 			h.put(path, "{", 0o644)
 			h.svc.running = ""
 			_, err := h.upgrader(nil).Recover(context.Background())
-			if err == nil || strings.Contains(err.Error(), "run sudo varlatch upgrade") || !strings.Contains(err.Error(), "is damaged") || !strings.Contains(err.Error(), "sudo systemctl start varlatchd") {
+			if err == nil || strings.Contains(err.Error(), "run sudo varlatch upgrade") || !strings.Contains(err.Error(), "is damaged") || !strings.Contains(err.Error(), "varlatchd\n  sudo ") {
 				t.Fatal(err)
 			}
 			var lines []string
@@ -1760,4 +1767,67 @@ func TestAnEndIsDurableBeforeAnythingGoes(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.ends("done")
+}
+
+// Every pair: an upgrade or a rollback cut at each point, then its recovery
+// cut at each of its own, the host rebooted after both, and recovered.
+func TestEveryPairOfInterruptions(t *testing.T) {
+	// Each in turn is too long under the race detector: one in eleven there.
+	step := 1
+	if raceDetector || testing.Short() {
+		step = 11
+	}
+	for _, c := range []struct {
+		name     string
+		rollback bool
+		bad      bool
+	}{{"an upgrade", false, false}, {"an upgrade, undone", false, true}, {"a rollback", true, false}, {"a rollback, undone", true, true}} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			pairs := 0
+			for n := 1; ; n++ {
+				first, ended := "", false
+				for m := 1 + (n % step); !ended; m += step {
+					var h *standHost
+					if c.rollback {
+						h = newUpgradedHost(t, false, c.bad, true)
+					} else {
+						h = newStandHost(t, standFrom, c.bad, true)
+					}
+					first = interrupted(n, func(crash func(string) bool) {
+						if c.rollback {
+							_, _ = h.rollback(crash)
+						} else {
+							_, _ = h.upgrader(crash).Run(context.Background(), h.installed(), h.release())
+						}
+					})
+					if first == "" {
+						break
+					}
+					h.shadow.cut()
+					h.reboot()
+					h.canGoOn(first)
+					second := interrupted(m, func(crash func(string) bool) { _, _ = h.upgrader(crash).Recover(context.Background()) })
+					if ended = second == ""; !ended {
+						pairs++
+						h.shadow.cut()
+						h.reboot()
+						h.canGoOn(first + ", " + second)
+						if _, err := h.upgrader(nil).Recover(context.Background()); err != nil {
+							t.Fatalf("cut at %s, then at %s: %v\nfaults %q\n%s", first, second, err, h.svc.faults, h.tree())
+						}
+					}
+					h.ends("cut at " + first + ", then at " + second)
+					os.RemoveAll(h.dir)
+				}
+				if first == "" {
+					break
+				}
+			}
+			if pairs < 100 {
+				t.Fatalf("only %d pairs", pairs)
+			}
+			t.Logf("%d pairs", pairs)
+		})
+	}
 }

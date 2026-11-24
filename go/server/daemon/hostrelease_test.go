@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -135,12 +136,11 @@ func TestAdminSchemaUpgradeOfACopy(t *testing.T) {
 // running varlatchd: by type, the newest first, never a value.
 func TestAdminChanges(t *testing.T) {
 	in := newInstall(t, "")
-	before := time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)
 	r := start(t, in)
 	if code, _, errOut := runAdmin(t, "bootstrap", "--cli-credential", "--config", in.conf); code != ExitOK {
 		t.Fatalf("bootstrap: %d %q", code, errOut)
 	}
-	code, out, errOut := runAdmin(t, "changes", "--since", before, "--json", "--config", in.conf)
+	code, out, errOut := runAdmin(t, "changes", "--after", "0", "--json", "--config", in.conf)
 	var doc changesJSON
 	if code != ExitOK || json.Unmarshal([]byte(out), &doc) != nil || doc.Total == 0 || len(doc.Latest) == 0 || doc.Total != sum(doc.ByType) {
 		t.Fatalf("changes: %d %q %q", code, out, errOut)
@@ -164,20 +164,25 @@ func TestAdminChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = s.Close()
-	code, out, _ = runAdmin(t, "changes", "--since", before, "--json", "--config", in.conf)
+	code, out, _ = runAdmin(t, "changes", "--after", "0", "--json", "--config", in.conf)
 	var withRevocation changesJSON
 	if code != ExitOK || json.Unmarshal([]byte(out), &withRevocation) != nil || withRevocation.RevocationsTotal != 1 || len(withRevocation.Revocations) != 1 ||
-		withRevocation.Revocations[0].EventType != "credential.revoked" || withRevocation.Revocations[0].Resource == nil || !strings.Contains(*withRevocation.Revocations[0].Resource, identityID) {
+		withRevocation.Revocations[0].EventType != "credential.revoked" || withRevocation.Revocations[0].Resource == nil || !strings.Contains(*withRevocation.Revocations[0].Resource, identityID) ||
+		withRevocation.Revocations[0].CredentialID == nil || *withRevocation.Revocations[0].CredentialID != credentialID {
 		t.Fatalf("a revocation: %d %q", code, out)
 	}
-	if code, out, _ = runAdmin(t, "changes", "--since", before, "--config", in.conf); code != ExitOK || !strings.Contains(out, ", 1 of them revocations, removals, rotations, replacements, deletions and freezes.") {
+	if code, out, _ = runAdmin(t, "changes", "--after", "0", "--config", in.conf); code != ExitOK || !strings.Contains(out, ", 1 of them revocations, removals, rotations, replacements, deletions and freezes.") {
 		t.Fatalf("the revocation counted: %d %q", code, out)
 	}
-	future := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
-	if code, out, _ = runAdmin(t, "changes", "--since", future, "--config", in.conf); code != ExitOK || !strings.HasPrefix(out, "0 audit events since") {
-		t.Fatalf("none since: %d %q", code, out)
+	// After a position, whatever the clock said when it was recorded.
+	at := strconv.FormatInt(doc.Total, 10)
+	if code, out, _ = runAdmin(t, "changes", "--after", at, "--config", in.conf); code != ExitOK || !strings.HasPrefix(out, "1 audit events after position "+at+", 1 of them") {
+		t.Fatalf("after the first list: %d %q", code, out)
 	}
-	for _, args := range [][]string{{"changes"}, {"changes", "--since", "yesterday"}, {"changes", "--since", before, "--json", "--json"}} {
+	if code, out, _ = runAdmin(t, "changes", "--after", "999999", "--config", in.conf); code != ExitOK || !strings.HasPrefix(out, "0 audit events after") {
+		t.Fatalf("none after: %d %q", code, out)
+	}
+	for _, args := range [][]string{{"changes"}, {"changes", "--after", "yesterday"}, {"changes", "--after", "-1"}, {"changes", "--after", "0", "--json", "--json"}} {
 		if code, _, errOut := runAdmin(t, append(args, "--config", in.conf)...); code != 64 || !strings.Contains(errOut, changesUsage) {
 			t.Errorf("%v: %d %q", args, code, errOut)
 		}

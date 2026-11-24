@@ -228,9 +228,14 @@ type Journal struct {
 	SnapshotSHA256 string `json:"snapshotSha256,omitempty"`
 	SnapshotAt     string `json:"snapshotAt,omitempty"`
 	// SnapshotArchive is the archive's id, SnapshotBytes the size of the
-	// database it holds.
+	// database it holds, SnapshotHistory its last audit position: a restore
+	// loses every event after it.
 	SnapshotArchive string `json:"snapshotArchive,omitempty"`
 	SnapshotBytes   int64  `json:"snapshotBytes,omitempty"`
+	SnapshotHistory int64  `json:"snapshotHistory,omitempty"`
+	// Installation is the installation's id, "" when the release upgraded
+	// from cannot say (before FormatSince).
+	Installation string `json:"installation,omitempty"`
 	// Reason says why the upgrade was undone, or what an undo left.
 	Reason string `json:"reason,omitempty"`
 }
@@ -304,7 +309,7 @@ func (j *Journal) check() error {
 			return err
 		}
 	}
-	if j.Format == FormatOne && (j.Kind != Upgrade || j.Upgraded != nil || j.LastRollback != nil || j.SnapshotArchive != "" || j.Undo != UndoNone || j.Start != nil || j.Binaries != nil || j.SnapshotSHA256 != "" || j.SnapshotAt != "" || j.Step == Kept || j.Step == Installed) {
+	if j.Format == FormatOne && (j.Kind != Upgrade || j.Upgraded != nil || j.LastRollback != nil || j.SnapshotArchive != "" || j.SnapshotHistory != 0 || j.Installation != "" || j.Undo != UndoNone || j.Start != nil || j.Binaries != nil || j.SnapshotSHA256 != "" || j.SnapshotAt != "" || j.Step == Kept || j.Step == Installed) {
 		return errors.New("upgrade journal: a member of a later format in one of format 1")
 	}
 	if !slices.Contains(undoSteps, j.Undo) {

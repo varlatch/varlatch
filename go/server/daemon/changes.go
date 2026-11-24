@@ -8,21 +8,22 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/varlatch/varlatch/go/server/config"
 )
 
-// `varlatchd admin changes --since <time> [--json]` (ADR-0059 Decision 8;
-// internal docs/design/go-step6.md, slice 6.6c): the audit events recorded
-// since a time, which `varlatch upgrade --rollback` lists before it
+// `varlatchd admin changes --after <audit position> [--json]` (ADR-0059
+// Decision 8; internal docs/design/go-step6.md, slice 6.6c): the audit events
+// recorded after a position, whatever the clock said, which `varlatch upgrade --rollback` lists before it
 // restores the pre-upgrade snapshot (every one of them is then lost). It
 // reads the database read-only, beside a running varlatchd or not, and
 // shows no value: each event's type, time, decision and Organization, and
 // a count by type.
 
-const changesUsage = "Usage: varlatchd admin changes --since <time> [--json] [--config <file>]"
+const changesUsage = "Usage: varlatchd admin changes --after <audit position> [--json] [--config <file>]"
 
 // changesShown is how many of the newest events are listed one by one;
 // those restoreUndoes names are all listed.
@@ -46,27 +47,27 @@ var restoreUndoes = []string{
 	"value.deleted", "value.rotation_completed", "webhook.revoked",
 }
 
-func changesArgs(rest []string) (since time.Time, asJSON bool, msg string) {
+func changesArgs(rest []string) (after int64, asJSON bool, msg string) {
 	given := false
 	for i := 0; i < len(rest); i++ {
 		switch a := rest[i]; {
 		case a == "--json" && !asJSON:
 			asJSON = true
-		case a == "--since" && !given && i+1 < len(rest):
-			t, err := time.Parse(time.RFC3339, rest[i+1])
-			if err != nil {
-				return time.Time{}, false, changesUsage
+		case a == "--after" && !given && i+1 < len(rest):
+			n, err := strconv.ParseInt(rest[i+1], 10, 64)
+			if err != nil || n < 0 {
+				return 0, false, changesUsage
 			}
-			since, given = t, true
+			after, given = n, true
 			i++
 		default:
-			return time.Time{}, false, changesUsage
+			return 0, false, changesUsage
 		}
 	}
 	if !given {
-		return time.Time{}, false, changesUsage
+		return 0, false, changesUsage
 	}
-	return since, asJSON, ""
+	return after, asJSON, ""
 }
 
 type changeJSON struct {
@@ -75,25 +76,27 @@ type changeJSON struct {
 	Decision       string  `json:"decision"`
 	OrganizationID *string `json:"organizationId"`
 	// Resource is the event's resource (its kind and identifiers, never a
-	// value), for a revocation: what to revoke again.
-	Resource *string `json:"resource,omitempty"`
+	// value) and CredentialID its credential, for a revocation: what to
+	// revoke again.
+	Resource     *string `json:"resource,omitempty"`
+	CredentialID *string `json:"credentialId,omitempty"`
 }
 
 type changesJSON struct {
-	Since  string           `json:"since"`
+	After  int64            `json:"after"`
 	Total  int64            `json:"total"`
 	ByType map[string]int64 `json:"byType"`
 	// Latest are the newest events, at most changesShown, newest first.
 	Latest []changeJSON `json:"latest"`
-	// Revocations are the RevocationsTotal events of restoreUndoes since
-	// the time, newest first.
+	// Revocations are the RevocationsTotal events of restoreUndoes among
+	// them, newest first.
 	RevocationsTotal int64        `json:"revocationsTotal"`
 	Revocations      []changeJSON `json:"revocations"`
 }
 
 func runChanges(cfg *config.Config, rest []string, stdout, stderr io.Writer) int {
 	const what = "varlatchd admin changes"
-	since, asJSON, _ := changesArgs(rest)
+	after, asJSON, _ := changesArgs(rest)
 	path := cfg.DatabasePath()
 	if _, err := os.Stat(path); err != nil {
 		fmt.Fprintf(stderr, "%s: there is no database at %s\n", what, path)
@@ -106,9 +109,8 @@ func runChanges(cfg *config.Config, rest []string, stdout, stderr io.Writer) int
 		return ExitFailure
 	}
 	defer conn.Close()
-	at := since.UnixMicro()
-	out := changesJSON{Since: since.UTC().Format(time.RFC3339), ByType: map[string]int64{}, Latest: []changeJSON{}, Revocations: []changeJSON{}}
-	rows, err := conn.Query("SELECT event_type, count(*) FROM audit_events WHERE occurred_at >= ? GROUP BY event_type ORDER BY event_type", at)
+	out := changesJSON{After: after, ByType: map[string]int64{}, Latest: []changeJSON{}, Revocations: []changeJSON{}}
+	rows, err := conn.Query("SELECT event_type, count(*) FROM audit_events WHERE event_order > ? GROUP BY event_type ORDER BY event_type", after)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s: cannot read the audit log: %v\n", what, err)
 		return ExitFailure
@@ -127,7 +129,7 @@ func runChanges(cfg *config.Config, rest []string, stdout, stderr io.Writer) int
 		fmt.Fprintf(stderr, "%s: cannot read the audit log: %v\n", what, err)
 		return ExitFailure
 	}
-	rows, err = conn.Query("SELECT occurred_at, event_type, decision, organization_id FROM audit_events WHERE occurred_at >= ? ORDER BY event_order DESC LIMIT ?", at, changesShown)
+	rows, err = conn.Query("SELECT occurred_at, event_type, decision, organization_id FROM audit_events WHERE event_order > ? ORDER BY event_order DESC LIMIT ?", after, changesShown)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s: cannot read the audit log: %v\n", what, err)
 		return ExitFailure
@@ -148,15 +150,15 @@ func runChanges(cfg *config.Config, rest []string, stdout, stderr io.Writer) int
 		return ExitFailure
 	}
 	marks := strings.TrimSuffix(strings.Repeat("?, ", len(restoreUndoes)), ", ")
-	args := []any{at}
+	args := []any{after}
 	for _, t := range restoreUndoes {
 		args = append(args, t)
 	}
 	// Every event of a listed type, whatever its decision: the services
 	// record these changes as info (a refusal is authorization.denied,
 	// another type), so a filter on the decision would hide them.
-	where := "occurred_at >= ? AND event_type IN (" + marks + ")"
-	rows, err = conn.Query("SELECT occurred_at, event_type, decision, organization_id, resource FROM audit_events WHERE "+where+" ORDER BY event_order DESC", args...)
+	where := "event_order > ? AND event_type IN (" + marks + ")"
+	rows, err = conn.Query("SELECT occurred_at, event_type, decision, organization_id, resource, credential_id FROM audit_events WHERE "+where+" ORDER BY event_order DESC", args...)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s: cannot read the audit log: %v\n", what, err)
 		return ExitFailure
@@ -164,7 +166,7 @@ func runChanges(cfg *config.Config, rest []string, stdout, stderr io.Writer) int
 	for rows.Next() {
 		var c changeJSON
 		var micros int64
-		if err := rows.Scan(&micros, &c.EventType, &c.Decision, &c.OrganizationID, &c.Resource); err != nil {
+		if err := rows.Scan(&micros, &c.EventType, &c.Decision, &c.OrganizationID, &c.Resource, &c.CredentialID); err != nil {
 			rows.Close()
 			fmt.Fprintf(stderr, "%s: %v\n", what, err)
 			return ExitFailure
@@ -180,7 +182,7 @@ func runChanges(cfg *config.Config, rest []string, stdout, stderr io.Writer) int
 	if asJSON {
 		return printJSON(stdout, stderr, what, out)
 	}
-	fmt.Fprintf(stdout, "%d audit events since %s, %d of them revocations, removals, rotations, replacements, deletions and freezes.\n", out.Total, out.Since, out.RevocationsTotal)
+	fmt.Fprintf(stdout, "%d audit events after position %d, %d of them revocations, removals, rotations, replacements, deletions and freezes.\n", out.Total, out.After, out.RevocationsTotal)
 	for _, c := range out.Latest {
 		org := "the installation"
 		if c.OrganizationID != nil {

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/migrate"
@@ -66,10 +67,10 @@ func ReturnsTo(version string) bool {
 	return ok && order >= 0
 }
 
-// Changes are the audit events since a time, as `admin changes` counts
+// Changes are the audit events after a position, as `admin changes` counts
 // them: never a value.
 type Changes struct {
-	Since  string           `json:"since"`
+	After  int64            `json:"after"`
 	Total  int64            `json:"total"`
 	ByType map[string]int64 `json:"byType"`
 	Latest []Change         `json:"latest"`
@@ -88,6 +89,7 @@ type Change struct {
 	Decision       string  `json:"decision"`
 	OrganizationID *string `json:"organizationId"`
 	Resource       *string `json:"resource,omitempty"`
+	CredentialID   *string `json:"credentialId,omitempty"`
 }
 
 // RollbackPlan is what a rollback would do; nothing has changed yet.
@@ -106,13 +108,12 @@ type RollbackPlan struct {
 	// Migration, of an installation that migrated: what the rollback
 	// leaves of the migration's own rollback window, "" when it has none.
 	Migration string
-	// since is what Lost lists from.
-	since string
+	// Sessions are the browser sessions in the snapshot, which are valid
+	// again: also those that ended since, of which not all are recorded.
+	Sessions int64
+	// database is the one it is made on.
+	database identity
 }
-
-// lostMargin reaches back before the snapshot's recorded time, so a change
-// made while the archive was sealed is listed rather than lost unseen.
-const lostMargin = time.Minute
 
 // kindName names the change a journal records: an upgrade or a rollback.
 func kindName(j *journal.Journal) string {
@@ -143,9 +144,9 @@ func (u *Upgrader) PlanRollback(ctx context.Context) (RollbackPlan, error) {
 	case last.State == journal.Undone:
 		return RollbackPlan{}, fmt.Errorf("the last upgrade, to %s, was undone and %s serves: there is nothing to roll back", last.To, last.From)
 	case !ReturnsTo(last.From):
-		return RollbackPlan{}, &ByHand{Why: fmt.Sprintf("%s's varlatch cannot read a rollback's journal (%s is the first that can), so it could neither finish an interrupted rollback nor upgrade after one", last.From, RollbackSince), Steps: u.restoreByHand(last)}
+		return RollbackPlan{}, &ByHand{Why: fmt.Sprintf("%s's varlatch cannot read a rollback's journal (%s is the first that can), so it could neither finish an interrupted rollback nor upgrade after one", last.From, RollbackSince), How: u.byHandText(last)}
 	case last.Format == journal.FormatOne || last.Binaries == nil:
-		return RollbackPlan{}, &ByHand{Why: fmt.Sprintf("the upgrade to %s was made by a varlatch that did not record its binaries' checksums: they are not run unchecked", last.To), Steps: u.restoreByHand(last)}
+		return RollbackPlan{}, &ByHand{Why: fmt.Sprintf("the upgrade to %s was made by a varlatch that did not record its binaries' checksums: they are not run unchecked", last.To), How: u.byHandText(last)}
 	}
 	if err := u.Trusted(); err != nil {
 		return RollbackPlan{}, err
@@ -167,28 +168,11 @@ func (u *Upgrader) PlanRollback(ctx context.Context) (RollbackPlan, error) {
 	if err != nil {
 		return RollbackPlan{}, err
 	}
-	out, err := u.admin(ctx, prev, "admin", "schema", "status", "--json")
+	opens, database, err := u.databaseNow(ctx, last)
 	if err != nil {
-		return RollbackPlan{}, fmt.Errorf("%s's varlatchd admin schema status: %v", last.From, err)
+		return RollbackPlan{}, err
 	}
-	var st struct {
-		Opens    bool   `json:"opens"`
-		DataDir  string `json:"dataDir"`
-		Database *struct {
-			SchemaVersion int64 `json:"schemaVersion"`
-		} `json:"database"`
-	}
-	if err := json.Unmarshal(out, &st); err != nil {
-		return RollbackPlan{}, fmt.Errorf("%s's varlatchd admin schema status gave no answer", last.From)
-	}
-	if st.DataDir != last.DataDir {
-		return RollbackPlan{}, fmt.Errorf("%s names the data directory %s, and the upgrade was made in %s: a rollback returns only that one", u.ConfigPath, st.DataDir, last.DataDir)
-	}
-	if st.Database == nil {
-		// A varlatchd started here would make an empty one.
-		return RollbackPlan{}, fmt.Errorf("there is no database in %s: a rollback has nothing to keep. Put it back, or restore an archive (varlatchd admin backup restore)", last.DataDir)
-	}
-	plan := RollbackPlan{Last: last, Declared: last.DeclaredRollbackSafe, Opens: st.Opens, Migration: migration}
+	plan := RollbackPlan{Last: last, Declared: last.DeclaredRollbackSafe, Opens: opens, Migration: migration, database: database}
 	plan.Safe = plan.Declared && plan.Opens
 	switch {
 	case plan.Safe:
@@ -212,18 +196,70 @@ func (u *Upgrader) PlanRollback(ctx context.Context) (RollbackPlan, error) {
 	// The archive opens, with the host's keys, in the release that restores
 	// it: what would fail after the stop fails now. (And before the list is
 	// made, so that little comes between it and the stop.)
-	if _, err := u.admin(ctx, prev, "admin", "backup", "restore", "--check", "--in", last.Snapshot); err != nil {
+	c, err := u.checkSnapshot(ctx, prev, last.Snapshot)
+	if err != nil {
 		return RollbackPlan{}, fmt.Errorf("%s; but the pre-upgrade snapshot does not restore: %w", plan.Rule, err)
 	}
-	at, err := time.Parse(time.RFC3339, last.SnapshotAt)
-	if err != nil {
-		return RollbackPlan{}, errors.New("the upgrade journal does not say when the snapshot was taken")
+	if c.ArchiveID != last.SnapshotArchive || c.History != last.SnapshotHistory || c.History == 0 || c.Installation != plan.database.Installation {
+		return RollbackPlan{}, fmt.Errorf("the pre-upgrade snapshot is not the one the upgrade recorded (archive %s of %s, up to audit position %d)", c.ArchiveID, c.Installation, c.History)
 	}
-	plan.since = at.Add(-lostMargin).UTC().Format(time.RFC3339)
-	if plan.Lost, err = u.changes(ctx, plan.since); err != nil {
+	plan.Sessions = c.Sessions
+	if plan.Lost, err = u.changes(ctx, last.SnapshotHistory); err != nil {
 		return RollbackPlan{}, err
 	}
 	return plan, nil
+}
+
+// databaseNow is the database the configuration names now: it must be there,
+// in the upgrade's data directory, and the upgrade's installation's. opens is
+// whether the previous release opens it.
+func (u *Upgrader) databaseNow(ctx context.Context, last *journal.Journal) (opens bool, id identity, err error) {
+	prev, err := u.kept(last, last.From, "varlatchd")
+	if err != nil {
+		return false, id, err
+	}
+	out, err := u.admin(ctx, prev, "admin", "schema", "status", "--json")
+	if err != nil {
+		return false, id, fmt.Errorf("%s's varlatchd admin schema status: %v", last.From, err)
+	}
+	var st struct {
+		Opens    bool   `json:"opens"`
+		DataDir  string `json:"dataDir"`
+		Database *struct {
+			SchemaVersion int64 `json:"schemaVersion"`
+		} `json:"database"`
+	}
+	if err := json.Unmarshal(out, &st); err != nil {
+		return false, id, fmt.Errorf("%s's varlatchd admin schema status gave no answer", last.From)
+	}
+	if st.DataDir != last.DataDir {
+		return false, id, fmt.Errorf("%s names the data directory %s, and the upgrade was made in %s: a rollback returns only that one", u.ConfigPath, st.DataDir, last.DataDir)
+	}
+	if st.Database == nil {
+		// A varlatchd started here would make an empty one.
+		return false, id, fmt.Errorf("there is no database in %s: a rollback has nothing to keep. Put it back, or restore an archive (varlatchd admin backup restore)", last.DataDir)
+	}
+	if id, err = u.identity(ctx, u.varlatchd(), last.DataDir); err != nil {
+		return false, id, fmt.Errorf("the database in %s: %w", last.DataDir, err)
+	}
+	if id.Installation == "" || id.Installation != last.Installation {
+		return false, id, fmt.Errorf("the database in %s is the installation %q's, and the upgrade was %s's", last.DataDir, id.Installation, last.Installation)
+	}
+	return st.Opens, id, nil
+}
+
+// sameDatabase checks that the database is still the one a plan was made on.
+func (u *Upgrader) sameDatabase(ctx context.Context, plan RollbackPlan) error {
+	opens, id, err := u.databaseNow(ctx, plan.Last)
+	switch {
+	case err != nil:
+		return err
+	case id.Installation != plan.database.Installation || id.History < plan.database.History:
+		return fmt.Errorf("the database in %s is not the one the rollback was planned on (installation %q at audit position %d, not %q at %d or later)", plan.Last.DataDir, id.Installation, id.History, plan.database.Installation, plan.database.History)
+	case plan.Safe && !opens:
+		return fmt.Errorf("%s no longer opens the database in %s", plan.Last.From, plan.Last.DataDir)
+	}
+	return nil
 }
 
 // bothKept checks that both releases' binaries are kept: the one a rollback
@@ -239,12 +275,9 @@ func (u *Upgrader) bothKept(last *journal.Journal) error {
 	return nil
 }
 
-// ByHand refuses a rollback that is made by hand: Steps, each a command as it
-// is run, in order.
-type ByHand struct {
-	Why   string
-	Steps []string
-}
+// ByHand refuses a rollback that is made by hand: How, the commands, each on
+// a line of its own, and what they lose.
+type ByHand struct{ Why, How string }
 
 func (e *ByHand) Error() string { return e.Why }
 
@@ -267,10 +300,10 @@ func (u *Upgrader) snapshotStands(last *journal.Journal) error {
 	return nil
 }
 
-// changes are the installed varlatchd's `admin changes` since a time,
-// varlatchd running or not.
-func (u *Upgrader) changes(ctx context.Context, since string) (*Changes, error) {
-	out, err := u.admin(ctx, u.varlatchd(), "admin", "changes", "--since", since, "--json")
+// changes are the installed varlatchd's `admin changes` after an audit
+// position, varlatchd running or not.
+func (u *Upgrader) changes(ctx context.Context, after int64) (*Changes, error) {
+	out, err := u.admin(ctx, u.varlatchd(), "admin", "changes", "--after", strconv.FormatInt(after, 10), "--json")
 	if err != nil {
 		return nil, fmt.Errorf("listing the changes since the snapshot: %v", err)
 	}
@@ -296,7 +329,7 @@ func rollbackHost(last *journal.Journal, now time.Time) (string, error) {
 		return "", fmt.Errorf("a maintenance gate stands in %s (%s, kind %s): end it first (varlatchd admin maintenance status)", last.DataDir, backup.GateFile, gate.Kind)
 	}
 	if Held(last.DataDir) {
-		return "", fmt.Errorf("this installation was restored from an archive since the upgrade and is held (%s): end the hold first (varlatch admin restore resume)", holdFile)
+		return "", fmt.Errorf("this installation was restored from an archive since the upgrade and is held (%s): end the hold first (varlatch admin restore resume)", backup.HoldFile)
 	}
 	began, err := time.Parse(time.RFC3339, last.StartedAt)
 	if err != nil {
@@ -307,7 +340,10 @@ func rollbackHost(last *journal.Journal, now time.Time) (string, error) {
 
 // Held is whether the installation is held after a restore: it serves, and
 // its operator ends the hold (varlatch admin restore resume).
-func Held(dataDir string) bool { return exists(filepath.Join(dataDir, holdFile)) }
+func Held(dataDir string) bool {
+	h, err := backup.ReadHold(dataDir)
+	return h != nil || err != nil
+}
 
 // ErrDeclined is a rollback whose losses, grown since they were accepted,
 // were not.
@@ -342,6 +378,9 @@ func (u *Upgrader) Rollback(ctx context.Context, plan RollbackPlan, grown func(*
 	if err := u.able(ctx, last.DataDir); err != nil {
 		return refuse(err)
 	}
+	if err := u.sameDatabase(ctx, plan); err != nil {
+		return refuse(err)
+	}
 	if err := u.bothKept(last); err != nil {
 		return refuse(err)
 	}
@@ -364,7 +403,7 @@ func (u *Upgrader) Rollback(ctx context.Context, plan RollbackPlan, grown func(*
 		RollbackSafe: plan.Safe, RollbackRule: plan.Rule, State: journal.InProgress, Step: journal.Verified, StartedAt: u.now().UTC().Format(time.RFC3339),
 		BinDir: u.BinDir, Releases: last.Releases, DataDir: last.DataDir,
 		Binaries: &journal.Binaries{From: last.Binaries.To, To: last.Binaries.From},
-		Snapshot: last.Snapshot, SnapshotSHA256: last.SnapshotSHA256, SnapshotAt: last.SnapshotAt, SnapshotArchive: last.SnapshotArchive, SnapshotBytes: last.SnapshotBytes,
+		Snapshot: last.Snapshot, SnapshotSHA256: last.SnapshotSHA256, SnapshotAt: last.SnapshotAt, SnapshotArchive: last.SnapshotArchive, SnapshotBytes: last.SnapshotBytes, SnapshotHistory: last.SnapshotHistory, Installation: last.Installation,
 	}
 	j.Work = filepath.Join(j.DataDir, "upgrades", j.ID)
 	if _, err := u.data(ctx, dataOp{Op: "begin", DataDir: j.DataDir, ID: j.ID}); err != nil {
@@ -412,9 +451,13 @@ func (u *Upgrader) rollbackSteps(ctx context.Context, j *journal.Journal, plan R
 		return err
 	}
 	u.logf("Stopped varlatchd %s.", j.From)
+	// The configuration may have changed while the prompt waited, or since.
+	if err := u.sameDatabase(ctx, plan); err != nil {
+		return err
+	}
 	if !j.RollbackSafe {
 		// Nothing changes the database any more: what the restore loses.
-		now, err := u.changes(ctx, plan.since)
+		now, err := u.changes(ctx, plan.Last.SnapshotHistory)
 		if err != nil {
 			return err
 		}
@@ -468,7 +511,7 @@ func (u *Upgrader) rollbackSteps(ctx context.Context, j *journal.Journal, plan R
 	if err := u.reach(j, journal.Started); err != nil {
 		return err
 	}
-	if err := u.check(ctx, j.To, j.ToSchema); err != nil {
+	if err := u.check(ctx, j.To, j.ToSchema, j.Installation); err != nil {
 		return fmt.Errorf("the health checks of %s: %w", j.To, err)
 	}
 	if err := u.reach(j, journal.Checked); err != nil {

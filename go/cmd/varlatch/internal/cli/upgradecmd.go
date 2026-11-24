@@ -133,10 +133,13 @@ func (r *Run) upgrade() error {
 
 	// Held after a restore while an upgrade is pending: undoing it would put
 	// the database it set aside in the restored one's place.
-	if j, err := u.Pending(); err != nil {
-		return Fail("varlatch upgrade: "+err.Error()+". Nothing was changed.", ExitFailure)
-	} else if j != nil {
-		if h, err := backup.ReadHold(j.DataDir); err != nil || h != nil {
+	// (A rollback's own restore's hold is its recovery's to remove, and a
+	// journal that cannot be read is Recover's to say what to do about.)
+	if j, err := u.Pending(); err == nil && j != nil {
+		own := func(h *backup.Hold) bool {
+			return h != nil && j.Kind == journal.Rollback && h.ArchiveID == j.SnapshotArchive && j.SnapshotArchive != ""
+		}
+		if h, err := backup.ReadHold(j.DataDir); err != nil || h != nil && !own(h) {
 			file := filepath.Join(filepath.Dir(config), journal.File)
 			return Fail("varlatch upgrade: this installation was restored from an archive and is held, and an upgrade from "+j.From+" to "+j.To+" is still pending: finishing or undoing it would replace the restored database. "+
 				"First move "+file+" away, which closes that upgrade (its files stay in "+j.Work+"); then put right what changed since the archive and run varlatch admin restore resume; then varlatch upgrade. Nothing was changed.", ExitFailure)
@@ -449,6 +452,8 @@ func (r *Run) upgradeRollback(ctx context.Context, u *upgrade.Upgrader, yes, acc
 			"  snapshot:  "+last.Snapshot+" (taken "+last.SnapshotAt+")",
 		)
 		lines = append(lines, lostLines(plan.Lost)...)
+		lines = append(lines, fmt.Sprintf("  SESSIONS:  %d browser sessions in the snapshot are valid again until they expire, also those that signed out or were ended", plan.Sessions),
+			"             since: a session that ends with no browser credential records no event, so they cannot be listed")
 		lines = append(lines, "  NOT COUNTED: "+notCounted, "             The database the rollback replaces is kept with it for 30 days.")
 	}
 	lines = append(lines, "")
@@ -519,7 +524,7 @@ func (r *Run) upgradeRollback(ctx context.Context, u *upgrade.Upgrader, yes, acc
 // byHandMessage refuses with the steps to take instead, each line a command
 // and nothing else.
 func byHandMessage(e *upgrade.ByHand) string {
-	return "varlatch upgrade --rollback: " + e.Why + ". Nothing was changed. By hand, losing every change made since the upgrade:\n  " + strings.Join(e.Steps, "\n  ")
+	return "varlatch upgrade --rollback: " + e.Why + ". Nothing was changed. By hand, " + e.How
 }
 
 // notCounted is what a snapshot restore also loses or reverts beyond the
@@ -532,7 +537,7 @@ const undoneShown = 200
 // lostLines are the changes a restore loses, what it takes back first.
 func lostLines(lost *upgrade.Changes) []string {
 	lines := undoneLines(lost)
-	lines = append(lines, fmt.Sprintf("  LOST:      %d audit events recorded since %s (a few in the snapshot's last minute may be in it):", lost.Total, lost.Since))
+	lines = append(lines, fmt.Sprintf("  LOST:      %d audit events recorded after the snapshot's last one (position %d):", lost.Total, lost.After))
 	types := make([]string, 0, len(lost.ByType))
 	for t := range lost.ByType {
 		types = append(types, t)
@@ -571,10 +576,13 @@ func undoneLines(lost *upgrade.Changes) []string {
 		if c.Resource != nil {
 			what = " " + Printable(*c.Resource)
 		}
+		if c.CredentialID != nil {
+			what += " credential " + Printable(*c.CredentialID)
+		}
 		lines = append(lines, "               "+Printable(c.OccurredAt)+"  "+Printable(c.EventType)+" ("+org+")"+what)
 	}
 	if more := lost.RevocationsTotal - undoneShown; more > 0 {
-		lines = append(lines, fmt.Sprintf("               and %d more (varlatchd admin changes --since %s --json lists them all)", more, lost.Since))
+		lines = append(lines, fmt.Sprintf("               and %d more (varlatchd admin changes --after %d --json lists them all)", more, lost.After))
 	}
 	return lines
 }

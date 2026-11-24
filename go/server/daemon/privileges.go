@@ -213,6 +213,7 @@ func isLeftover(rel string) bool {
 // that cannot be opened is refused where it is used, as it would have been.
 func keepForOwner(cfg *config.Config, configDir, sub string, rest []string) {
 	preread.Keep(filepath.Join(configDir, upgradejournal.File), nil)
+	noteBoundToUpgrade(configDir)
 	preread.Keep(cfg.RootKEKFile, nil)
 	preread.Keep(cfg.BackupKeyFile, nil)
 	if cfg.Tailnet != nil && slices.Contains([]string{"tailnet", "migrate"}, sub) {

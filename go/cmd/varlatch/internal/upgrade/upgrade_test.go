@@ -259,7 +259,7 @@ func (h *host) upgrader(crash func(string) bool) *Upgrader {
 // mustServe: the running varlatchd answers as version, on schema.
 func (u *Upgrader) mustServe(t *testing.T, version string, schema int64) {
 	t.Helper()
-	if err := u.check(context.Background(), version, schema); err != nil {
+	if err := u.check(context.Background(), version, schema, ""); err != nil {
 		t.Fatalf("varlatchd %s on schema %d does not serve: %v", version, schema, err)
 	}
 }

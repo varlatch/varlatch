@@ -66,7 +66,7 @@ func commandTimeout(args []string) time.Duration {
 }
 
 const (
-	backupUsage      = "Usage: varlatchd admin backup run [--json [--verify-remote]] | varlatchd admin backup status | varlatchd admin backup restore --in <archive> [--backup-key-file <file>] [--check] | varlatchd admin backup test-bucket [--json]"
+	backupUsage      = "Usage: varlatchd admin backup run [--json [--verify-remote]] | varlatchd admin backup status | varlatchd admin backup restore --in <archive> [--backup-key-file <file>] [--check [--opens] [--json]] | varlatchd admin backup test-bucket [--json]"
 	maintenanceUsage = "Usage: varlatchd admin maintenance begin --ttl <duration> | varlatchd admin maintenance end <lease id> | varlatchd admin maintenance status"
 )
 
@@ -228,12 +228,12 @@ func newBackups(env *hostEnv) *backups.Service {
 }
 
 // restoreArgs reads `backup restore`'s flags: --in (required),
-// --backup-key-file and --check.
+// --backup-key-file, --check and, with it, --opens and --json.
 func restoreArgs(rest []string) (map[string]string, bool) {
 	v := map[string]string{}
 	for i := 0; i < len(rest); i += 2 {
-		if rest[i] == "--check" {
-			v["--check"] = "yes"
+		if a := rest[i]; a == "--check" || a == "--opens" || a == "--json" {
+			v[a] = "yes"
 			i--
 			continue
 		}
@@ -242,7 +242,7 @@ func restoreArgs(rest []string) (map[string]string, bool) {
 		}
 		v[rest[i]] = rest[i+1]
 	}
-	return v, v["--in"] != ""
+	return v, v["--in"] != "" && (v["--check"] != "" || v["--opens"] == "" && v["--json"] == "")
 }
 
 // restoreKeys reads a restore's two keys; its status is 0 when both are
@@ -292,12 +292,24 @@ func checkRestore(cfg *config.Config, args map[string]string, stdout io.Writer, 
 	}
 	defer bek.Clear()
 	defer clear(rootKEK)
-	res, err := backups.CheckRestore(context.Background(), cfg, args["--in"], bek, rootKEK)
+	res, err := backups.CheckRestore(context.Background(), cfg, args["--in"], bek, rootKEK, args["--opens"] != "")
 	if err != nil {
 		return fail(ExitFailure, "%v", err)
 	}
-	fmt.Fprintf(stdout, "The archive %s of %s (created %s) opens with these keys, and this release restores it; nothing was changed.\n", res.ArchiveID, res.InstallationID, res.CreatedAt)
-	return 0
+	if args["--json"] != "" {
+		b, err := json.Marshal(res)
+		if err != nil {
+			return fail(ExitFailure, "%v", err)
+		}
+		fmt.Fprintln(stdout, string(b))
+		return ExitOK
+	}
+	says := "this release restores it"
+	if !res.Restores {
+		says = "another release restores it, not this one"
+	}
+	fmt.Fprintf(stdout, "The archive %s of %s (created %s, its last audit position %d) opens with these keys, and %s; nothing was changed.\n", res.ArchiveID, res.Installation, res.CreatedAt, res.History, says)
+	return ExitOK
 }
 
 // restoreOffline is `varlatchd admin backup restore`: never through the
@@ -309,8 +321,10 @@ func checkRestore(cfg *config.Config, args map[string]string, stdout io.Writer, 
 //
 // With --check it only checks that the archive would restore: it opens, this
 // release restores it, and the Root KEK opens its canaries. It writes
-// nothing to keep, so a varlatchd may run.
-func restoreOffline(cfg *config.Config, rest []string, stdout, stderr io.Writer) int {
+// nothing to keep, so a varlatchd may run. With --opens an archive of a
+// release this one does not restore passes too: it opens, and is this
+// installation's.
+func restoreOffline(cfg *config.Config, configDir string, rest []string, stdout, stderr io.Writer) int {
 	const what = "varlatchd admin backup restore"
 	fail := func(status int, format string, args ...any) int {
 		fmt.Fprintf(stderr, what+": "+format+"\n", args...)
@@ -324,6 +338,9 @@ func restoreOffline(cfg *config.Config, rest []string, stdout, stderr io.Writer)
 	}
 	if check {
 		return checkRestore(cfg, args, stdout, fail)
+	}
+	if err := restoreBesideUpgrade(configDir); err != nil {
+		return fail(ExitFailure, "%v; nothing was written", err)
 	}
 	if conn, err := net.DialTimeout("unix", filepath.Join(cfg.DataDir, ControlSocket), 5*time.Second); err == nil {
 		_ = conn.Close()

@@ -68,6 +68,9 @@ func Restore(ctx context.Context, cfg *config.Config, archive string, bek backup
 		return RestoreResult{}, err
 	}
 	defer opened.Close()
+	if err := restores(ctx, opened); err != nil {
+		return RestoreResult{}, err
+	}
 	m := opened.Manifest
 	snapshot := opened.Path(backup.ComponentDatabase)
 	var settings Configuration
@@ -129,26 +132,69 @@ func Restore(ctx context.Context, cfg *config.Config, archive string, bek backup
 // directory: not Restore's own.
 const checkScratch = ".restore-check"
 
+// Checked is what CheckRestore found in an archive.
+type Checked struct {
+	ArchiveID    string `json:"archiveId"`
+	Installation string `json:"installation"`
+	CreatedAt    string `json:"createdAt"`
+	// History is its last audit position: what a restore keeps, and nothing
+	// after it.
+	History int64 `json:"history"`
+	// Sessions are the browser sessions in it that have not expired, which a
+	// restore makes valid again.
+	Sessions int64 `json:"sessions"`
+	// Restores is whether this release restores it.
+	Restores bool `json:"restores"`
+}
+
 // CheckRestore is whether Restore would take the archive with these keys:
 // its first two steps, which write nothing but a scratch directory it
-// removes. A varlatchd may run.
-func CheckRestore(ctx context.Context, cfg *config.Config, archive string, bek backup.BEK, rootKEK []byte) (RestoreResult, error) {
+// removes. A varlatchd may run. With opens, an archive of a release this one
+// does not restore is not refused.
+func CheckRestore(ctx context.Context, cfg *config.Config, archive string, bek backup.BEK, rootKEK []byte, opens bool) (Checked, error) {
 	scratch := filepath.Join(cfg.DataDir, checkScratch)
 	defer os.RemoveAll(scratch)
 	opened, err := openArchive(ctx, archive, bek, rootKEK, scratch)
 	if err != nil {
-		return RestoreResult{}, err
+		return Checked{}, err
 	}
 	defer opened.Close()
 	m := opened.Manifest
-	if err := sameInstallation(ctx, cfg.DatabasePath(), m); err != nil {
-		return RestoreResult{}, err
+	c := Checked{ArchiveID: m.ArchiveID, Installation: m.InstallationID, CreatedAt: m.CreatedAt}
+	if err := restores(ctx, opened); err == nil {
+		c.Restores = true
+	} else if !opens {
+		return Checked{}, err
 	}
-	return RestoreResult{ArchiveID: m.ArchiveID, InstallationID: m.InstallationID, CreatedAt: m.CreatedAt}, nil
+	if err := sameInstallation(ctx, cfg.DatabasePath(), m); err != nil {
+		return Checked{}, err
+	}
+	conn, err := sql.Open("sqlite", fileURI(opened.Path(backup.ComponentDatabase))+"?mode=ro&immutable=1")
+	if err != nil {
+		return Checked{}, err
+	}
+	defer conn.Close()
+	if err := conn.QueryRowContext(ctx, "SELECT coalesce(max(event_order), 0) FROM audit_events").Scan(&c.History); err != nil {
+		return Checked{}, fmt.Errorf("the archive's audit events cannot be read: %w", err)
+	}
+	if err := conn.QueryRowContext(ctx, "SELECT count(*) FROM auth_sessions WHERE expires_at > ?", time.Now().UnixMicro()).Scan(&c.Sessions); err != nil {
+		return Checked{}, fmt.Errorf("the archive's sessions cannot be read: %w", err)
+	}
+	return c, nil
 }
 
-// openArchive opens the archive into scratch, made anew, when this release
-// restores it and the Root KEK opens its canaries.
+// restores is whether this release restores an opened archive: why not.
+func restores(ctx context.Context, opened *backup.Opened) error {
+	m := opened.Manifest
+	if !Compatible(ctx, m, opened.Path(backup.ComponentDatabase)) {
+		r, _ := m.GoRelease()
+		return fmt.Errorf("this release (%s, database schema %d) cannot restore an archive of %s with database schema %d", buildinfo.Version, db.SchemaVersion, r.Version, r.DatabaseSchema)
+	}
+	return nil
+}
+
+// openArchive opens a Go archive into scratch, made anew, when the Root KEK
+// opens its canaries.
 func openArchive(ctx context.Context, archive string, bek backup.BEK, rootKEK []byte, scratch string) (_ *backup.Opened, err error) {
 	if err := backup.DistinctKeys(bek, rootKEK); err != nil {
 		return nil, err
@@ -171,10 +217,6 @@ func openArchive(ctx context.Context, archive string, bek backup.BEK, rootKEK []
 	m := opened.Manifest
 	if m.FormatVersion != backup.FormatGo {
 		return nil, fmt.Errorf("this is the TypeScript server's archive (format %d): the migration to varlatchd (ADR-0059 step 7) converts it; a restore takes a varlatchd archive", m.FormatVersion)
-	}
-	if !Compatible(ctx, m, opened.Path(backup.ComponentDatabase)) {
-		r, _ := m.GoRelease()
-		return nil, fmt.Errorf("this release (%s, database schema %d) cannot restore an archive of %s with database schema %d", buildinfo.Version, db.SchemaVersion, r.Version, r.DatabaseSchema)
 	}
 	candidates := map[int][]byte{}
 	for _, v := range m.RequiredKeyVersions {

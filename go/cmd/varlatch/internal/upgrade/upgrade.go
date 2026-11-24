@@ -68,6 +68,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/varlatch/varlatch/go/lib/backup"
 	"github.com/varlatch/varlatch/go/lib/release"
 	journal "github.com/varlatch/varlatch/go/lib/upgradejournal"
 )
@@ -658,7 +659,7 @@ func (u *Upgrader) steps(ctx context.Context, j *journal.Journal) error {
 	if err := u.reach(j, journal.Started); err != nil {
 		return err
 	}
-	if err := u.check(ctx, j.To, j.ToSchema); err != nil {
+	if err := u.check(ctx, j.To, j.ToSchema, j.Installation); err != nil {
 		return fmt.Errorf("the health checks of %s: %w", j.To, err)
 	}
 	if err := u.reach(j, journal.Checked); err != nil {
@@ -872,7 +873,37 @@ func (u *Upgrader) snapshot(ctx context.Context, j *journal.Journal) error {
 		}
 	}
 	j.Snapshot, j.SnapshotSHA256, j.SnapshotAt, j.SnapshotArchive, j.SnapshotBytes = kept, sum, res.CreatedAt, res.ArchiveID, res.Capture.DumpBytes
+	if order, ok := release.CompareVersions(j.From, journal.FormatSince); !ok || order < 0 {
+		return nil // it cannot say more, and no rollback returns to it
+	}
+	// What is in it, from the kept copy, opened with the host's keys.
+	c, err := u.checkSnapshot(ctx, u.varlatchd(), kept)
+	if err != nil {
+		return fmt.Errorf("it does not restore: %w", err)
+	}
+	if c.ArchiveID != j.SnapshotArchive {
+		return fmt.Errorf("%s is the archive %s, not %s", kept, c.ArchiveID, j.SnapshotArchive)
+	}
+	j.SnapshotHistory, j.Installation = c.History, c.Installation
 	return nil
+}
+
+// checked is what `admin backup restore --check` says of an archive.
+type checked struct {
+	ArchiveID    string `json:"archiveId"`
+	Installation string `json:"installation"`
+	History      int64  `json:"history"`
+	Sessions     int64  `json:"sessions"`
+}
+
+// checkSnapshot checks that varlatchd restores the archive, with the host's
+// keys, and says what is in it.
+func (u *Upgrader) checkSnapshot(ctx context.Context, varlatchd, archive string) (c checked, err error) {
+	out, err := u.admin(ctx, varlatchd, "admin", "backup", "restore", "--check", "--json", "--in", archive)
+	if err == nil {
+		err = json.Unmarshal(out, &c)
+	}
+	return c, err
 }
 
 // prune removes earlier upgrades' directories and snapshots after 30 days,
@@ -973,8 +1004,10 @@ func (u *Upgrader) install(j *journal.Journal, version string, sums journal.Bina
 }
 
 // check waits for the running varlatchd to answer `admin status` as
-// version, serving its database: schema, Root KEK and installation ready.
-func (u *Upgrader) check(ctx context.Context, version string, schema int64) error {
+// version, serving its database: schema, Root KEK and installation ready, and
+// the installation the one named ("" for any; a release before FormatSince
+// names none).
+func (u *Upgrader) check(ctx context.Context, version string, schema int64, installation string) error {
 	timeout := u.HealthTimeout
 	if timeout == 0 {
 		timeout = time.Minute
@@ -993,7 +1026,9 @@ func (u *Upgrader) check(ctx context.Context, version string, schema int64) erro
 					RootKEK      bool `json:"rootKek"`
 					Installation bool `json:"installation"`
 				} `json:"ready"`
+				Installation string `json:"installation"`
 			}
+			order, _ := release.CompareVersions(version, journal.FormatSince)
 			switch {
 			case json.Unmarshal(out, &st) != nil:
 				last = "its status is not one varlatchd gives"
@@ -1005,6 +1040,8 @@ func (u *Upgrader) check(ctx context.Context, version string, schema int64) erro
 				last = "it does not serve yet"
 			case !st.Ready.Schema || !st.Ready.RootKEK || !st.Ready.Installation:
 				last = fmt.Sprintf("it is not ready (schema %v, Root KEK %v, installation %v)", st.Ready.Schema, st.Ready.RootKEK, st.Ready.Installation)
+			case installation != "" && order >= 0 && st.Installation != installation:
+				last = fmt.Sprintf("it serves the installation %q, not %s: the configuration may name another data directory than the one the change was begun in", st.Installation, installation)
 			default:
 				return nil
 			}
@@ -1138,7 +1175,7 @@ func (u *Upgrader) undo(ctx context.Context, j *journal.Journal, why string) err
 	} else if err != nil {
 		return u.failed(j, why, err)
 	}
-	if err := u.check(ctx, j.From, j.FromSchema); err != nil {
+	if err := u.check(ctx, j.From, j.FromSchema, j.Installation); err != nil {
 		return u.failed(j, why, fmt.Errorf("the health checks of %s: %w", j.From, err))
 	}
 	if err := u.point("undo:checked"); err != nil {
@@ -1360,13 +1397,28 @@ func (u *Upgrader) forward(ctx context.Context, j *journal.Journal, why string) 
 	if err := u.point("forward:started"); err != nil {
 		return err
 	}
-	if err := u.check(ctx, j.To, j.ToSchema); err != nil {
+	if err := u.check(ctx, j.To, j.ToSchema, j.Installation); err != nil {
 		return stop(fmt.Errorf("the health checks of %s: %w", j.To, err))
 	}
 	if err := u.reach(j, journal.Checked); err != nil {
 		return stop(err)
 	}
 	return u.promote(ctx, j)
+}
+
+// identity is whose the database in a directory is, and how far its history
+// goes, as `admin schema identity` says.
+type identity struct {
+	Installation string `json:"installation"`
+	History      int64  `json:"history"`
+}
+
+func (u *Upgrader) identity(ctx context.Context, varlatchd, dir string) (id identity, err error) {
+	out, err := u.admin(ctx, varlatchd, "admin", "schema", "identity", "--json", "--database", filepath.Join(dir, databaseFile))
+	if err == nil {
+		err = json.Unmarshal(out, &id)
+	}
+	return id, err
 }
 
 // upgradedCopy checks that the database in place is the original's upgraded
@@ -1381,23 +1433,11 @@ func (u *Upgrader) upgradedCopy(ctx context.Context, j *journal.Journal) error {
 	if err != nil {
 		return err
 	}
-	type identity struct {
-		Installation string `json:"installation"`
-		History      int64  `json:"history"`
-	}
-	of := func(dir string) (identity, error) {
-		out, err := u.admin(ctx, varlatchd, "admin", "schema", "identity", "--json", "--database", filepath.Join(dir, databaseFile))
-		var id identity
-		if err == nil {
-			err = json.Unmarshal(out, &id)
-		}
-		return id, err
-	}
-	original, err := of(filepath.Join(j.Work, originalDir))
+	original, err := u.identity(ctx, varlatchd, filepath.Join(j.Work, originalDir))
 	if err != nil {
 		return fmt.Errorf("the original database: %w", err)
 	}
-	inPlace, err := of(j.DataDir)
+	inPlace, err := u.identity(ctx, varlatchd, j.DataDir)
 	if err != nil {
 		return fmt.Errorf("the database in place: %w", err)
 	}
@@ -1473,11 +1513,11 @@ func (u *Upgrader) goBack(from, releases, dataDir, work, aside string) []string 
 		return shellWord(filepath.Join(kept, name))
 	}
 	return []string{
-		"sudo systemctl stop varlatchd",
+		"sudo systemctl disable --now varlatchd",
 		fmt.Sprintf("sudo install -m 755 %s %s %s", binary("varlatch"), binary("varlatchd"), shellWord(u.BinDir)),
 		fmt.Sprintf("sudo sh -c 'mkdir -p %s && mv %s %s/ && cp -p %s %s/'", replaced, files(dataDir), replaced, files(original), dataDir),
 		aside,
-		"sudo systemctl start varlatchd",
+		"sudo systemctl enable --now varlatchd",
 	}
 }
 
@@ -1492,25 +1532,54 @@ func (u *Upgrader) keepRestored(j *journal.Journal) []string {
 }
 
 // restoreByHand are the commands that go back to the previous release by
-// restoring the pre-upgrade snapshot with it.
-func (u *Upgrader) restoreByHand(j *journal.Journal) []string {
+// restoring the pre-upgrade snapshot with it, and, from the step they were
+// taken to, those that go back on them. The unit is disabled first: an earlier
+// release reads no journal, and would serve what stands in the middle.
+func (u *Upgrader) restoreByHand(j *journal.Journal) (steps, back []string) {
 	kept := filepath.Join(j.Releases, j.From)
+	keep := filepath.Join(filepath.Dir(j.Releases), "by-hand-"+j.ID)
+	path, aside := filepath.Join(u.configDir(), journal.File), u.aside(j)
 	uid, gid, _, err := ownerToBe(j.DataDir)
 	owner := fmt.Sprintf("%d:%d", uid, gid)
 	if err != nil {
 		owner = "<its owner>"
 	}
-	lines := []string{
-		"sudo systemctl stop varlatchd",
-		fmt.Sprintf("sudo install -m 755 %s %s %s", shellWord(filepath.Join(kept, "varlatch")), shellWord(filepath.Join(kept, "varlatchd")), shellWord(u.BinDir)),
+	database := shellWord(filepath.Join(j.DataDir, databaseFile))
+	install := func(dir string) string {
+		return fmt.Sprintf("sudo install -m 755 %s %s %s", shellWord(filepath.Join(dir, "varlatch")), shellWord(filepath.Join(dir, "varlatchd")), shellWord(u.BinDir))
+	}
+	steps = []string{
+		fmt.Sprintf("sudo %s admin backup restore --check --opens --in %s --config %s", shellWord(u.varlatchd()), shellWord(j.Snapshot), shellWord(u.ConfigPath)),
+		"sudo systemctl disable --now varlatchd",
+		fmt.Sprintf("sudo sh -c \"mkdir -m 700 %s && cp -p %s %s %s* %s/\"", shellWord(keep), shellWord(filepath.Join(u.BinDir, "varlatch")), shellWord(u.varlatchd()), database, shellWord(keep)),
+		fmt.Sprintf("sudo mv %s %s", shellWord(path), shellWord(aside)),
+		install(kept),
 		fmt.Sprintf("sudo %s admin backup restore --in %s --config %s", shellWord(u.varlatchd()), shellWord(j.Snapshot), shellWord(u.ConfigPath)),
 		// An earlier release's restore runs as root and leaves root's files.
 		fmt.Sprintf("sudo chown -R --no-dereference --from=0 %s %s", owner, shellWord(j.DataDir)),
+		"sudo systemctl enable --now varlatchd",
 	}
-	if j.Format != journal.FormatOne || j.Pending() {
-		lines = append(lines, fmt.Sprintf("sudo mv %s %s", shellWord(filepath.Join(u.configDir(), journal.File)), shellWord(u.aside(j))))
+	back = []string{
+		"sudo systemctl disable --now varlatchd",
+		fmt.Sprintf("sudo sh -c \"rm -f %s* %s %s && cp -p %s* %s/\"", database, shellWord(filepath.Join(j.DataDir, backup.GateFile)), shellWord(filepath.Join(j.DataDir, backup.HoldFile)), shellWord(filepath.Join(keep, databaseFile)), shellWord(j.DataDir)),
+		install(keep),
+		fmt.Sprintf("sudo mv %s %s", shellWord(aside), shellWord(path)),
+		"sudo systemctl enable --now varlatchd",
 	}
-	return append(lines, "sudo systemctl start varlatchd")
+	return steps, back
+}
+
+// byHandText is the commands of restoreByHand, each on a line of its own,
+// and what they lose.
+func (u *Upgrader) byHandText(j *journal.Journal) string {
+	steps, back := u.restoreByHand(j)
+	cutoff := "taken right after the upgrade began, " + j.StartedAt
+	if j.SnapshotAt != "" {
+		cutoff = "taken " + j.SnapshotAt
+	}
+	keep := filepath.Join(filepath.Dir(j.Releases), "by-hand-"+j.ID)
+	return fmt.Sprintf("losing every change made since the pre-upgrade snapshot (%s), also those made before the upgrade stopped the server (the third command keeps the binaries and the database it replaces in %s):\n  %s\nTo go back on it, from the first line that names the last command taken, down:\n  8: %s\n  6, 7: %s\n  5: %s\n  4: %s\n  2, 3: %s",
+		cutoff, keep, strings.Join(steps, "\n  "), back[0], back[1], back[2], back[3], back[4])
 }
 
 // shellWord is s as one word of a shell's.
@@ -1528,8 +1597,8 @@ func (u *Upgrader) failed(j *journal.Journal, why string, left error) error {
 	j.State, j.Start = journal.Failed, nil
 	j.Reason = fmt.Sprintf("%s; the undo did not complete: %v. varlatchd does not start until it does: put right what it says, then run sudo varlatch upgrade. The pre-upgrade snapshot is %s", why, left, j.Snapshot)
 	if errors.Is(left, errNoOriginal) {
-		j.Reason = fmt.Sprintf("%s; the undo did not complete: %v. Put the original database's files back into %s, then run sudo varlatch upgrade; or restore the pre-upgrade snapshot, losing what was written since:\n  %s",
-			why, left, filepath.Join(j.Work, originalDir), strings.Join(u.restoreByHand(j), "\n  "))
+		j.Reason = fmt.Sprintf("%s; the undo did not complete: %v. Put the original database's files back into %s, then run sudo varlatch upgrade; or restore the pre-upgrade snapshot, %s",
+			why, left, filepath.Join(j.Work, originalDir), u.byHandText(j))
 	}
 	if errors.Is(left, errNoOriginal) && j.Kind == journal.Rollback {
 		// The snapshot is the release's that the undo leaves.
@@ -1595,7 +1664,7 @@ func (u *Upgrader) Recover(ctx context.Context) (*journal.Journal, error) {
 		if err := u.Service.Start(ctx); err != nil {
 			return j, &Error{Message: fmt.Sprintf("the upgrade to %s is finished, but varlatchd does not start: %v", j.To, err), Journal: j}
 		}
-		if err := u.check(ctx, j.To, j.ToSchema); err != nil {
+		if err := u.check(ctx, j.To, j.ToSchema, j.Installation); err != nil {
 			return j, &Error{Message: fmt.Sprintf("the upgrade to %s is finished, but it does not serve: %v", j.To, err), Journal: j}
 		}
 		return j, nil

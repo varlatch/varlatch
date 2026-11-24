@@ -252,6 +252,26 @@ func fileAndDirectory(f, dir int) bool {
 	return true
 }
 
+// holdsLock is whether this process inherited, as descriptor 3, the lock file
+// path, and it is held: by what started it, then.
+func holdsLock(path string) bool {
+	var mine unix.Stat_t
+	if unix.Fstat(3, &mine) != nil || mine.Mode&unix.S_IFMT != unix.S_IFREG {
+		return false
+	}
+	f, err := os.OpenFile(path, os.O_RDWR|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	st, err := fstat(f)
+	if err != nil || uint64(st.Dev) != uint64(mine.Dev) || st.Ino != mine.Ino {
+		return false
+	}
+	// Free, it is no upgrade's.
+	return errors.Is(syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB), syscall.EWOULDBLOCK)
+}
+
 // createAlone makes a file that must not be there.
 func createAlone(path string) (*os.File, error) {
 	return os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)

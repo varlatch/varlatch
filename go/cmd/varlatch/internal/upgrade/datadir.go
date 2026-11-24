@@ -125,31 +125,21 @@ func (o dataOp) locked(fn func() error) error {
 	// A restore made since (it took the same lock) is not undone over, nor
 	// copied as if it were the database the upgrade began on.
 	if o.heldByAnother() {
-		return fmt.Errorf("%w (%s)", errHeld, filepath.Join(o.DataDir, holdFile))
+		return fmt.Errorf("%w (%s, %s)", errHeld, filepath.Join(o.DataDir, backup.HoldFile), backup.GateFile)
 	}
 	return fn()
 }
 
 // heldByAnother is whether the installation is held after a restore that is
-// not this rollback's own.
+// not this rollback's own, or such a restore stopped in the middle of itself.
 func (o dataOp) heldByAnother() bool {
-	path := filepath.Join(o.DataDir, holdFile)
-	info, err := os.Lstat(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		return false
-	}
-	if err != nil || !info.Mode().IsRegular() || info.Size() > 1<<16 || !o.Rollback || o.Archive == "" {
+	own := func(archive string) bool { return o.Rollback && o.Archive != "" && archive == o.Archive }
+	if h, err := backup.ReadHold(o.DataDir); err != nil || h != nil && !own(h.ArchiveID) {
 		return true
 	}
-	b, err := os.ReadFile(path)
-	var h struct {
-		ArchiveID string `json:"archiveId"`
-	}
-	return err != nil || json.Unmarshal(b, &h) != nil || h.ArchiveID != o.Archive
+	g, err := backup.ReadGate(o.DataDir)
+	return err != nil || g != nil && g.Kind == "restore" && (g.ArchiveID == nil || !own(*g.ArchiveID))
 }
-
-// holdFile is a restored installation's hold (go/lib/backup HoldFile).
-const holdFile = "restore-hold.json"
 
 // errHeld is an installation restored from an archive since the upgrade
 // began.
@@ -369,6 +359,7 @@ func (o dataOp) putBack(f fsys) error {
 	}
 	// The restore this rollback ran, complete or not: its gate, its hold,
 	// and what it left. The database they are of is gone.
+	// (Another's gate or hold is refused before: heldByAnother.)
 	if g, err := backup.ReadGate(o.DataDir); err == nil && g != nil && g.Kind == "restore" {
 		if err := f.remove(filepath.Join(o.DataDir, backup.GateFile)); err != nil {
 			return err
@@ -385,7 +376,7 @@ func (o dataOp) putBack(f fsys) error {
 // restoreLeftovers are what a restore leaves besides the database and its
 // gate: the hold a complete one leaves, the archive a stopped one had opened
 // and the database it had not put in place.
-var restoreLeftovers = []string{holdFile, ".restore-work", databaseFile + ".restore"}
+var restoreLeftovers = []string{backup.HoldFile, ".restore-work", databaseFile + ".restore"}
 
 // putBackFormatOne puts back what an upgrade of an earlier release moved
 // aside, one file at a time, into original. A log beside a database that

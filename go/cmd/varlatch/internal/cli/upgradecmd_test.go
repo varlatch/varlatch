@@ -514,8 +514,8 @@ func (s *cliService) Stop(context.Context) error {
 
 // The steps by hand are lines of their own, the last one too.
 func TestByHandMessage(t *testing.T) {
-	got := byHandMessage(&upgrade.ByHand{Why: "why", Steps: []string{"sudo one", "sudo two"}})
-	if got != "varlatch upgrade --rollback: why. Nothing was changed. By hand, losing every change made since the upgrade:\n  sudo one\n  sudo two" {
+	got := byHandMessage(&upgrade.ByHand{Why: "why", How: "losing x:\n  sudo one\n  sudo two"})
+	if got != "varlatch upgrade --rollback: why. Nothing was changed. By hand, losing x:\n  sudo one\n  sudo two" {
 		t.Fatalf("%q", got)
 	}
 }

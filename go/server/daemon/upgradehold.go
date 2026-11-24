@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/varlatch/varlatch/go/lib/preread"
@@ -154,4 +155,40 @@ func endUpgradeHold(ctx context.Context, configDir string, admission *maintenanc
 		case <-tick.C:
 		}
 	}
+}
+
+// boundToUpgrade is whether this command was started by the varlatch upgrade
+// that is under way (it inherits its lock, upgrade.lock in configDir):
+// noted before the command becomes the data directory's owner, who may not
+// look.
+var boundToUpgrade = struct {
+	sync.Mutex
+	noted map[string]bool
+}{noted: map[string]bool{}}
+
+func noteBoundToUpgrade(configDir string) bool {
+	boundToUpgrade.Lock()
+	defer boundToUpgrade.Unlock()
+	bound, ok := boundToUpgrade.noted[configDir]
+	if !ok {
+		bound = holdsLock(filepath.Join(configDir, "upgrade.lock"))
+		boundToUpgrade.noted[configDir] = bound
+	}
+	return bound
+}
+
+// restoreBesideUpgrade refuses a restore while an upgrade or a rollback is
+// not over, but the rollback's own: its recovery would put a database back
+// over the restored one.
+func restoreBesideUpgrade(configDir string) error {
+	j, err := readUpgrade(configDir)
+	if err != nil || !j.Pending() || noteBoundToUpgrade(configDir) {
+		return err
+	}
+	what := "upgrade"
+	if j.Kind == upgradejournal.Rollback {
+		what = "rollback"
+	}
+	path := filepath.Join(configDir, upgradejournal.File)
+	return fmt.Errorf("the %s from %s to %s is not over (its last step is %q): finishing or undoing it would replace what is restored. Run sudo varlatch upgrade first, which finishes or undoes it; or, to restore instead of that, move its journal aside first (sudo mv %s %s)", what, j.From, j.To, j.Step, path, filepath.Join(configDir, "upgrade-"+j.ID+".json"))
 }
