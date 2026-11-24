@@ -134,12 +134,27 @@ func here() string {
 // Path is a file of this package's testdata.
 func Path(name string) string { return filepath.Join(here(), "testdata", name) }
 
+// GoSettings is recorded TypeScript text with the settings it tells the
+// operator named as a Go installation's, in varlatchd.conf: the one
+// difference of the messages (go/README.md, host-settings).
+func GoSettings(b []byte) []byte {
+	for _, n := range [][2]string{
+		{"VARLATCH_OUTBOUND_ALLOW", "outbound_allow in varlatchd.conf"},
+		{"VARLATCH_AUDIT_EXPORT=off", "audit_export = off in varlatchd.conf"},
+		{"VARLATCH_PUBLIC_URL", "public_url in varlatchd.conf"},
+	} {
+		b = bytes.ReplaceAll(b, []byte(n[0]), []byte(n[1]))
+	}
+	return b
+}
+
 // Read reads a fixture file.
 func Read(path string) (Fixture, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return Fixture{}, err
 	}
+	b = GoSettings(b)
 	var f Fixture
 	dec := json.NewDecoder(bytes.NewReader(b))
 	dec.UseNumber()

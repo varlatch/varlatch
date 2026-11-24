@@ -16,6 +16,7 @@ import (
 
 	"github.com/varlatch/varlatch/go/lib/backup"
 	"github.com/varlatch/varlatch/go/lib/envelope"
+	"github.com/varlatch/varlatch/go/lib/preread"
 	"github.com/varlatch/varlatch/go/server/backups"
 	"github.com/varlatch/varlatch/go/server/config"
 )
@@ -29,7 +30,7 @@ import (
 //	varlatchd admin backup run [--json]
 //	varlatchd admin backup status
 //	varlatchd admin backup test-bucket [--json]
-//	varlatchd admin backup restore --in <archive> [--backup-key-file <file>]   (offline only)
+//	varlatchd admin backup restore --in <archive> [--backup-key-file <file>] [--check]   (offline only, but for --check)
 //	varlatchd admin maintenance begin --ttl <duration>
 //	varlatchd admin maintenance end <lease id>
 //	varlatchd admin maintenance status
@@ -65,7 +66,7 @@ func commandTimeout(args []string) time.Duration {
 }
 
 const (
-	backupUsage      = "Usage: varlatchd admin backup run [--json [--verify-remote]] | varlatchd admin backup status | varlatchd admin backup restore --in <archive> [--backup-key-file <file>] | varlatchd admin backup test-bucket [--json]"
+	backupUsage      = "Usage: varlatchd admin backup run [--json [--verify-remote]] | varlatchd admin backup status | varlatchd admin backup restore --in <archive> [--backup-key-file <file>] [--check [--opens] [--json]] | varlatchd admin backup test-bucket [--json]"
 	maintenanceUsage = "Usage: varlatchd admin maintenance begin --ttl <duration> | varlatchd admin maintenance end <lease id> | varlatchd admin maintenance status"
 )
 
@@ -226,17 +227,89 @@ func newBackups(env *hostEnv) *backups.Service {
 	return backups.New(o)
 }
 
-// restoreArgs reads `backup restore`'s flags: --in (required) and
-// --backup-key-file.
+// restoreArgs reads `backup restore`'s flags: --in (required),
+// --backup-key-file, --check and, with it, --opens and --json.
 func restoreArgs(rest []string) (map[string]string, bool) {
 	v := map[string]string{}
 	for i := 0; i < len(rest); i += 2 {
+		if a := rest[i]; a == "--check" || a == "--opens" || a == "--json" {
+			v[a] = "yes"
+			i--
+			continue
+		}
 		if i+1 >= len(rest) || (rest[i] != "--in" && rest[i] != "--backup-key-file") || rest[i+1] == "" {
 			return nil, false
 		}
 		v[rest[i]] = rest[i+1]
 	}
-	return v, v["--in"] != ""
+	return v, v["--in"] != "" && (v["--check"] != "" || v["--opens"] == "" && v["--json"] == "")
+}
+
+// restoreKeys reads a restore's two keys; its status is 0 when both are
+// there.
+func restoreKeys(cfg *config.Config, args map[string]string, fail func(status int, format string, args ...any) int) (backup.BEK, []byte, int) {
+	var none backup.BEK
+	bekFile := args["--backup-key-file"]
+	if bekFile == "" {
+		bekFile = cfg.BackupKeyFile
+	}
+	if bekFile == "" {
+		return none, nil, fail(ExitConfig, "no Backup Encryption Key: give --backup-key-file, or set backup_key_file")
+	}
+	raw, err := preread.ReadFile(bekFile)
+	if err != nil {
+		return none, nil, fail(ExitFailure, "cannot read the Backup Encryption Key file: %v", err)
+	}
+	material, err := backup.ParseKey(string(raw))
+	clear(raw)
+	if err != nil {
+		return none, nil, fail(ExitConfig, "%v", err)
+	}
+	bek, err := backup.KeyBEK(material)
+	clear(material)
+	if err != nil {
+		return none, nil, fail(ExitConfig, "%v", err)
+	}
+	raw, err = preread.ReadFile(cfg.RootKEKFile)
+	if err != nil {
+		bek.Clear()
+		return none, nil, fail(ExitFailure, "cannot read the Root KEK file: %v", err)
+	}
+	rootKEK, err := envelope.ParseRootKEK(string(raw))
+	clear(raw)
+	if err != nil {
+		bek.Clear()
+		return none, nil, fail(ExitConfig, "the Root KEK file does not hold a Root KEK: %v", err)
+	}
+	return bek, rootKEK, 0
+}
+
+// checkRestore is `varlatchd admin backup restore --check`.
+func checkRestore(cfg *config.Config, args map[string]string, stdout io.Writer, fail func(status int, format string, args ...any) int) int {
+	bek, rootKEK, status := restoreKeys(cfg, args, fail)
+	if status != 0 {
+		return status
+	}
+	defer bek.Clear()
+	defer clear(rootKEK)
+	res, err := backups.CheckRestore(context.Background(), cfg, args["--in"], bek, rootKEK, args["--opens"] != "")
+	if err != nil {
+		return fail(ExitFailure, "%v", err)
+	}
+	if args["--json"] != "" {
+		b, err := json.Marshal(res)
+		if err != nil {
+			return fail(ExitFailure, "%v", err)
+		}
+		fmt.Fprintln(stdout, string(b))
+		return ExitOK
+	}
+	says := "this release restores it"
+	if !res.Restores {
+		says = "another release restores it, not this one"
+	}
+	fmt.Fprintf(stdout, "The archive %s of %s (created %s, its last audit position %d) opens with these keys, and %s; nothing was changed.\n", res.ArchiveID, res.Installation, res.CreatedAt, res.History, says)
+	return ExitOK
 }
 
 // restoreOffline is `varlatchd admin backup restore`: never through the
@@ -245,16 +318,29 @@ func restoreArgs(rest []string) (map[string]string, bool) {
 // refused) and restores in this process, from the archive, the Backup
 // Encryption Key (--backup-key-file, else backup_key_file) and the Root
 // KEK (root_kek_file): the two keys held apart from the archive.
-func restoreOffline(cfg *config.Config, rest []string, stdout, stderr io.Writer) int {
+//
+// With --check it only checks that the archive would restore: it opens, this
+// release restores it, and the Root KEK opens its canaries. It writes
+// nothing to keep, so a varlatchd may run. With --opens an archive of a
+// release this one does not restore passes too: it opens, and is this
+// installation's.
+func restoreOffline(cfg *config.Config, configDir string, rest []string, stdout, stderr io.Writer) int {
 	const what = "varlatchd admin backup restore"
 	fail := func(status int, format string, args ...any) int {
 		fmt.Fprintf(stderr, what+": "+format+"\n", args...)
 		return status
 	}
 	args, _ := restoreArgs(rest)
+	check := args["--check"] != ""
 	owner, id, err := checkClientDir(cfg.DataDir, os.Getuid())
 	if err != nil {
 		return fail(ExitConfig, "%v; nothing was written", err)
+	}
+	if check {
+		return checkRestore(cfg, args, stdout, fail)
+	}
+	if err := restoreBesideUpgrade(configDir); err != nil {
+		return fail(ExitFailure, "%v; nothing was written", err)
 	}
 	if conn, err := net.DialTimeout("unix", filepath.Join(cfg.DataDir, ControlSocket), 5*time.Second); err == nil {
 		_ = conn.Close()
@@ -273,37 +359,11 @@ func restoreOffline(cfg *config.Config, rest []string, stdout, stderr io.Writer)
 			return fail(ExitFailure, "%v; nothing was written", err)
 		}
 	}
-	bekFile := args["--backup-key-file"]
-	if bekFile == "" {
-		bekFile = cfg.BackupKeyFile
-	}
-	if bekFile == "" {
-		return fail(ExitConfig, "no Backup Encryption Key: give --backup-key-file, or set backup_key_file")
-	}
-	raw, err := os.ReadFile(bekFile)
-	if err != nil {
-		return fail(ExitFailure, "cannot read the Backup Encryption Key file: %v", err)
-	}
-	material, err := backup.ParseKey(string(raw))
-	clear(raw)
-	if err != nil {
-		return fail(ExitConfig, "%v", err)
-	}
-	bek, err := backup.KeyBEK(material)
-	clear(material)
-	if err != nil {
-		return fail(ExitConfig, "%v", err)
+	bek, rootKEK, status := restoreKeys(cfg, args, fail)
+	if status != 0 {
+		return status
 	}
 	defer bek.Clear()
-	raw, err = os.ReadFile(cfg.RootKEKFile)
-	if err != nil {
-		return fail(ExitFailure, "cannot read the Root KEK file: %v", err)
-	}
-	rootKEK, err := envelope.ParseRootKEK(string(raw))
-	clear(raw)
-	if err != nil {
-		return fail(ExitConfig, "the Root KEK file does not hold a Root KEK: %v", err)
-	}
 	defer clear(rootKEK)
 	res, err := backups.Restore(context.Background(), cfg, args["--in"], bek, rootKEK, nil)
 	if err != nil {
@@ -321,6 +381,7 @@ func restoreOffline(cfg *config.Config, rest []string, stdout, stderr io.Writer)
 			fmt.Fprintf(stdout, "  %s = %s\n", k, res.Settings[k])
 		}
 	}
-	fmt.Fprintln(stdout, "Next: start varlatchd, then take and check a fresh archive (`varlatchd admin backup run`).")
+	fmt.Fprintln(stdout, "The installation is held: its background work (sync, webhooks, audit export, organization deletion) does not run. It is as the archive has it: what was revoked or removed since works again, and what people and clients ask for is done.")
+	fmt.Fprintln(stdout, "Next: start varlatchd, put right what changed since the archive, end the hold (`varlatchd admin restore resume`), then take and check a fresh archive (`varlatchd admin backup run`).")
 	return ExitOK
 }

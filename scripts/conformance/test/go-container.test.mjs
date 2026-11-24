@@ -65,3 +65,20 @@ test("a probe outside any installation mounts nothing", () => {
   assert.ok(runCall, calls.join("\n"));
   assert.doesNotMatch(runCall, / -v /);
 });
+
+test("every docker run uses a read-only root filesystem with no tmpfs", () => {
+  const install = "/tmp/conformance-go-Ro1";
+  const cases = [
+    ["serve", "--config", `${install}/varlatchd.conf`],
+    ["admin", "status", "--config", `${install}/varlatchd.conf`],
+    ["admin", "conformance-sign-release", `${install}/cli-release.staging`, "0.0.0-check.1"],
+    ["admin", "conformance-probe"],
+  ];
+  for (const args of cases) {
+    const calls = run(args);
+    const runCall = calls.find((c) => c.startsWith("run "));
+    assert.ok(runCall, calls.join("\n"));
+    assert.match(runCall, / --read-only /, args.join(" "));
+    assert.doesNotMatch(runCall, /--tmpfs/, args.join(" "));
+  }
+});

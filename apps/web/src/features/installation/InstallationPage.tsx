@@ -14,6 +14,7 @@ import { archivePassed, backupHealth } from "./backupHealth";
 import { TailnetTab } from "./TailnetTab";
 import { ReleaseTab } from "./ReleaseTab";
 import { OutboundTab } from "./OutboundTab";
+import { DeploymentChoice, hostCommand, type Deployment } from "./deployment";
 import { NewerReleaseDot, useInstallationRelease } from "./releaseNotice";
 
 /**
@@ -231,7 +232,10 @@ function Stat({ icon, label, value, hint }: { icon: React.ReactNode; label: stri
   );
 }
 
+const DOCS_BACKUP_URL = "https://docs.varlatch.com/operations/backup/";
+
 function HowToDialog({ kind, onClose }: { kind: "create" | "restore" | null; onClose: () => void }) {
+  const [deployment, setDeployment] = useState<Deployment>("host");
   if (!kind) return null;
   const create = kind === "create";
   return (
@@ -247,8 +251,8 @@ function HowToDialog({ kind, onClose }: { kind: "create" | "restore" | null; onC
       title={create ? "Create an archive" : "Run a restore drill"}
       description={
         create
-          ? "Archives are made by the operator on the host, with the keys that never reach the dashboard. Run this where the installation's Compose project lives:"
-          : "A drill restores the latest archive onto a fresh, isolated project and checks the restored installation. Run it on a separate host or project, never over the live one:"
+          ? "varlatchd makes and verifies archives on its schedule, with the keys that never reach the dashboard. Make one now, on the host:"
+          : "A drill restores the latest archive onto a fresh host and checks the restored installation. Run it on a separate host where nothing else runs, never over the live one:"
       }
       footer={
         <Button variant="primary" onClick={onClose}>
@@ -259,36 +263,24 @@ function HowToDialog({ kind, onClose }: { kind: "create" | "restore" | null; onC
       <div className="space-y-4">
         {create ? (
           <>
-            <CodeBlock
-              lines={[
-                "varlatch admin backup create --dir /srv/varlatch \\",
-                "  --bek-file /secure/operator/backup-key \\",
-                "  --kek-file /secure/operator/root-kek-copy",
-              ]}
-            />
-            <p className="text-[13px] text-muted">Then verify it and record the result, so this page shows it as verified:</p>
-            <CodeBlock
-              lines={[
-                "varlatch admin backup verify --dir /srv/varlatch \\",
-                "  --in /srv/varlatch/backups/ARCHIVE-ID.vltbak \\",
-                "  --bek-file /secure/operator/backup-key \\",
-                "  --kek-file /secure/operator/root-kek-copy --record",
-              ]}
-            />
+            <DeploymentChoice value={deployment} onChange={setDeployment} />
+            <CodeBlock lines={[hostCommand(deployment, "varlatch admin backup run")]} data-testid="backup-create-lines" />
+            <p className="text-[13px] text-muted">It verifies the archive and records the result, so this page shows it.</p>
           </>
         ) : (
           <CodeBlock
+            data-testid="backup-restore-lines"
             lines={[
-              "varlatch admin backup restore --dir /srv/varlatch-drill \\",
-              "  --in /recovery/ARCHIVE-ID.vltbak \\",
-              "  --bek-file /secure/operator/backup-key \\",
-              "  --kek-file /secure/operator/root-kek-copy \\",
-              "  --target-release /srv/varlatch-drill/varlatch-release.json",
+              "sudo varlatch setup --restore /recovery/ARCHIVE-ID.vltbak \\",
+              "  --root-kek-file /recovery/root-kek --backup-key-file /recovery/backup-key",
             ]}
           />
         )}
         <p className="text-[13px] text-muted">
-          The full procedure, including off-host destinations, is in the operations guide (<span className="font-mono">docs/operations/backup.md</span>).
+          The full procedure, including off-host destinations{create ? "" : ", the container image and keeping clients away"}, is in the operations guide:{" "}
+          <a className="link" href={create ? DOCS_BACKUP_URL : `${DOCS_BACKUP_URL}#rehearse-a-restore`} target="_blank" rel="noreferrer">
+            Backups and recovery
+          </a>
         </p>
       </div>
     </Dialog>

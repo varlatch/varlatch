@@ -12,6 +12,8 @@ import (
 // noFollow: setup runs on Linux; elsewhere it only builds.
 const noFollow = 0
 
+const nonBlock = 0
+
 // readNoFollow reads a file, refusing a symbolic link (setup runs on
 // Linux; elsewhere it only builds and its tests run), at most 1 MiB.
 func readNoFollow(path string) ([]byte, error) {

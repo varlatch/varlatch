@@ -3,6 +3,7 @@
 package outbound
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"reflect"
@@ -55,6 +56,10 @@ func readVectors(t *testing.T) vectors {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The TypeScript server's setting, named as a Go installation's
+	// (go/README.md, host-settings).
+	raw = bytes.ReplaceAll(raw, []byte("VARLATCH_OUTBOUND_ALLOW: "), []byte("outbound_allow: "))
+	raw = bytes.ReplaceAll(raw, []byte("VARLATCH_OUTBOUND_ALLOW"), []byte("outbound_allow in varlatchd.conf"))
 	var v vectors
 	if err := json.Unmarshal(raw, &v); err != nil {
 		t.Fatal(err)

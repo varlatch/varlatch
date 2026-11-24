@@ -40,7 +40,17 @@ type Admission struct {
 	// unreadable: the gate file exists but cannot be read; nothing is
 	// admitted until an operator repairs it.
 	unreadable bool
-	busy       int
+	// upgrading: an upgrade is checking this varlatchd (HoldForUpgrade);
+	// upgradeNote is why it is still held.
+	upgrading   bool
+	upgradeNote string
+	busy        int
+	// hold: a restore's hold stands (backup.Hold), or one that cannot be
+	// read (holdUnreadable), until Resume.
+	hold           *backup.Hold
+	holdUnreadable bool
+	// resuming serializes Resume: its event is committed outside mu.
+	resuming sync.Mutex
 }
 
 // Open reads the gate in dir, the data directory.
@@ -51,6 +61,8 @@ func Open(dir string, now func() time.Time) *Admission {
 	a := &Admission{dir: dir, now: now}
 	g, err := backup.ReadGate(dir)
 	a.gate, a.unreadable = g, err != nil
+	h, err := backup.ReadHold(dir)
+	a.hold, a.holdUnreadable = h, err != nil
 	return a
 }
 
@@ -64,18 +76,68 @@ func (a *Admission) active() *backup.Gate {
 	return a.gate
 }
 
-// Isolated reports whether a gate is open (or unreadable).
+// closed is whether nothing is admitted. Called with mu held.
+func (a *Admission) closed() bool { return a.unreadable || a.upgrading || a.active() != nil }
+
+// Isolated reports whether a gate is open (or unreadable), or an upgrade
+// holds this varlatchd.
 func (a *Admission) Isolated() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.unreadable || a.active() != nil
+	return a.closed()
+}
+
+// HoldForUpgrade admits nothing until EndUpgrade, beside whatever gate is
+// open: this process's only, never written. It begins before anything asks
+// to be admitted.
+func (a *Admission) HoldForUpgrade() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.upgrading, a.upgradeNote = true, UpgradeHeld
+}
+
+// Why an upgrade holds this varlatchd: it is not over; or its journal, which
+// says when it is, is gone, or cannot be read.
+const (
+	UpgradeHeld              = "held"
+	UpgradeJournalMissing    = "journal-missing"
+	UpgradeJournalUnreadable = "journal-unreadable"
+)
+
+// NoteUpgrade says why the upgrade's hold stands.
+func (a *Admission) NoteUpgrade(note string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.upgradeNote = note
+}
+
+// UpgradeHold is why an upgrade holds this varlatchd, "" when none does.
+func (a *Admission) UpgradeHold() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if !a.upgrading {
+		return ""
+	}
+	return a.upgradeNote
+}
+
+// EndUpgrade ends HoldForUpgrade's hold. A gate stays as it is.
+func (a *Admission) EndUpgrade() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.upgrading = false
 }
 
 // Enter admits one request: false while isolated. leave ends it.
 func (a *Admission) Enter() (leave func(), ok bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.unreadable || a.active() != nil {
+	return a.enter()
+}
+
+// enter is Enter, under the lock.
+func (a *Admission) enter() (leave func(), ok bool) {
+	if a.closed() {
 		return nil, false
 	}
 	a.busy++
@@ -96,7 +158,7 @@ func (a *Admission) AdmitsMeta() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	g := a.active()
-	return !a.unreadable && g != nil && g.Kind == "migration"
+	return !a.unreadable && !a.upgrading && g != nil && g.Kind == "migration"
 }
 
 // EndMigration ends the migration's gate id (go-step7 decision 12, the
@@ -143,6 +205,9 @@ func (a *Admission) BeginBarrier(id string) (backup.Gate, error) {
 			return *g, nil
 		}
 		return backup.Gate{}, ErrBarrier
+	}
+	if a.held() {
+		return backup.Gate{}, ErrHeld
 	}
 	// A lease that expired while varlatchd was stopped.
 	if err := os.Remove(filepath.Join(a.dir, backup.GateFile)); err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -268,4 +333,72 @@ func (a *Admission) End(id string) error {
 	}
 	a.gate = nil
 	return nil
+}
+
+// The restore hold (backup.Hold). Requests and host commands are admitted
+// while it stands; background work that delivers or destroys is not.
+
+// ErrHeld refuses what a held installation must not do.
+var ErrHeld = errors.New("the installation was restored from an archive and is held: put right what changed since, then run `varlatchd admin restore resume`")
+
+// ErrNotHeld is Resume's answer on an installation that is not held.
+var ErrNotHeld = errors.New("the installation is not held: there is nothing to resume")
+
+func (a *Admission) held() bool { return a.hold != nil || a.holdUnreadable }
+
+// Held is whether a restore's hold stands.
+func (a *Admission) Held() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.held()
+}
+
+// Hold is the hold that stands: nil when there is none,
+// backup.ErrHoldUnreadable for one that cannot be read.
+func (a *Admission) Hold() (*backup.Hold, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.holdUnreadable {
+		return nil, backup.ErrHoldUnreadable
+	}
+	if a.hold == nil {
+		return nil, nil
+	}
+	h := *a.hold
+	return &h, nil
+}
+
+// EnterWork is Enter for background work that delivers or destroys: refused
+// while a restore's hold stands.
+func (a *Admission) EnterWork() (leave func(), ok bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.held() {
+		return nil, false
+	}
+	return a.enter()
+}
+
+// Resume ends the hold, once record (its audit event) has committed, and
+// says what it removed (backup.RemoveHold). One resume at a time: the
+// second finds nothing to resume. Killed between the event and the removal,
+// the hold stands, and resuming again records the event again.
+func (a *Admission) Resume(record func(*backup.Hold) error) (string, error) {
+	a.resuming.Lock()
+	defer a.resuming.Unlock()
+	h, err := a.Hold()
+	if h == nil && err == nil {
+		return "", ErrNotHeld
+	}
+	if err := record(h); err != nil {
+		return "", err
+	}
+	what, err := backup.RemoveHold(a.dir)
+	if err != nil {
+		return "", err
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.hold, a.holdUnreadable = nil, false
+	return what, nil
 }

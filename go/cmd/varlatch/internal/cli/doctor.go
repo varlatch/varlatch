@@ -15,6 +15,7 @@ import (
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/clientctx"
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
 	"github.com/varlatch/varlatch/go/lib/jsjson"
+	journal "github.com/varlatch/varlatch/go/lib/upgradejournal"
 )
 
 // `varlatch doctor` (internal docs/design/go-step6.md, slice 6.5): a Go
@@ -87,7 +88,7 @@ func doctorCommand(r *Run) (bool, error) {
 	if err != nil {
 		return true, err
 	}
-	report.Checks = append(report.Checks, doctorCLIChecks(report)...)
+	report.Checks = append(report.Checks, doctorCLIChecks(report, config)...)
 	if asJSON {
 		raw, err := json.Marshal(report)
 		if err != nil {
@@ -194,8 +195,9 @@ func (r *Run) doctorLines(said []byte) error {
 
 // doctorCLIChecks are the CLI's own checks (a browser's reach, unknown,
 // is varlatchd's report's): the TypeScript doctor's ids
-// where they mean the same (the conformance suite reads them).
-func doctorCLIChecks(report doctorReport) []doctorCheck {
+// where they mean the same (the conformance suite reads them). config is
+// the installation's varlatchd.conf, "" for the default.
+func doctorCLIChecks(report doctorReport, config string) []doctorCheck {
 	running := doctorCheck{ID: "services.running", Title: "varlatchd is running", Class: "mandatory"}
 	switch report.Via {
 	case "daemon":
@@ -213,15 +215,53 @@ func doctorCLIChecks(report doctorReport) []doctorCheck {
 		ServerVersion string `json:"serverVersion"`
 	}
 	_ = json.Unmarshal(report.Facts, &facts)
-	release := doctorCheck{ID: "release.pending-upgrade", Title: "varlatch and varlatchd are one release", Class: "mandatory"}
-	if facts.ServerVersion == buildinfo.Version {
-		release.Status, release.Detail = "pass", "both are "+buildinfo.Version
-	} else {
-		release.Status = "fail"
-		release.Detail = "varlatch is " + buildinfo.Version + ", varlatchd is " + facts.ServerVersion + ": an upgrade did not finish"
-		release.Remedy = "Install both binaries from one release (install.sh --server), then run doctor again"
+	if config == "" {
+		config = DefaultVarlatchdConfig
 	}
-	return []doctorCheck{running, release}
+	pending, err := journal.Read(filepath.Dir(config))
+	return []doctorCheck{running, pendingUpgrade(facts.ServerVersion, pending, err)}
+}
+
+// pendingUpgrade is release.pending-upgrade: no upgrade or rollback is left
+// pending on this host (the upgrade journal, readable by anyone, read with
+// err), and varlatch and varlatchd are one release. A journal that cannot
+// be read says nothing, so the check is unknown, unless the releases differ.
+func pendingUpgrade(serverVersion string, j *journal.Journal, err error) doctorCheck {
+	c := doctorCheck{ID: "release.pending-upgrade", Title: "no upgrade is pending, and varlatch and varlatchd are one release", Class: "mandatory"}
+	switch {
+	case err == nil && j.Pending():
+		c.Status = "fail"
+		c.Remedy = "Run sudo varlatch upgrade to finish or undo it"
+		what := "upgrading from " + j.From + " to " + j.To
+		if j.Kind == journal.Rollback {
+			what = "rolling back from " + j.From + " to " + j.To
+		}
+		if j.State == journal.Failed {
+			c.Detail = what + " failed, and its undo did not complete"
+			if j.Reason != "" {
+				c.Detail += ": " + j.Reason
+			}
+			if j.Snapshot != "" {
+				c.Remedy += "; the pre-upgrade snapshot is " + j.Snapshot
+			}
+			break
+		}
+		at := "before its first step"
+		if j.Step != journal.None {
+			at = "after step " + string(j.Step)
+		}
+		c.Detail = what + " is under way, or was interrupted (" + at + ")"
+	case serverVersion != buildinfo.Version:
+		c.Status = "fail"
+		c.Detail = "varlatch is " + buildinfo.Version + ", varlatchd is " + serverVersion + ": an upgrade did not finish"
+		c.Remedy = "Install both binaries from one release (install.sh --server), then run doctor again"
+	case err != nil:
+		c.Status, c.Detail = "unknown", "the upgrade journal could not be read: "+err.Error()
+		c.Remedy = "Run doctor as root (sudo varlatch doctor); if the journal is still refused, the varlatch that wrote it (a newer release) reads it"
+	default:
+		c.Status, c.Detail = "pass", "both are "+buildinfo.Version
+	}
+	return c
 }
 
 // showDoctor writes the report as text, through the fail-safe.

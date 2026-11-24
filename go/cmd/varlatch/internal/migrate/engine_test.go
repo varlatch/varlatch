@@ -1475,6 +1475,29 @@ func TestAReleaseWaitsForTheImagesStop(t *testing.T) {
 	}
 }
 
+// The source's extra certificate authorities: a warning that names the
+// file, where the Go installation takes one, and nothing refused.
+func TestTheSourcesExtraCAIsWarnedOf(t *testing.T) {
+	for _, c := range []struct{ ca, kind, want, not string }{
+		{"", "", "", "NODE_EXTRA_CA_CERTS"},
+		{"/certs/ca.pem", "", `NODE_EXTRA_CA_CERTS="/certs/ca.pem"`, "mount a file"},
+		{"/certs/ca.pem", "image", "mount a file into its service", "systemctl edit"},
+		{"/certs/a\x1b[2Jb.pem", "", `"/certs/a\x1b[2Jb.pem"`, "\x1b"},
+	} {
+		w := newWorld(t)
+		w.src.ingress.ExtraCACerts = c.ca
+		if c.kind != "" {
+			w.tgt.info.Kind = c.kind
+		}
+		if _, err := w.eng.Run(context.Background(), true); err != nil {
+			t.Fatalf("%+v: %v", c, err)
+		}
+		if said := strings.Join(w.said, "\n"); !strings.Contains(said, c.want) || strings.Contains(said, c.not) || c.ca != "" && strings.Count(said, "Warning: the source's varlatchd trusts") != 1 {
+			t.Errorf("%+v: %s", c, said)
+		}
+	}
+}
+
 // The source's outbound allow list against the target's: none at the
 // source changes nothing; a target with none while the source allows some
 // is refused before anything is done; one that lacks some of the source's
@@ -1516,5 +1539,50 @@ func TestTheTargetKeepsTheSourcesOutboundAllowList(t *testing.T) {
 				t.Errorf("said: %s", said)
 			}
 		})
+	}
+}
+
+// Options.StageAs settles the stage once it is needed: the target's owner
+// and its base, asked for once; none is this user's work directory.
+func TestStageAs(t *testing.T) {
+	ctx := context.Background()
+	asked := 0
+	base := t.TempDir()
+	e := &Engine{Options: Options{Work: t.TempDir(), StageAs: func(context.Context) (*Owner, string, error) {
+		asked++
+		return &Owner{UID: uint32(os.Getuid()), GID: uint32(os.Getgid())}, base, nil
+	}}}
+	for range 2 {
+		dir, err := e.scratchDir(ctx)
+		if err != nil || filepath.Dir(dir) != base {
+			t.Fatalf("%s, %v", dir, err)
+		}
+		bundle := filepath.Join(t.TempDir(), "b")
+		if err := os.WriteFile(bundle, []byte("bundle"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		staged, done, err := e.stage(ctx, bundle)
+		if err != nil || filepath.Dir(filepath.Dir(staged)) != base || filepath.Dir(staged) == dir {
+			t.Fatalf("%s, %v", staged, err)
+		}
+		done()
+		if _, err := os.Stat(filepath.Dir(staged)); !os.IsNotExist(err) {
+			t.Fatalf("the stage stays: %v", err)
+		}
+		if _, err := os.Stat(bundle); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if asked != 1 {
+		t.Errorf("asked %d times", asked)
+	}
+	none := &Engine{Options: Options{Work: t.TempDir(), StageAs: func(context.Context) (*Owner, string, error) { return nil, "", nil }}}
+	if dir, err := none.scratchDir(ctx); err != nil || filepath.Dir(dir) != none.Options.Work {
+		t.Errorf("%s, %v", dir, err)
+	}
+	refused := errors.New("no target")
+	bad := &Engine{Options: Options{Work: t.TempDir(), StageAs: func(context.Context) (*Owner, string, error) { return nil, "", refused }}}
+	if _, err := bad.scratchDir(ctx); !errors.Is(err, refused) {
+		t.Error(err)
 	}
 }

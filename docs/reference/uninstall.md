@@ -34,9 +34,9 @@ installation for up to 30 days for that, and nothing else does.
 
 ## What Varlatch puts on your machine
 
-Varlatch installs no system packages, services, or scheduled jobs, and
-needs no root. You install Node.js for the CLI and Docker for an
-installation yourself. Here is everything else, and how to remove it.
+The CLI needs no root, and installs no packages, services or scheduled
+jobs. An installation is one service on its host. Here is everything, and
+how to remove it.
 
 **The CLI,** on every machine that uses it:
 
@@ -93,35 +93,44 @@ rm -r ~/.config/varlatch
 
 **An installation,** on its host:
 
-- The directory you unpacked the bundle in. Setup writes only there: the
-  keys and passwords in `secrets/`, the recovery key copy in `recovery/` if
-  you chose a passphrase-protected file, `backups/`, `.env`, and
-  `varlatch-install.json`.
-- A Docker Compose project named `varlatch`: its containers, a network,
-  the volumes that hold the data (`postgres-data`, `convex-data`,
-  `varlatch-state`, Caddy's state with the public address, and
-  Tailscale's state when the installation uses Tailscale), and the images
-  it pulled.
-- Ports on `127.0.0.1` only: the address you chose, 8787 by default, and
-  two ports Docker picks at random for varlatchd and the Convex backend. With the public address, Caddy also listens on TCP ports 80 and
-  443 and UDP port 443, on every interface.
+- `/usr/local/bin/varlatch` and `/usr/local/bin/varlatchd`, and the unit
+  `/etc/systemd/system/varlatchd.service`.
+- The system user and group `varlatch`.
+- `/etc/varlatch`: the configuration, the two keys, and what setup and
+  upgrades recorded.
+- `/var/lib/varlatch`: the database, local backups, and the certificate and
+  tailnet state, when used.
+- `/usr/local/lib/varlatch`, once you upgraded: the releases' binaries and
+  the snapshots from before upgrades.
+- Files you named in a setup command, such as copies of the keys.
+- A port: `127.0.0.1:8686`, and with public HTTPS, TCP ports 80 and 443 on
+  every interface.
 
-To remove an installation, run this in its directory, then delete the
-directory. It erases every value the installation stores and every key on
-this host: only a [backup](../operations/backup.md), with the recovery keys
-you kept off this host, brings any of it back.
+To remove an installation, run this on its host. It erases every value the
+installation stores and every key on this host: only a
+[backup](../operations/backup.md), with the recovery keys you kept off this
+host, brings any of it back.
 
 ```sh
-docker compose down --volumes --rmi all
-cd .. && rm -r varlatch-$V
+sudo systemctl disable --now varlatchd
+sudo rm /etc/systemd/system/varlatchd.service
+sudo systemctl daemon-reload
+sudo rm -r /etc/varlatch /var/lib/varlatch
+sudo rm -rf /usr/local/lib/varlatch
+sudo rm /usr/local/bin/varlatch /usr/local/bin/varlatchd
+sudo userdel varlatch
 ```
 
-`.env` tells Docker Compose which files the installation uses, so this
-removes the containers and volumes of every address type. `--rmi all`
-also removes the images, including shared ones such as `postgres`: leave
-it out to keep them. Outside this machine, remove what you set up for it
-by hand: the DNS record of a public address, and, when the installation
-used Tailscale, its machine in the Tailscale admin console.
+Also remove any drop-in you made in
+`/etc/systemd/system/varlatchd.service.d`. Outside this machine, remove what
+you set up for it by hand: the DNS record, the node in your tailnet, and the
+backup bucket.
+
+With the container image, remove the container, then the data, keys and
+configuration paths you mounted (`/srv/varlatch` on Coolify).
+
+An installation of 0.23.0 or earlier runs on Docker Compose:
+[how to remove it](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/reference/uninstall.md#what-varlatch-puts-on-your-machine).
 
 **Your passkey** stays where you created it, on your device, in your
 password manager, or on your security key. Delete it there.

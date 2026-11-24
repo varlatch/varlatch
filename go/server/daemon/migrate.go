@@ -17,10 +17,13 @@ import (
 
 	"golang.org/x/term"
 
+	"github.com/varlatch/varlatch/go/lib/backup"
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
 	"github.com/varlatch/varlatch/go/lib/envelope"
+	"github.com/varlatch/varlatch/go/lib/preread"
 	"github.com/varlatch/varlatch/go/server/backups"
 	"github.com/varlatch/varlatch/go/server/config"
+	"github.com/varlatch/varlatch/go/server/maintenance"
 	"github.com/varlatch/varlatch/go/server/migration/check"
 	"github.com/varlatch/varlatch/go/server/migration/migrate"
 	"github.com/varlatch/varlatch/go/server/tailnet"
@@ -236,9 +239,26 @@ func runMigrate(cfg *config.Config, rest []string, stdin io.Reader, stdout, stde
 			return fail(ExitFailure, "%v; nothing was written", err)
 		}
 		frozen = f
+		// A restored installation goes nowhere before it is resumed (the
+		// barrier is refused too: BeginBarrier).
+		if h, err := backup.ReadHold(cfg.DataDir); err != nil || h != nil {
+			return fail(ExitFailure, "%v; nothing was written", maintenance.ErrHeld)
+		}
 	}
 	if frozen != nil || (a.sub == "check" || a.sub == "import") && a.scratch != "" {
 		return migrateWork(cfg, a, frozen, stdin, stdout, fail)
+	}
+	if a.sub == "keys" && rootOverOwner(cfg.DataDir) {
+		// The keys are root's, the data directory is not: nothing is made
+		// in it, its lock neither. Nothing else runs on a target whose keys
+		// are not there yet.
+		if _, _, err := checkClientDir(cfg.DataDir, os.Getuid()); err != nil {
+			return fail(ExitConfig, "%v; nothing was written", err)
+		}
+		if controlAnswers(cfg.DataDir, 5*time.Second) {
+			return fail(ExitFailure, "varlatchd is running on %s: stop it first; nothing was written", cfg.DataDir)
+		}
+		return runMigrateKeys(cfg, stdin, stdout, fail)
 	}
 	if a.sub == "import" || a.sub == "keys" || a.sub == "state" {
 		if err := os.MkdirAll(cfg.DataDir, 0o700); err != nil {
@@ -342,6 +362,9 @@ func importableDataDir(dataDir string) error {
 	if err := enrolledNode(dataDir); err != nil {
 		return err
 	}
+	if h, err := backup.ReadHold(dataDir); err != nil || h != nil {
+		return fmt.Errorf("the data directory %s holds a restore's hold (%s): `varlatchd admin restore resume`, with varlatchd stopped, removes it; an import builds a fresh database only", dataDir, backup.HoldFile)
+	}
 	return migrate.CheckFresh(dataDir, importIgnore, importKeep)
 }
 
@@ -361,6 +384,14 @@ func migrateWork(cfg *config.Config, a migrateArgs, frozen *frozenCopy, stdin io
 			return fail(ExitFailure, "%v", err)
 		}
 		o.Work = filepath.Dir(abs)
+		if f, _ := handedOutput(); f != nil {
+			// The bundle's directory is root's alone, and this process is
+			// the data directory's owner now.
+			if o.Work, err = os.MkdirTemp("", "varlatchd-export-"); err != nil {
+				return fail(ExitFailure, "%v", err)
+			}
+			defer os.RemoveAll(o.Work)
+		}
 	}
 	if a.scratch != "" {
 		if a.sub == "import" {
@@ -371,7 +402,7 @@ func migrateWork(cfg *config.Config, a migrateArgs, frozen *frozenCopy, stdin io
 		o.DataDir, o.Ignore, o.KeepDirs = a.scratch, nil, nil
 	}
 	if a.sub == "import" || a.sub == "check" {
-		raw, err := os.ReadFile(cfg.RootKEKFile)
+		raw, err := preread.ReadFile(cfg.RootKEKFile)
 		if err != nil {
 			return fail(ExitFailure, "cannot read the Root KEK file: %v", err)
 		}
@@ -392,7 +423,7 @@ func migrateWork(cfg *config.Config, a migrateArgs, frozen *frozenCopy, stdin io
 		}
 	}
 	if a.sub == "import" {
-		in, err := os.Open(a.in)
+		in, err := preread.Open(a.in)
 		if err != nil {
 			return fail(ExitFailure, "%v", err)
 		}
@@ -401,23 +432,12 @@ func migrateWork(cfg *config.Config, a migrateArgs, frozen *frozenCopy, stdin io
 			return fail(ExitFailure, "%v; nothing was kept", err)
 		}
 	} else {
-		out, err := os.OpenFile(a.out, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		out, done, err := output(a.out)
 		if err != nil {
 			return fail(ExitFailure, "%v (the reverse bundle is a new file)", err)
 		}
 		res, err = migrate.ExportReverse(context.Background(), out, o)
-		if cerr := out.Close(); err == nil {
-			err = cerr
-		}
-		if err == nil {
-			err = syncFile(a.out)
-		}
-		if err == nil {
-			// The bundle's name in its directory, durable too.
-			err = syncFile(filepath.Dir(a.out))
-		}
-		if err != nil {
-			_ = os.Remove(a.out)
+		if err := done(err); err != nil {
 			return fail(ExitFailure, "%v; nothing was written", err)
 		}
 	}
@@ -470,7 +490,7 @@ func runCheck(cfg *config.Config, a migrateArgs, dataDir string, rootKEK []byte,
 		return fail(ExitFailure, "the data directory %s holds no database: import first", dataDir)
 	}
 	defer db.Close()
-	in, err := os.Open(a.in)
+	in, err := preread.Open(a.in)
 	if err != nil {
 		return fail(ExitFailure, "%v", err)
 	}

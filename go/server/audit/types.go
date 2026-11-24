@@ -12,6 +12,9 @@ var GoOnlyEventTypes = []string{
 	// (`varlatchd admin migrate import`, `export --reverse`; step 7.3a).
 	// The last TypeScript release (0.23.0) knows it too.
 	"installation.migrated",
+	// The host operator ended a restore's hold (`varlatchd admin restore
+	// resume`).
+	"installation.restore_resumed",
 	// The host re-pinned the tailnet, reopened tailnet access on its pin,
 	// or adopted the tailnet an enrolled node without a pin is on
 	// (`varlatchd admin tailnet repin --yes`, step 6.2b).

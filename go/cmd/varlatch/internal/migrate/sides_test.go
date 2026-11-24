@@ -751,7 +751,7 @@ func TestOrigin(t *testing.T) {
 // .env's with its quotes and an inline comment taken as Compose takes
 // them); with the service not running, docker compose config's, said
 // so. Only that variable is read: an error carries no other value.
-func TestComposeOutboundAllow(t *testing.T) {
+func TestComposeSourceEnv(t *testing.T) {
 	const ps, inspect, config = "docker compose ps -q varlatchd", "docker inspect --format {{json .Config.Env}} c1", "docker compose config --format json"
 	stopped := func(fixture string) *scripted {
 		b, err := os.ReadFile(filepath.Join("testdata", "compose-config", fixture))
@@ -777,11 +777,25 @@ func TestComposeOutboundAllow(t *testing.T) {
 		{"stopped, the shell's value", stopped("outbound-process-env.json"), "from.shell.lan", true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			v, fromConfig, err := stockCompose(t, c.run).outboundAllow(context.Background())
-			if err != nil || v != c.want || fromConfig != c.fromConfig {
-				t.Fatalf("%q %v %v, want %q %v", v, fromConfig, err, c.want, c.fromConfig)
+			got, err := stockCompose(t, c.run).sourceEnv(context.Background())
+			if want := (sourceEnv{outboundAllow: c.want, fromConfig: c.fromConfig}); err != nil || got != want {
+				t.Fatalf("%+v %v, want %+v", got, err, want)
 			}
 		})
+	}
+	// The extra certificate authorities' file, running and stopped.
+	for name, run := range map[string]*scripted{
+		"running": {t: t, answers: map[string]Ran{ps: {Answer: []byte("c1\n")}, inspect: {Answer: []byte(`["NODE_EXTRA_CA_CERTS=/old.pem","X=1","NODE_EXTRA_CA_CERTS= /certs/ca.pem "]`)}}},
+		"stopped": {t: t, answers: map[string]Ran{ps: {}, config: {Answer: []byte(`{"name":"p","services":{"varlatchd":{"environment":{"NODE_EXTRA_CA_CERTS":"/certs/ca.pem","Y":null}},"other":{"environment":{"NODE_EXTRA_CA_CERTS":"/other.pem"}}}}`)}}},
+		"not set": {t: t, answers: map[string]Ran{ps: {}, config: {Answer: []byte(`{"name":"p","services":{"varlatchd":{"environment":{"NODE_EXTRA_CA_CERTS":null}}}}`)}}},
+	} {
+		want := "/certs/ca.pem"
+		if name == "not set" {
+			want = ""
+		}
+		if got, err := stockCompose(t, run).sourceEnv(context.Background()); err != nil || got.extraCA != want || got.outboundAllow != "" {
+			t.Errorf("%s: %+v %v", name, got, err)
+		}
 	}
 	secret := `["VARLATCH_PUBLIC_URL=https://vault.example.test",`
 	// What each says, beyond that the variable cannot be read; never a
@@ -801,7 +815,7 @@ func TestComposeOutboundAllow(t *testing.T) {
 			"a variable the Compose files need is unset"},
 		"config not JSON": {&scripted{t: t, answers: map[string]Ran{ps: {}, config: {Answer: []byte(`{"name":"p","services":` + secret)}}}, "did not give the varlatchd service's environment"},
 	} {
-		_, _, err := stockCompose(t, c.run).outboundAllow(context.Background())
+		_, err := stockCompose(t, c.run).sourceEnv(context.Background())
 		if err == nil || !strings.Contains(err.Error(), "VARLATCH_OUTBOUND_ALLOW cannot be read") || !strings.Contains(err.Error(), c.says) ||
 			strings.Contains(err.Error(), "vault.example.test") || strings.Contains(err.Error(), "missing a value") {
 			t.Errorf("%s: %v", name, err)

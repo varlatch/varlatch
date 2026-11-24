@@ -549,15 +549,17 @@ jobs:
   # pass G5 whole, forward and reverse; one declared as ending the window
   # (endsRollbackWindow) passes its forward half, the reverse being what it
   # ends. A declaration with neither fails here too (releasecheck refuses
-  # it before). go/server/migration/g5's stand-ins for the TypeScript side;
-  # the run against the last TypeScript release's published image is the
-  # step 7.8 rehearsal's.
+  # it before). First go/server/migration/g5's stand-ins for the TypeScript
+  # side, then, by the same rule, the last TypeScript release as published,
+  # its images by digest (go/test/rehearsal/published.sh).
   go-g5:
     needs: [validation, hosted-runner, line]
     if: needs.line.outputs.line == 'go'
     runs-on: ${{ vars.RELEASE_RUNNER || (needs.hosted-runner.outputs.available == 'true' && 'ubuntu-latest') || 'varlatch-ci' }}
-    # G5's own -timeout is 45 minutes.
-    timeout-minutes: 75
+    # G5's own -timeout is 45 minutes, the upgrade's 50 (it takes about 12);
+    # the published release's run pulls about 3 GB and takes 5 minutes on the
+    # workstation.
+    timeout-minutes: 160
     permissions:
       contents: read
     steps:
@@ -586,6 +588,28 @@ jobs:
             echo "release.json declares neither reversibleTo $last nor endsRollbackWindow (reversibleTo '$reversible', endsRollbackWindow $ends)" >&2
             exit 1
           fi
+      # Every interruption of the host's upgrade and of its rollback; a pull
+      # request tries a fixed part of them (internal/upgrade's sample_test.go).
+      - name: The host's upgrade and rollback, interrupted everywhere
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+          VARLATCH_UPGRADE_TESTS: all
+        run: go test -count=1 -timeout 50m ./cmd/varlatch/internal/upgrade
+      # The harness's S3 client (packages/backup's) and the TypeScript CLI.
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: 12.3.4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 26
+          cache: pnpm
+      - name: G5 on the last TypeScript release as published
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts --filter @varlatch/backup
+          half=whole
+          if [ "$(jq -r '.endsRollbackWindow // false' go/release/release.json)" = true ]; then half=forward; fi
+          go/test/rehearsal/published.sh "$half" "$RUNNER_TEMP/g5-published"
 
   # The Go line's container image (decision 9): the release's own Linux
   # binaries in go/image/Dockerfile, built by go/image/build.sh, pushed

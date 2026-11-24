@@ -179,7 +179,7 @@ export function AuditExportCard({ org, status }: { org: string; status: AuditExp
     >
       {!status.enabled && (
         <Callout tone="warn" icon={<PauseCircle size={16} />} className="m-5 mb-0" data-testid="audit-export-off" title="Stopped by the host operator">
-          Whoever runs this installation turned audit export off (VARLATCH_AUDIT_EXPORT=off): nothing is delivered and no export can be set up.
+          Whoever runs this installation turned audit export off (audit_export = off in varlatchd.conf): nothing is delivered and no export can be set up.
           {isLive(current) ? " The export can still be removed." : ""}
         </Callout>
       )}

@@ -427,8 +427,11 @@ func TestTakeNameRefusesALiveHolder(t *testing.T) {
 	if err := os.Chmod(w.keyFile, 0); err != nil {
 		t.Fatal(err)
 	}
-	if code, _, errOut := runAdmin(t, "tailnet", "take-name", "--oauth-client-file", w.oauth, "--config", w.in.conf); code != ExitFailure || !strings.Contains(errOut, "cannot read the auth key file: ") || !strings.Contains(errOut, "permission denied") {
-		t.Fatalf("an unreadable auth key file: %d %q", code, errOut)
+	// Root reads it all the same.
+	if os.Geteuid() != 0 {
+		if code, _, errOut := runAdmin(t, "tailnet", "take-name", "--oauth-client-file", w.oauth, "--config", w.in.conf); code != ExitFailure || !strings.Contains(errOut, "cannot read the auth key file: ") || !strings.Contains(errOut, "permission denied") {
+			t.Fatalf("an unreadable auth key file: %d %q", code, errOut)
+		}
 	}
 	if err := os.Chmod(w.keyFile, 0o600); err != nil {
 		t.Fatal(err)

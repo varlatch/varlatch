@@ -28,6 +28,7 @@ import (
 	"io/fs"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -36,10 +37,13 @@ import (
 	"github.com/varlatch/varlatch/go/lib/backup"
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
 	"github.com/varlatch/varlatch/go/lib/diskprobe"
+	"github.com/varlatch/varlatch/go/lib/keyenv"
+	"github.com/varlatch/varlatch/go/lib/release"
 	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/custody"
 	"github.com/varlatch/varlatch/go/server/db"
+	"github.com/varlatch/varlatch/go/server/maintenance"
 	"github.com/varlatch/varlatch/go/server/tailnet/closed"
 )
 
@@ -117,6 +121,9 @@ type Live struct {
 	DatabaseCreatedAt string `json:"databaseCreatedAt,omitempty"`
 	// Maintenance: a maintenance gate holds the installation.
 	Maintenance bool `json:"maintenance"`
+	// UpgradeHold is why an upgrade holds varlatchd (server/maintenance), ""
+	// when none does.
+	UpgradeHold string `json:"upgradeHold,omitempty"`
 	// Storage is the engine's metrics (ADR-0059 Decision 2) and WALBound
 	// its bound.
 	Storage  storage.Metrics `json:"storage"`
@@ -239,12 +246,14 @@ func Run(ctx context.Context, in Inputs) Report {
 		add(tailnetPin(in.Live))
 		add(tailnetControl(in))
 	}
+	if c, held := restoreHold(in); held {
+		add(c)
+	}
 	add(backupsStatus(in))
 	add(custodyCheck(in))
 	add(Check{ID: "realtime.browser", Title: "Live updates reach browsers", Status: Unknown, Class: Mandatory,
 		Detail: "only a browser sees whether live updates reach it: open the dashboard and watch a change arrive"})
-	add(Check{ID: "release.latest", Title: "Newer release check", Status: Unknown, Class: Advisory,
-		Detail: "no release check is recorded: `varlatch upgrade --check` comes with step 6.6"})
+	add(latestRelease(in))
 	// What a CA, a network error or a file said may name a URL: never its
 	// user name and password.
 	for i := range r.Checks {
@@ -259,6 +268,65 @@ var userinfo = regexp.MustCompile(`([A-Za-z][A-Za-z0-9+.-]*://)[^/?#@\s]*@`)
 
 // maskUserinfo masks every URL's user name and password in s.
 func maskUserinfo(s string) string { return userinfo.ReplaceAllString(s, "${1}[redacted]@") }
+
+// releaseCheckMaxAge is how long a check that found no newer release is
+// taken as current (the TypeScript line's RELEASE_CHECK_MAX_AGE_MS).
+const releaseCheckMaxAge = 14 * 24 * time.Hour
+
+// latestRelease is whether a newer release is known (ADR-0049), from what
+// the host's `varlatch upgrade --check` recorded in the data directory; it
+// contacts nobody. A known newer release fails it however old the check;
+// "none newer" passes only while the check is recent.
+func latestRelease(in Inputs) Check {
+	c := Check{ID: "release.latest", Title: "Newer release check", Status: Unknown, Class: Advisory,
+		Remedy: "Run sudo varlatch upgrade --check, and schedule it (a systemd timer or cron)"}
+	upgradeBy := "Upgrade with sudo varlatch upgrade"
+	if os.Getenv(keyenv.ImageMarker) != "" {
+		c.Remedy = "Run varlatch upgrade --check in the container, and schedule it on the host"
+		upgradeBy = "Deploy the new release's image, by its digest"
+	}
+	rc, err := release.ReadReleaseCheck(in.Config.DataDir)
+	switch {
+	case errors.Is(err, fs.ErrPermission):
+		c.Detail, c.Remedy = "the release check's record cannot be read as this user", runAs
+		return c
+	case err != nil:
+		c.Detail = "the release check's record is unreadable"
+		return c
+	case rc == nil:
+		c.Detail = "no release check is recorded"
+		return c
+	}
+	failed := ""
+	if rc.LastAttempt.Failed != nil {
+		failed = "; the last check failed (" + *rc.LastAttempt.Failed + ") at " + rc.LastAttempt.CheckedAt
+	}
+	s := rc.LastSuccess
+	if s == nil {
+		c.Detail = "no successful release check is recorded" + failed
+		return c
+	}
+	if order, ok := release.CompareVersions(s.Latest.Version, buildinfo.Version); !ok {
+		c.Detail = "this varlatchd's version, " + buildinfo.Version + ", cannot be compared with " + s.Latest.Version
+		return c
+	} else if order > 0 {
+		c.Status, c.Remedy = Fail, upgradeBy
+		if os.Getenv(keyenv.ImageMarker) == "" && release.Prerelease(s.Latest.Version) && !release.Prerelease(buildinfo.Version) {
+			// Found by `upgrade --check --prerelease`: a plain upgrade skips it.
+			c.Remedy += " --prerelease"
+		}
+		c.Detail = s.Latest.Version + " is available, " + buildinfo.Version + " is running (checked " + s.CheckedAt + failed + ")"
+		return c
+	}
+	checked, err := time.Parse(time.RFC3339, s.CheckedAt)
+	if err != nil || in.Now().Sub(checked) > releaseCheckMaxAge {
+		c.Detail = "the last successful release check is older than 14 days (" + s.CheckedAt + ")" + failed
+		return c
+	}
+	c.Status, c.Remedy = Pass, ""
+	c.Detail = "no release newer than " + buildinfo.Version + " as of " + s.CheckedAt + failed
+	return c
+}
 
 func facts(cfg *config.Config, live *Live) Facts {
 	f := Facts{ServerVersion: buildinfo.Version, SchemaVersion: db.SchemaVersion, DataDir: cfg.DataDir, Listeners: Listeners{Plain: cfg.Listen}}
@@ -297,6 +365,15 @@ func readiness(live *Live) Check {
 	switch {
 	case live == nil:
 		c.Status, c.Detail, c.Remedy = Unknown, notRunning, startIt
+	case live.UpgradeHold == maintenance.UpgradeJournalMissing:
+		c.Status, c.Detail = Fail, "an upgrade holds varlatchd, and its journal, which says when it is over, is gone: nothing but /healthz is served"
+		c.Remedy = "Once no varlatch upgrade runs: sudo systemctl restart varlatchd (it serves the database in place)"
+	case live.UpgradeHold == maintenance.UpgradeJournalUnreadable:
+		c.Status, c.Detail = Fail, "an upgrade holds varlatchd, and its journal, which says when it is over, cannot be read: nothing but /healthz is served"
+		c.Remedy = "Run sudo varlatch upgrade: it says what to do with the journal"
+	case live.UpgradeHold != "":
+		c.Status, c.Detail = Fail, "an upgrade that is not over holds varlatchd: nothing but /healthz is served"
+		c.Remedy = "When no varlatch upgrade runs: sudo varlatch upgrade finishes or undoes it"
 	case live.Maintenance:
 		c.Status, c.Detail = Fail, "a maintenance gate holds the installation: nothing but /healthz is served"
 		c.Remedy = "Wait for the backup or upgrade holding it, or end it: `varlatchd admin maintenance status`, then `end <lease id>`"
@@ -520,12 +597,12 @@ func fsyncProbe(ctx context.Context, in Inputs) Check {
 		// A disk that cannot sync 100 times of each kind in the probe's
 		// time is slow by any measure.
 		c.Status, c.Detail = Fail, oneLine(err.Error())
-		c.Remedy = "Every write waits for this disk's fsync: put the data directory on a local disk (network block storage is not supported until G9a passes on it), or expect slow writes"
+		c.Remedy = "Every write waits for this disk's fsync: put the data directory on a local disk (network block storage is not supported), or expect slow writes"
 	case err != nil:
 		c.Status, c.Detail = Unknown, "the fsync probe did not run: "+err.Error()
 	case !res.Pass:
 		c.Status, c.Detail = Fail, res.String()
-		c.Remedy = "Every write waits for this disk's fsync: put the data directory on a local disk (network block storage is not supported until G9a passes on it), or expect slow writes"
+		c.Remedy = "Every write waits for this disk's fsync: put the data directory on a local disk (network block storage is not supported), or expect slow writes"
 	default:
 		c.Status, c.Detail = Pass, res.String()
 	}
@@ -755,6 +832,11 @@ func backupsStatus(in Inputs) Check {
 		c.Status, c.Detail = Unknown, "the backups' status cannot be read: "+oneLine(err.Error())
 		return c
 	}
+	unchecked := ""
+	if st.RemoteUnchecked() {
+		unchecked = "; no remote copy was ever checked from this host (with a key that may read: sudo varlatchd admin backup run --json --verify-remote)"
+	}
+	st = st.WithoutRemoteCheck()
 	var problems []string
 	if cfg.BackupDestinationsFile == "" {
 		problems = append(problems, "no destination: archives stay on this host, lost with it")
@@ -772,11 +854,33 @@ func backupsStatus(in Inputs) Check {
 				break
 			}
 		}
-		c.Status, c.Detail = Pass, fmt.Sprintf("%d archives; the newest %s, %s", n, newest.ArchiveID, newest.CreatedAt)
+		c.Status, c.Detail = Pass, fmt.Sprintf("%d archives; the newest %s, %s%s", n, newest.ArchiveID, newest.CreatedAt, unchecked)
 		return c
 	}
 	c.Status, c.Detail = Pass, "no archive yet"
 	return c
+}
+
+// restoreHold is the restore's hold, when one stands (backup.Hold): read
+// from the data directory, so doctor says so with varlatchd stopped too. A
+// directory this user cannot read says nothing.
+func restoreHold(in Inputs) (Check, bool) {
+	// Lstat: a link there, dangling or not, holds.
+	if _, err := os.Lstat(filepath.Join(in.Config.DataDir, backup.HoldFile)); err != nil {
+		return Check{}, false
+	}
+	c := Check{ID: "restore.hold", Title: "Restored, not resumed yet", Status: Fail, Class: Advisory,
+		Remedy: "Put right what changed since the archive was made (revoked credentials, removed people, rotated values, cancelled deletions), then run `varlatchd admin restore resume`"}
+	const off = "its background work (sync, webhooks, audit export, organization deletion) does not run"
+	switch h, err := backup.ReadHold(in.Config.DataDir); {
+	case err != nil:
+		c.Detail = "the restore hold cannot be read, so the installation stays held: " + off
+	case h == nil:
+		return Check{}, false
+	default:
+		c.Detail = fmt.Sprintf("restored from the archive %s at %s and held: %s", h.ArchiveID, h.RestoredAt, off)
+	}
+	return c, true
 }
 
 func custodyCheck(in Inputs) Check {

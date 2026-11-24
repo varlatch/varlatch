@@ -36,7 +36,7 @@ const setupUsage = `Usage:
                       [--listen-https <host:port>] [--listen-http-redirect <host:port>|off]
                       [--acme-email <address>] [--acme-ca <url>] [--acme-ca-root <file>]
                       [--tailnet-hostname <name>] [--tailnet-tags <tags>] [--tailnet-port <port>]
-                      [--tailnet-auth-key-file <file>]
+                      [--tailnet-auth-key-file <file>] [--tailnet-https-port <port>]
                       [--backups host|bucket] [--backup-destinations-file <file>] [--backup-destination <name>]
                       [--root-kek-out <file> --backup-key-out <file>] [--accept-slow-disk] [--accept-existing-user]
                       [--admin-link-out <file>] [--admin-wait <duration>] [--attest]
@@ -315,7 +315,7 @@ func (r *Run) setupDoctor() (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	report.Checks = append(report.Checks, doctorCLIChecks(report)...)
+	report.Checks = append(report.Checks, doctorCLIChecks(report, "")...)
 	if err := r.showDoctor(report); err != nil {
 		return false, err
 	}

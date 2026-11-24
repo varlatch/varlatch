@@ -25,6 +25,7 @@ import (
 	"github.com/varlatch/varlatch/go/lib/backup"
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
 	"github.com/varlatch/varlatch/go/lib/envelope"
+	"github.com/varlatch/varlatch/go/lib/preread"
 	"github.com/varlatch/varlatch/go/lib/release"
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/migration/migrate"
@@ -390,7 +391,7 @@ func readTailnetState(cfg *config.Config) *tailnetState {
 	}
 	st := &tailnetState{Hostname: t.Hostname, Tags: t.Tags, HTTPSPort: t.HTTPSPort, ControlURL: t.ControlURL}
 	if t.AuthKeyFile != "" {
-		if b, err := os.ReadFile(t.AuthKeyFile); err == nil {
+		if b, err := preread.ReadFile(t.AuthKeyFile); err == nil {
 			st.AuthKey = len(bytes.TrimSpace(b)) > 0
 			clear(b)
 		}
@@ -559,13 +560,15 @@ func runMigrateDiscard(cfg *config.Config, a migrateArgs, stdout io.Writer, fail
 	removed := []string{}
 	for _, e := range entries {
 		n := e.Name()
-		if !e.Type().IsRegular() {
+		if !e.Type().IsRegular() && n != backup.HoldFile {
 			continue
 		}
 		db := n == config.DatabaseFile || n == config.DatabaseFile+"-wal" || n == config.DatabaseFile+"-shm" || n == config.DatabaseFile+"-journal"
 		if h.Phase == "rolled-back" && strings.HasPrefix(n, frozen) {
 			db = true
 		}
+		// A restore's hold is the database's: none is left without one.
+		db = db || n == backup.HoldFile
 		if !db && !migrate.IsLeftover(n) {
 			continue
 		}

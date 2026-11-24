@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/varlatch/varlatch/go/lib/storage"
+	"github.com/varlatch/varlatch/go/server/auth"
 	"github.com/varlatch/varlatch/go/server/db/query"
 )
 
@@ -43,6 +44,7 @@ const (
 	ReasonSessionEnded      = "session-ended"
 	ReasonCredentialRevoked = "credential-revoked"
 	ReasonMembershipRemoved = "membership-removed"
+	ReasonScopeChanged      = "scope-changed"
 	ReasonSlowClient        = "slow-client"
 	ReasonReplaced          = "replaced"
 	ReasonShutdown          = "shutdown"
@@ -199,7 +201,7 @@ func (h *Hub) publish(ctx context.Context, cursor int64) (int64, error) {
 		}
 	}
 	var merged []Signal
-	closures := Closures{RemovedMembers: map[string]bool{}}
+	closures := Closures{RemovedMembers: map[string]bool{}, Narrowed: map[string]bool{}}
 	next := cursor
 	for {
 		p, err := h.pass(ctx, next)
@@ -210,6 +212,9 @@ func (h *Hub) publish(ctx context.Context, cursor int64) (int64, error) {
 		closures.RevokedCredentials = append(closures.RevokedCredentials, p.closures.RevokedCredentials...)
 		for id := range p.closures.RemovedMembers {
 			closures.RemovedMembers[id] = true
+		}
+		for id := range p.closures.Narrowed {
+			closures.Narrowed[id] = true
 		}
 		next = p.next
 		if p.read < batch {
@@ -330,7 +335,12 @@ func (h *Hub) live(ctx context.Context, q *query.Queries, session, identity stri
 // dispatch sends a pass's signals. For each stream it checks first, at the
 // time of sending, that its session is still live and which Organizations
 // its identity is a member of now; a changeSignal goes only to members of
-// its Organization, an identitySignal only to that identity's streams.
+// its Organization, an identitySignal only to that identity's streams. An
+// Organization frozen for an incident signals nobody, and one that enforces
+// passkey-verification nobody whose sign-in it would refuse, as the API
+// refuses their reads (0.23.0's Convex token left both out). A stream that
+// loses an Organization so is closed, what it had queued with it: the
+// dashboard reconnects and learns why from /v1.
 func (h *Hub) dispatch(ctx context.Context, signals []Signal, closures Closures) error {
 	q := query.New(h.opts.Store.Reader())
 	revokedSessions := map[string]bool{}
@@ -350,10 +360,20 @@ func (h *Hub) dispatch(ctx context.Context, signals []Signal, closures Closures)
 	for i, s := range signals {
 		messages[i] = s.message()
 	}
-	if len(signals) == 0 && len(revokedSessions) == 0 && len(closures.RemovedMembers) == 0 {
+	if len(signals) == 0 && len(revokedSessions) == 0 && len(closures.RemovedMembers) == 0 && len(closures.Narrowed) == 0 {
 		return nil
 	}
-	members := map[string]map[string]bool{}
+	own := func(st *Stream) []Message {
+		var out []Message
+		for i, s := range signals {
+			if s.Kind == Identity && s.Key == st.identity {
+				out = append(out, messages[i])
+			}
+		}
+		return out
+	}
+	memberships := map[string][]query.StreamOrganizationsRow{}
+	gaps := map[string]string{}
 	for _, st := range h.snapshot() {
 		ok, err := h.live(ctx, q, st.session, st.identity)
 		if err != nil {
@@ -367,17 +387,28 @@ func (h *Hub) dispatch(ctx context.Context, signals []Signal, closures Closures)
 			st.close(ReasonCredentialRevoked)
 			continue
 		}
-		orgs, seen := members[st.identity]
+		rows, seen := memberships[st.identity]
 		if !seen {
-			ids, err := q.MemberOrganizationIDs(ctx, st.identity)
-			if err != nil {
+			if rows, err = q.StreamOrganizations(ctx, st.identity); err != nil {
 				return err
 			}
-			orgs = make(map[string]bool, len(ids))
-			for _, id := range ids {
-				orgs[id] = true
+			memberships[st.identity] = rows
+		}
+		orgs, narrowed := make(map[string]bool, len(rows)), false
+		for _, o := range rows {
+			held := o.Frozen
+			if !held && o.VerifiedOnly {
+				gap, known := gaps[st.session]
+				if !known {
+					if gap, err = auth.SessionVerificationGap(ctx, h.opts.Store.Reader(), st.session, st.identity); err != nil {
+						return err
+					}
+					gaps[st.session] = gap
+				}
+				held = gap != ""
 			}
-			members[st.identity] = orgs
+			orgs[o.ID] = !held
+			narrowed = narrowed || held && closures.Narrowed[o.ID]
 		}
 		if closures.RemovedMembers[st.identity] {
 			// Removed from an Organization: nothing more of this
@@ -385,13 +416,11 @@ func (h *Hub) dispatch(ctx context.Context, signals []Signal, closures Closures)
 			// identitySignal that tells the dashboard, then the stream
 			// closes; it reconnects scoped to the Organizations it still
 			// has, and refreshes.
-			var final []Message
-			for i, s := range signals {
-				if s.Kind == Identity && s.Key == st.identity {
-					final = append(final, messages[i])
-				}
-			}
-			st.closeWith(ReasonMembershipRemoved, final)
+			st.closeWith(ReasonMembershipRemoved, own(st))
+			continue
+		}
+		if narrowed {
+			st.closeWith(ReasonScopeChanged, own(st))
 			continue
 		}
 		var publication []Message
@@ -569,8 +598,8 @@ func (s *Stream) Messages() <-chan []Message { return s.out }
 func (s *Stream) Done() <-chan struct{} { return s.done }
 
 // Ending reports why the stream ends ("" when its response ended first)
-// and the only events still to be sent before the close event (a removal's
-// identitySignal). Nothing queued before the end is sent after it: the
+// and the only events still to be sent before the close event (the
+// identitySignal of a removal, or of an Organization lost). Nothing queued before the end is sent after it: the
 // queue is dropped.
 func (s *Stream) Ending() (reason string, final []Message) {
 	s.mu.Lock()

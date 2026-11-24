@@ -8,6 +8,8 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -98,14 +100,59 @@ func TestHelpIsTheUsageText(t *testing.T) {
 		case "setup":
 			help = setupUsage
 		}
-		if c.name == "move" {
+		switch c.name {
+		case "move":
 			help = moveUsage
+		case "tailnet":
+			help = TailnetHelp()
 		}
 		for _, args := range [][]string{{c.name, "--help"}, {"help", c.name}} {
 			if code, out, errs := run(args...); code != ExitOK || out != help+"\n" || errs != "" {
 				t.Errorf("%q: exit %d, stdout\n%q\nwant\n%q (stderr %q)", args, code, out, help+"\n", errs)
 			}
 		}
+	}
+}
+
+// TestUsageIsAGoInstallations: the whole usage has a Go installation's host
+// commands, each entry once, and none of a Compose installation's; the rest
+// is the TypeScript text, in its order.
+func TestUsageIsAGoInstallations(t *testing.T) {
+	for _, text := range []string{setupUsage, moveUsage, doctorUsage, adminUsage, selfUpdateUsage, upgradeUsage, migrateUsage, "x\n" + tailnetRepinEntry} {
+		_, entries, _ := strings.Cut(text, "\n")
+		if strings.Count(Usage, entries) != 1 {
+			t.Errorf("%d times in the usage:\n%s", strings.Count(Usage, entries), entries)
+		}
+	}
+	for _, gone := range []string{"varlatch adopt", "compose-dir", "<compose-directory>]", "docker-compose", "--escrow", "backup create", "varlatch-ts setup"} {
+		if i := strings.Index(Usage, gone); i >= 0 && !strings.Contains(migrateUsage, gone) {
+			t.Errorf("the usage has %q", gone)
+		}
+	}
+	start := regexp.MustCompile(`^ {2}(?:sudo )?varlatch (\S+)`)
+	host := func(line string) bool {
+		m := start.FindStringSubmatch(line)
+		return m != nil && slices.Contains([]string{"admin", "setup", "adopt", "move", "doctor", "self-update", "upgrade", "migrate"}, m[1])
+	}
+	// Without the host commands' entries, and the title's dash, both texts
+	// are the same.
+	rest := func(text string) string {
+		var out []string
+		dropping := false
+		for _, line := range strings.Split(strings.Replace(strings.Replace(text, tailnetRepinEntry+"\n", "", 1), "varlatch \u2014 ", "varlatch: ", 1), "\n") {
+			if start.MatchString(line) {
+				dropping = host(line)
+			} else if !entryMore.MatchString(line) {
+				dropping = false
+			}
+			if !dropping {
+				out = append(out, line)
+			}
+		}
+		return strings.Join(out, "\n")
+	}
+	if got, want := rest(Usage), rest(TypeScriptUsage); got != want {
+		t.Errorf("the rest differs:\n%s\nwant\n%s", got, want)
 	}
 }
 

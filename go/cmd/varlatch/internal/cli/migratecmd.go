@@ -351,7 +351,16 @@ func (r *Run) migrateRun(o migrateOptions, lines *migrate.Lines) (err error) {
 	if !o.asJSON {
 		e.Options.Progress = lines.Progress
 	}
-	e.Target.(*migrate.Host).TailnetAuthKey = tailnetAuthKey
+	host := e.Target.(*migrate.Host)
+	host.TailnetAuthKey = tailnetAuthKey
+	e.Options.StageAs = func(ctx context.Context) (*migrate.Owner, string, error) {
+		owner, err := host.DataOwner(ctx)
+		if err != nil || owner == nil {
+			return nil, "", err
+		}
+		base, err := migrate.StageBase(o.from)
+		return owner, base, err
+	}
 	if o.config != "" {
 		if err := r.targetMaker(e, o, varlatchd, lines); err != nil {
 			return err
@@ -371,6 +380,7 @@ func (r *Run) migrateRun(o migrateOptions, lines *migrate.Lines) (err error) {
 		}
 		img.Host.TailnetAuthKey = tailnetAuthKey
 		e.Target = img
+		e.Options.StageAs = nil
 		e.Options.Stage, e.Options.StageBase, e.Options.StageKeep = &migrate.ImageUser, base, filepath.Dir(img.Host.Config)
 	}
 	var j *migrate.Journal

@@ -70,6 +70,7 @@ func (rootedHost) LoginShell(string) (string, error)            { return "/usr/s
 func (rootedHost) SupplementaryGroups(string) ([]string, error) { return nil, nil }
 func (rootedHost) SysUIDMax() int                               { return 1 << 30 }
 func (rootedHost) Chown(string, int, int) error                 { return nil }
+func (rootedHost) ChownFile(*os.File, int, int) error           { return nil }
 
 func (h rootedHost) Owner(path string) (int, int, error)      { return h.sys.Owner(path) }
 func (h rootedHost) Systemctl(args ...string) (string, error) { return h.sys.Systemctl(args...) }

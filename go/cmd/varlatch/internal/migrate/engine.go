@@ -36,7 +36,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -81,6 +80,10 @@ type Options struct {
 	// (this source's), which that user owns.
 	Stage     *Owner
 	StageBase string
+	// StageAs, when Stage is not set, gives them once they are needed (a
+	// target on this host, whose data directory may be made by the run): nil
+	// for a target whose commands run as this user.
+	StageAs func(ctx context.Context) (owner *Owner, base string, err error)
 	// StageKeep is this run's own directory in StageBase (an image's
 	// derived configuration), which the leftovers' cleanup spares.
 	StageKeep string
@@ -325,6 +328,7 @@ func (e *Engine) start(ctx context.Context, prev *Journal, reuse, dryRunOnly boo
 	if err := e.sameOutbound(ing, tgt); err != nil {
 		return prev, err
 	}
+	e.warnExtraCA(ing, tgt)
 	j := &Journal{Format: 1, DryRunOnly: dryRunOnly, Source: src, Target: tgt, MaxDowntime: int64(e.maxDowntime() / time.Second),
 		Drain: int64(e.drain() / time.Second), Ingress: e.Options.Ingress, Transfer: &TransferRecord{Origin: origin}, History: []Step{}, Created: created}
 	if e.Options.Ingress == Proxy {
@@ -480,6 +484,8 @@ func (e *Engine) preflight(ctx context.Context, j *Journal) error {
 	if err := cleanScratch(e.work()); err != nil {
 		return fmt.Errorf("preflight: removing what an interrupted run left: %w", err)
 	}
+	// A target not made yet has no owner to stage for, and left nothing.
+	_ = e.staged(ctx)
 	if e.Options.Stage != nil && e.Options.StageBase != "" {
 		for _, re := range []*regexp.Regexp{leftoverStage, leftoverConf} {
 			if err := removeMatchingExcept(e.Options.StageBase, re, true, e.Options.StageKeep); err != nil {
@@ -589,7 +595,7 @@ func (e *Engine) dryRun(ctx context.Context, j *Journal) (*DryRunReport, error) 
 		return nil, err
 	}
 	defer clear(runKey)
-	scratch, err := e.scratchDir()
+	scratch, err := e.scratchDir(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -600,10 +606,11 @@ func (e *Engine) dryRun(ctx context.Context, j *Journal) (*DryRunReport, error) 
 		return nil, fmt.Errorf("the dry run's export: %w; nothing was switched", err)
 	}
 	defer os.Remove(exported)
-	bundle, err := e.stage(exported, scratch)
+	bundle, done, err := e.stage(ctx, exported)
 	if err != nil {
 		return nil, err
 	}
+	defer done()
 	exportedAt := e.now()
 	cp, err := e.Target.Import(ctx, bundle, filepath.Join(scratch, "data"))
 	if err != nil {
@@ -632,56 +639,74 @@ func (e *Engine) dryRun(ctx context.Context, j *Journal) (*DryRunReport, error) 
 	return r, e.enter(ctx, j, DryRun)
 }
 
-// scratchDir is a new directory for the dry run's database or a staged
-// bundle: in the work directory, or, with Stage, under the system's
-// temporary directory and given to that user.
-func (e *Engine) scratchDir() (string, error) {
+// scratchDir is a new directory for the dry run's database: in the work
+// directory, or, with Stage, in StageBase and given to that user.
+func (e *Engine) scratchDir(ctx context.Context) (string, error) {
+	if err := e.staged(ctx); err != nil {
+		return "", err
+	}
 	if e.Options.Stage == nil {
 		return os.MkdirTemp(e.work(), ".dry-run-")
 	}
-	dir, err := os.MkdirTemp(e.Options.StageBase, ".varlatch-migrate-stage-")
+	dir, err := os.MkdirTemp(e.Options.StageBase, stageDirs)
 	if err != nil {
 		return "", err
 	}
-	if err := chownAll(*e.Options.Stage, dir); err != nil {
+	if err := giveDir(dir, *e.Options.Stage); err != nil {
 		_ = os.RemoveAll(dir)
 		return "", err
 	}
 	return dir, nil
 }
 
+// stageDirs is how the directories of a stage are named.
+const stageDirs = ".varlatch-migrate-stage-"
+
+// staged settles Options.Stage.
+func (e *Engine) staged(ctx context.Context) error {
+	if e.Options.Stage != nil || e.Options.StageAs == nil {
+		return nil
+	}
+	owner, base, err := e.Options.StageAs(ctx)
+	if err != nil {
+		return err
+	}
+	e.Options.Stage, e.Options.StageBase, e.Options.StageAs = owner, base, nil
+	return nil
+}
+
 // stage is the bundle as the target's varlatchd reads it: as it is, or,
-// with Stage, a copy in dir given to that user (the export's file is the
-// source container's user's).
-func (e *Engine) stage(bundle, dir string) (string, error) {
+// with Stage, a copy given to that user (the export's file is the source
+// container's user's), in a new directory, which is given last. done
+// removes it.
+func (e *Engine) stage(ctx context.Context, bundle string) (staged string, done func(), err error) {
+	done = func() {}
+	if err := e.staged(ctx); err != nil {
+		return "", done, err
+	}
 	if e.Options.Stage == nil {
-		return bundle, nil
+		return bundle, done, nil
 	}
 	in, err := os.Open(bundle)
 	if err != nil {
-		return "", err
+		return "", done, err
 	}
 	defer in.Close()
+	dir, err := os.MkdirTemp(e.Options.StageBase, stageDirs)
+	if err != nil {
+		return "", done, err
+	}
+	remove := func() { _ = os.RemoveAll(dir) }
 	p := filepath.Join(dir, "bundle.jsonl")
-	out, err := os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return "", err
-	}
-	_, err = io.Copy(out, in)
+	err = makeFor(p, in, *e.Options.Stage)
 	if err == nil {
-		err = out.Sync()
-	}
-	if cerr := out.Close(); err == nil {
-		err = cerr
-	}
-	if err == nil {
-		err = chownAll(*e.Options.Stage, p)
+		err = giveDir(dir, *e.Options.Stage)
 	}
 	if err != nil {
-		_ = os.Remove(p)
-		return "", fmt.Errorf("staging the bundle for the target's user: %w", err)
+		remove()
+		return "", done, fmt.Errorf("staging the bundle for the target's user: %w", err)
 	}
-	return p, nil
+	return p, remove, nil
 }
 
 func (e *Engine) work() string {
@@ -740,17 +765,11 @@ func (e *Engine) finalCopy(ctx context.Context, j *Journal) error {
 		return fmt.Errorf("the export: %w", err)
 	}
 	defer os.Remove(exported)
-	bundle := exported
-	if e.Options.Stage != nil {
-		dir, err := e.scratchDir()
-		if err != nil {
-			return err
-		}
-		defer os.RemoveAll(dir)
-		if bundle, err = e.stage(exported, dir); err != nil {
-			return err
-		}
+	bundle, done, err := e.stage(ctx, exported)
+	if err != nil {
+		return err
 	}
+	defer done()
 	cp, err := stepOf(e, "importing it into the target", func() (CopyRecord, error) { return e.Target.Import(ctx, bundle, "") })
 	if err != nil {
 		return fmt.Errorf("the import: %w", err)
@@ -1442,6 +1461,23 @@ func (e *Engine) sameOutbound(ing IngressInfo, tgt TargetInfo) error {
 			tgt.OutboundAllow, strings.Join(missing, ","), ing.OutboundAllow)
 	}
 	return nil
+}
+
+// warnExtraCA says that the source's extra certificate authorities
+// (NODE_EXTRA_CA_CERTS) do not carry over: the Go server does not read that
+// variable. A migration goes on, since none of its own steps need them, and
+// the host's roots may have them already.
+func (e *Engine) warnExtraCA(ing IngressInfo, tgt TargetInfo) {
+	if ing.ExtraCACerts == "" {
+		return
+	}
+	where := "add the authority to this host's trust store, or set SSL_CERT_FILE for its unit (systemctl edit <unit>: [Service], Environment=SSL_CERT_FILE=<file>; a file the service may read, not under /home)"
+	if tgt.Kind == "image" {
+		where = "mount a file into its service, and set SSL_CERT_FILE to it in the service's environment"
+	}
+	e.say("Warning: the source's varlatchd trusts certificate authorities of its own (%s=%q, a file in its container), and the Go installation does not read that variable: it trusts the system's roots, or the file SSL_CERT_FILE names in the place of the system's, "+
+		"which must then hold the system's roots and the authority. Where a webhook, a platform, an OIDC issuer, the audit export or a backup destination has a certificate of such an authority, the Go installation fails to connect to it. Before the migration: %s.",
+		extraCAEnv, ing.ExtraCACerts, where)
 }
 
 // allowEntries are an allow list's entries as compared: without blanks,

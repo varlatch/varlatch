@@ -144,6 +144,19 @@ func (r *run) restore(ctx context.Context) error {
 	if err := r.o.Say("Restoring " + r.j.Restore.Archive + " with your keys."); err != nil {
 		return err
 	}
+	// The restore works in the data directory as the unit's user: a varlatchd
+	// that does not would leave the database root's, and the unit could not
+	// open it.
+	facts, err := r.h.Admin(ctx, "config", "check")
+	if err != nil {
+		return err
+	}
+	var able struct {
+		ActsAsOwner bool `json:"actsAsOwner"`
+	}
+	if err := json.Unmarshal(facts, &able); err != nil || !able.ActsAsOwner {
+		return errors.New("setup: the varlatchd beside this varlatch is of an earlier release, whose restore would leave the database root's: install both from one release (install.sh --server), then run setup --restore again; nothing was restored")
+	}
 	out, err := r.h.Admin(ctx, "backup", "restore", "--in", r.j.Restore.Archive, "--backup-key-file", BackupKey)
 	if err != nil {
 		return err
@@ -163,20 +176,9 @@ func (r *run) restore(ctx context.Context) error {
 		return &UsageError{fmt.Sprintf("setup: the archive's installation is reached at %s, not %s: its passkeys belong to that address. Remove %s and %s (this run's answers; the keys and the restored data stay), then run setup --restore again with --public-url %s; to change the address, restore first and move it with varlatch move",
 			was, r.j.Answers.PublicURL, Journal, ConfigFile, was)}
 	}
-	uid, gid, _, err := r.h.LookupUser(User)
-	if err != nil {
-		return err
-	}
-	// The restore ran as root: what it wrote becomes the unit's.
-	if err := filepath.WalkDir(r.path(DataDir), func(p string, _ fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		return r.h.Chown(p, uid, gid)
-	}); err != nil {
-		return err
-	}
-	return r.o.Say("Restored the installation " + r.j.Restore.InstallationID + " from the archive " + r.j.Restore.ArchiveID + " (made " + created + ").")
+	return r.o.Say("Restored the installation " + r.j.Restore.InstallationID + " from the archive " + r.j.Restore.ArchiveID + " (made " + created + ").\n" +
+		"It is held: its background work (sync, webhooks, audit export, organization deletion) does not run. Put right what changed\n" +
+		"since the archive was made (what was revoked or removed since works again), then run: sudo varlatch admin restore resume")
 }
 
 // takeName is a restore's tailnet handoff (go-step7 decision 11), with the
@@ -491,7 +493,7 @@ func (r *run) nameCheck(ctx context.Context) error {
 	}
 	if !res.Reusable {
 		return fmt.Errorf("setup: the auth key in %s joined once only, so it is single-use and the probe has spent it (a restore checks the name with the key before enrolling with it). Create a reusable auth key tagged %s (Tailscale's admin console: Settings, Keys, Generate auth key, Reusable, with those tags), put it in %s, and run setup again; revoke it once the restore is done",
-			a.TailnetAuthKeyFile, a.TailnetTags, a.TailnetAuthKeyFile)
+			r.configValue("tailnet_auth_key_file"), a.TailnetTags, r.configValue("tailnet_auth_key_file"))
 	}
 	return r.o.Say("No node named " + a.TailnetHostname + " is visible to the probe. The tailnet's access rules may hide some: varlatchd reads its name back after enrolling, and keeps tailnet access closed if the control plane added a suffix.")
 }

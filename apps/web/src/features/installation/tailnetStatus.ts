@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { ObservedCheck, ObservedNode, TailnetListenerReport } from "@varlatch/protocol";
+import { CONTAINER, hostCommand, type Deployment } from "./deployment";
 
 /**
  * The Installation page's Tailnet tab (GET /v1/installation/listeners):
@@ -11,7 +12,7 @@ import type { ObservedCheck, ObservedNode, TailnetListenerReport } from "@varlat
 /** Older than this, a report says nothing about now. The server's doctor uses the same limit. */
 export const LISTENERS_STALE_MS = 10 * 60_000;
 
-/** The browser endpoint's port when `varlatch setup --tailnet-endpoint` turns it on. */
+/** The browser endpoint's port, as setup chooses it. */
 export const ENDPOINT_PORT = 8688;
 
 /** For when the report names no usable node (an older server, or a failed read). */
@@ -22,12 +23,12 @@ export const DOCS_ENDPOINT_URL = "https://docs.varlatch.com/self-hosting/configu
 
 export type ListenerReason = NonNullable<ObservedCheck["reason"]>;
 
-/** Each reason in words, as the server's doctor puts them (services/varlatchd/src/doctor.ts). */
+/** Each reason in words. */
 export const REASON_TEXT: Record<ListenerReason, string> = {
   NOT_CHECKED: "Not checked yet",
   NOT_LISTENING: "A tailnet listener did not bind its port",
   NO_CERTIFICATE: "No valid certificate is loaded",
-  LOCALAPI_UNAVAILABLE: "tailscaled's LocalAPI does not answer",
+  LOCALAPI_UNAVAILABLE: "The tailnet node does not answer varlatchd",
   NOT_RUNNING: "The node is not connected to the tailnet",
   OTHER_TAILNET: "The node is on another tailnet than the configured one",
   NAME_CHANGED: "The node's name is no longer the browser endpoint's host",
@@ -61,7 +62,7 @@ export function checkRows(report: TailnetListenerReport): CheckRow[] {
         : `The tailnet listener (port ${configured.listenerPort}) is bound`,
       check: observed.checks.listener,
     },
-    { key: "localApi", label: "Tailscale LocalAPI", passes: "tailscaled answers varlatchd", check: observed.checks.localApi },
+    { key: "localApi", label: "Node's answer", passes: "The tailnet node answers varlatchd", check: observed.checks.localApi },
     {
       key: "node",
       label: "Node",
@@ -102,28 +103,13 @@ export function endpointPort(endpoint: string | null): string {
   return endpoint ? new URL(endpoint).port || "443" : String(ENDPOINT_PORT);
 }
 
-/** The tailnet in the endpoint's host, <machine>.<tailnet>. */
-function endpointTailnet(endpoint: string | null): string {
-  const host = endpoint ? new URL(endpoint).hostname : "";
-  return host.includes(".") ? host.slice(host.indexOf(".") + 1) : "<tailnet>";
-}
-
-/** How the operator runs this installation; the dashboard cannot tell, so they choose. */
-export type Deployment = "setup" | "coolify";
-
 /**
- * What to change for a failing check, per deployment; null when there is
- * nothing to do but wait. With the browser endpoint on, varlatchd derives
- * the endpoint's host from the machine and tailnet names, while the
- * dashboard's Content-Security-Policy allows VARLATCH_TAILNET_ENDPOINT:
- * a fix that changes one of them changes the endpoint URL with it, keeping
- * the configured endpoint's port and whatever else did not change.
+ * What to change for a failing check; null when there is nothing to do but
+ * wait. The browser endpoint's host is tailnet_hostname in the pinned
+ * tailnet, both fixed when the node enrolled: the fix is to put the node
+ * back, or, for a tailnet renamed on purpose, to re-pin it.
  */
 export function remedy(reason: ListenerReason | undefined, deployment: Deployment, endpoint: string | null, node?: ObservedNode): string | null {
-  const logs =
-    deployment === "setup"
-      ? "Inspect: docker compose logs tailscale varlatchd"
-      : "Inspect the logs of the tailscale and varlatchd services in Coolify";
   switch (reason) {
     case undefined:
     case "NOT_CHECKED":
@@ -131,36 +117,25 @@ export function remedy(reason: ListenerReason | undefined, deployment: Deploymen
     case "NOT_LISTENING":
     case "LOCALAPI_UNAVAILABLE":
     case "NOT_RUNNING":
-      return logs;
+      return deployment === "host" ? "Inspect: journalctl -u varlatchd" : `Inspect: docker logs ${CONTAINER}`;
     case "NO_CERTIFICATE":
-      return deployment === "setup"
-        ? "The tailnet must have HTTPS certificates enabled, and the sidecar must let varlatchd's user fetch them: run varlatch setup --tailnet-endpoint again"
-        : "The tailnet must have HTTPS certificates enabled, and VARLATCH_TAILNET_CERT_UID must be 999 so varlatchd's user may fetch them";
-    case "OTHER_TAILNET": {
-      if (deployment === "setup") return "Rerun varlatch setup: it stops and says what changed";
-      // The node's own tailnet, when the server could read it; the name only with it.
-      const theirs = node?.tailnet;
-      const machine = theirs ? node?.name : undefined;
-      return endpoint
-        ? "Rejoin the node to the configured tailnet. To keep the node's tailnet instead, change these together, then redeploy: " +
-            `VARLATCH_TAILNET_NAME to ${theirs ?? "the node's tailnet"}, ` +
-            `VARLATCH_TAILNET_ENDPOINT to https://${machine ?? "<machine>"}.${theirs ?? "<that tailnet>"}:${endpointPort(endpoint)}, ` +
-            `and VARLATCH_TAILNET_NODE ${machine ? `to ${machine}` : "confirmed as the node's machine name"}`
-        : `Rejoin the node to the configured tailnet, or set VARLATCH_TAILNET_NAME to ${theirs ?? "the node's tailnet"}, then redeploy`;
-    }
+      return "Enable HTTPS certificates for the tailnet, in its admin console; varlatchd fetches the node's certificate itself, when it starts and daily";
+    case "OTHER_TAILNET":
+      return (
+        "Rejoin the node to the configured tailnet. " +
+        `If ${node?.tailnet ? `the change to ${node.tailnet}` : "the change"} is intended, accept it on the host: ${hostCommand(deployment, "varlatch tailnet repin", true)}`
+      );
     case "TAGS_DIFFER":
       // Only on a self-hosted control server, where the node's tags are its pre-auth key's.
       return "Give the node exactly tailnet_tags in Headscale (headscale nodes tag -i <node id> -t <tailnet_tags>), or enrol it again with a pre-auth key tagged with them; access reopens at the next check";
     case "NAME_CHANGED": {
-      if (deployment === "setup") return "Rerun varlatch setup: it stops and says what changed";
-      // NAME_CHANGED is judged only on the configured tailnet, so the node's name is its new name there.
-      const renamed = node?.name;
-      return `Set VARLATCH_TAILNET_NODE to ${renamed ?? "the node's new name"} and VARLATCH_TAILNET_ENDPOINT to https://${renamed ?? "<new name>"}.${endpointTailnet(endpoint)}:${endpointPort(endpoint)}, then redeploy`;
+      const name = endpoint ? new URL(endpoint).hostname.split(".")[0] : undefined;
+      return `Rename the node back to ${name ?? "its tailnet_hostname"} in the tailnet's admin console${node?.name ? ` (it is ${node.name} now)` : ""}; access reopens at the next check`;
     }
   }
 }
 
-/** Where the access rule points: as `varlatch setup` chooses, the node's tags, else its IPv4 address. */
+/** Where the access rule points: the node's tags, else its IPv4 address. */
 export type RuleDestination = { dst: string[]; kind: "tags" | "address" | "placeholder" };
 
 export function ruleDestination(node: ObservedNode | undefined): RuleDestination {
@@ -171,7 +146,7 @@ export function ruleDestination(node: ObservedNode | undefined): RuleDestination
 }
 
 /**
- * The grant `varlatch setup` prints for the browser endpoint, on the
+ * A grant for the browser endpoint, on the
  * configured endpoint's port. Its source is every member: narrow it to the
  * people, groups or devices that may read tailnet-protected values.
  */
@@ -183,28 +158,19 @@ export function endpointRule(endpoint: string | null, node?: ObservedNode): stri
     .join(",\n")}\n}`;
 }
 
-/** Adds the Tailscale sidecar to an installation without a tailnet listener; the address stays. */
-export function addTailscaleLines(deployment: Deployment): string[] {
-  return deployment === "setup"
-    ? ["varlatch setup --dir /srv/varlatch --tailnet-endpoint \\", "  --tailscale-auth-key-file /secure/operator/tailscale-authkey"]
-    : [
-        "# Docker Compose Location: /infra/compose/docker-compose.coolify-tailscale.yml",
-        "TS_AUTHKEY_HOST_PATH=/data/varlatch/secrets/tailscale-authkey",
-        "VARLATCH_TAILNET_NAME=<your-tailnet>.ts.net",
-        "VARLATCH_TAILNET_MACHINE=varlatch",
-      ];
+/** varlatchd.conf's lines for an installation without a tailnet node; its address stays. */
+export function addTailnetLines(deployment: Deployment): string[] {
+  return [
+    "tailnet = on",
+    "tailnet_hostname = varlatch",
+    "tailnet_tags = tag:varlatch",
+    "tailnet_port = 8687",
+    `tailnet_auth_key_file = ${deployment === "host" ? "/etc/varlatch" : "/keys"}/tailnet-auth-key`,
+    ...enableEndpointLines(),
+  ];
 }
 
-/** Turns the browser endpoint on where the node has joined. */
-export function enableEndpointLines(deployment: Deployment, tailnet: string | null, node?: ObservedNode): string[] {
-  if (deployment === "setup") return ["varlatch setup --dir /srv/varlatch --tailnet-endpoint"];
-  // The node's name only when it is on the configured tailnet: anything else names a host that is not there.
-  const machine = node?.name && tailnet && node.tailnet === tailnet.toLowerCase() ? node.name : "<machine>";
-  const host = `${machine}.${tailnet ?? "<your-tailnet>.ts.net"}`;
-  return [
-    `VARLATCH_TAILNET_HTTPS_PORT=${ENDPOINT_PORT}`,
-    `VARLATCH_TAILNET_NODE=${machine}`,
-    `VARLATCH_TAILNET_ENDPOINT=https://${host}:${ENDPOINT_PORT}`,
-    "VARLATCH_TAILNET_CERT_UID=999",
-  ];
+/** Turns the browser endpoint on. */
+export function enableEndpointLines(): string[] {
+  return [`tailnet_https_port = ${ENDPOINT_PORT}`];
 }

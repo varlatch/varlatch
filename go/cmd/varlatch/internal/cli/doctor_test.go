@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 	"testing"
 
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
+	journal "github.com/varlatch/varlatch/go/lib/upgradejournal"
 )
 
 func runDoctor(t *testing.T, path string, env MapEnv, args ...string) (int, string, string) {
@@ -212,5 +214,54 @@ func TestDoctorWithTheRealVarlatchd(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(data); len(entries) != 0 {
 		t.Errorf("doctor wrote in the data directory: %v", entries)
+	}
+}
+
+// release.pending-upgrade reads the upgrade journal beside the
+// configuration: an upgrade or a rollback left pending fails, one that is
+// over passes, and a journal that cannot be read is unknown.
+func TestDoctorReadsTheUpgradeJournal(t *testing.T) {
+	base := journal.Journal{ID: "x", From: "0.50.0-rc.3", To: "0.50.0-rc.4", State: journal.InProgress, Step: journal.Stopped, Snapshot: "/data/upgrades/x/snapshot.vltbak"}
+	for _, c := range []struct {
+		name           string
+		change         func(*journal.Journal)
+		status         string
+		detail, remedy string
+	}{
+		{"interrupted", func(*journal.Journal) {}, "fail", "upgrading from 0.50.0-rc.3 to 0.50.0-rc.4 is under way, or was interrupted (after step stopped)", "Run sudo varlatch upgrade to finish or undo it"},
+		{"at its start", func(j *journal.Journal) { j.Step = journal.None }, "fail", "(before its first step)", "Run sudo varlatch upgrade"},
+		{"failed", func(j *journal.Journal) { j.State, j.Reason = journal.Failed, "a disk is full" }, "fail", "failed, and its undo did not complete: a disk is full", "finish or undo it; the pre-upgrade snapshot is /data/upgrades/x/snapshot.vltbak"},
+		{"a rollback", func(j *journal.Journal) {
+			u := *j
+			u.Format, u.State = journal.Format, journal.Done
+			j.Kind, j.Upgraded, j.From, j.To = journal.Rollback, &u, j.To, j.From
+		}, "fail", "rolling back from 0.50.0-rc.4 to 0.50.0-rc.3", "Run sudo varlatch upgrade"},
+		{"done", func(j *journal.Journal) { j.State = journal.Done }, "pass", "both are " + buildinfo.Version, ""},
+		{"undone", func(j *journal.Journal) { j.State = journal.Undone }, "pass", "both are " + buildinfo.Version, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dir, etc := fakeVarlatchd(t), t.TempDir()
+			answer(t, dir, doctorAnswer("daemon", buildinfo.Version, passingCheck), "", 0)
+			j := base
+			c.change(&j)
+			if err := journal.Write(etc, &j); err != nil {
+				t.Fatal(err)
+			}
+			code, out, errText := runDoctor(t, dir, nil, "--json", "--config", filepath.Join(etc, "varlatchd.conf"))
+			var r doctorReport
+			if err := json.Unmarshal([]byte(out), &r); err != nil {
+				t.Fatalf("%d %q %q", code, out, errText)
+			}
+			got := r.Checks[len(r.Checks)-1]
+			if got.ID != "release.pending-upgrade" || got.Status != c.status || !strings.Contains(got.Detail, c.detail) || !strings.Contains(got.Remedy, c.remedy) || (code == 1) != (c.status == "fail") {
+				t.Fatalf("exit %d, %+v", code, got)
+			}
+		})
+	}
+	if c := pendingUpgrade(buildinfo.Version, nil, errors.New("not a journal")); c.Status != "unknown" || !strings.Contains(c.Detail, "not a journal") {
+		t.Errorf("unreadable: %+v", c)
+	}
+	if c := pendingUpgrade("0.49.0", nil, errors.New("not a journal")); c.Status != "fail" {
+		t.Errorf("unreadable, and two releases: %+v", c)
 	}
 }

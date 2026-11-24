@@ -5,13 +5,13 @@ import { ExternalLink, Info, Network, TriangleAlert } from "lucide-react";
 import type { ObservedNode, TailnetListenerReport } from "@varlatch/protocol";
 import { useSession } from "../../lib/session";
 import { formatDateTime, timeAgo, timeUntil, useNow } from "../../lib/time";
-import { Callout, EmptyState, SectionCard, Segmented, Skeleton, Status, table, cn } from "../../components/ui";
+import { Callout, EmptyState, SectionCard, Skeleton, Status, table, cn } from "../../components/ui";
 import { CodeBlock } from "../../components/CodeBlock";
 import { errorMessage } from "../../shell/Shell";
 import {
   DOCS_ENDPOINT_URL,
   DOCS_TAILSCALE_URL,
-  addTailscaleLines,
+  addTailnetLines,
   checkRows,
   checkTone,
   enableEndpointLines,
@@ -20,14 +20,14 @@ import {
   ruleDestination,
   tailnetSummary,
   REASON_TEXT,
-  type Deployment,
 } from "./tailnetStatus";
+import { DeploymentChoice, restartNote, type Deployment } from "./deployment";
 
 /**
  * Tailscale on this installation, for Installation Admins: the tailnet
  * listeners as varlatchd configured and last checked them, and what the
- * operator runs on the host to change them. Read-only: setup happens on the
- * host (`varlatch setup`, or the deployment's own settings), never here.
+ * operator changes on the host. Read-only: the settings are varlatchd.conf's,
+ * never set here.
  */
 export function TailnetTab() {
   const { api } = useSession();
@@ -39,7 +39,7 @@ export function TailnetTab() {
     // varlatchd checks every 60 seconds.
     refetchInterval: 60_000,
   });
-  const [deployment, setDeployment] = useState<Deployment>("setup");
+  const [deployment, setDeployment] = useState<Deployment>("host");
 
   if (listeners.isLoading) return <Skeleton className="h-48" />;
   if (listeners.isError || !listeners.data) {
@@ -52,20 +52,7 @@ export function TailnetTab() {
   const report = listeners.data.tailnet;
   return (
     <div className="space-y-6">
-      {/* The dashboard cannot tell how the operator deploys: the fixes and the guidance follow this choice. */}
-      <div className="flex flex-wrap items-center gap-3 text-[13px]">
-        <span className="text-muted">Deployed with</span>
-        <Segmented
-          size="sm"
-          aria-label="How this installation is deployed"
-          value={deployment}
-          onChange={setDeployment}
-          options={[
-            { value: "setup", label: "varlatch setup", "data-testid": "tailnet-deployment-setup" },
-            { value: "coolify", label: "Coolify", "data-testid": "tailnet-deployment-coolify" },
-          ]}
-        />
-      </div>
+      <DeploymentChoice value={deployment} onChange={setDeployment} />
       {report ? <Report report={report} now={now} deployment={deployment} /> : <NotConfigured />}
       <Guidance report={report} deployment={deployment} />
     </div>
@@ -213,44 +200,31 @@ function Guidance({ report, deployment }: { report: TailnetListenerReport | null
   const endpoint = report?.configured.browserEndpoint ?? null;
   const node = report?.observed.node;
   const destination = ruleDestination(node);
-  const setup = deployment === "setup";
   return (
     <SectionCard
       title={report ? (endpoint ? "Access rule" : "Turn on the browser endpoint") : "Set up Tailscale"}
-      description="For the operator: deployment changes on the host or in Coolify, access rules in the tailnet policy. The dashboard changes neither."
+      description="For the operator: settings in varlatchd.conf on the host, access rules in the tailnet policy. The dashboard changes neither."
       data-testid="tailnet-guidance"
     >
       <div className="space-y-4 px-5 py-4 text-[13px]">
         {!report && (
           <>
             <p>
-              {setup
-                ? "Add the Tailscale sidecar and the browser endpoint to this installation. Its address stays what it is. The node joins your tailnet once, with an auth key that is neither expired nor used up, and the tailnet needs HTTPS certificates enabled:"
-                : "Deploy the Compose file with the Tailscale sidecar and set these variables. Give the auth key as a host file, not as a Coolify variable: Coolify passes every variable to every service."}
+              Put these lines in <span className="font-mono">varlatchd.conf</span>, {restartNote(deployment)}. The address people
+              open stays what it is. The node joins your tailnet once, with the auth key in that file, readable by varlatchd&apos;s
+              user. The last line, for the dashboard, needs HTTPS certificates enabled for the tailnet:
             </p>
-            <CodeBlock lines={addTailscaleLines(deployment)} data-testid="tailnet-add-lines" />
-            {!setup && (
-              <>
-                <p>Once the node has joined, the browser endpoint takes these four, all together:</p>
-                <CodeBlock lines={enableEndpointLines(deployment, null)} data-testid="tailnet-endpoint-lines" />
-              </>
-            )}
-            {setup && (
-              <p className="text-muted">
-                A new installation reachable only on the tailnet uses <span className="font-mono">varlatch setup --ingress tailnet</span> instead.
-                Switching an existing installation to the tailnet ingress is not supported: set up a new installation on the
-                tailnet and restore an archive into it.
-              </p>
-            )}
+            <CodeBlock lines={addTailnetLines(deployment)} data-testid="tailnet-add-lines" />
           </>
         )}
         {report && !endpoint && (
           <>
             <p>
               The browser endpoint lets people on approved devices read tailnet-protected values in the dashboard. It needs HTTPS
-              certificates enabled for the tailnet.
+              certificates enabled for the tailnet. Put this line in <span className="font-mono">varlatchd.conf</span>,{" "}
+              {restartNote(deployment)}:
             </p>
-            <CodeBlock lines={enableEndpointLines(deployment, report.configured.tailnet, node)} data-testid="tailnet-endpoint-lines" />
+            <CodeBlock lines={enableEndpointLines()} data-testid="tailnet-endpoint-lines" />
           </>
         )}
         <p>

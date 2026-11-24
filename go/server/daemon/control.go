@@ -199,8 +199,9 @@ func controlAnswers(dir string, timeout time.Duration) bool {
 }
 
 // route runs a host command: through the daemon's socket, else offline
-// under the lock, else not at all. args[0] is the command.
-func route(cfg *config.Config, args []string, stdout, stderr io.Writer) int {
+// under the lock, else not at all. args[0] is the command, configDir the
+// configuration file's directory.
+func route(cfg *config.Config, configDir string, args []string, stdout, stderr io.Writer) int {
 	what := "varlatchd admin " + args[0]
 	owner, id, err := checkClientDir(cfg.DataDir, os.Getuid())
 	if err != nil {
@@ -244,14 +245,24 @@ func route(cfg *config.Config, args []string, stdout, stderr io.Writer) int {
 		env.backups = newBackups(env)
 		return runHost(context.Background(), env, args, stdout, stderr)
 	}
+	// Mid-upgrade the database may be away, or one an undo discards.
+	if err := upgradeOver(configDir); err != nil {
+		fmt.Fprintf(stderr, "%s: %v; nothing was written\n", what, err)
+		return ExitFailure
+	}
 	if maintenance.Open(cfg.DataDir, nil).Isolated() {
 		switch {
-		case writes(args[0]):
+		case writes(args[0]), args[0] == "restore":
 			fmt.Fprintf(stderr, "%s: %s\n", what, MaintenanceRefusal)
 			return ExitFailure
 		case args[0] == "backup":
 			fmt.Fprintf(stderr, "%s %s: %s\n", what, args[1], backups.ErrMaintenance.Error())
 			return ExitFailure
+		}
+	}
+	if args[0] == "restore" {
+		if _, err := os.Lstat(cfg.DatabasePath()); errors.Is(err, os.ErrNotExist) {
+			return clearStaleHold(cfg.DataDir, stdout, stderr)
 		}
 	}
 	env, status := openOffline(cfg, what, stderr)
@@ -284,12 +295,12 @@ func daemonConn(cfg *config.Config, owner int, what string, stderr io.Writer) (*
 
 // fileOnly reports whether a host command reads and writes only the data
 // directory's files, never the database: the maintenance commands, backup
-// status, the migration's commands but the barrier (whose frozen copy is
+// and restore status, the migration's commands but the barrier (whose frozen copy is
 // the database's), and the tailnet node's handoff commands
 // (tailnetnode.go), which run on a migration's empty data directory too.
 func fileOnly(args []string) bool {
 	return args[0] == "maintenance" || args[0] == "migrate" && !(len(args) > 1 && args[1] == "barrier") ||
-		args[0] == "backup" && len(args) > 1 && args[1] == "status" ||
+		(args[0] == "backup" || args[0] == "restore") && len(args) > 1 && args[1] == "status" ||
 		args[0] == "tailnet" && isNodeCmd(args[1:])
 }
 

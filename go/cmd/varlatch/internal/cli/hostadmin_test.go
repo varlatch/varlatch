@@ -17,13 +17,19 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/upgrade"
 )
 
 // TestMain: run as `varlatchd` (a copy of this test binary under that
 // name, fakeVarlatchd), the binary is a fake varlatchd: it records its
 // arguments in its directory's args.json and answers with the stdout,
 // stderr and status files there.
+// It is the child of an upgrade run from it too, as varlatch is.
 func TestMain(m *testing.M) {
+	if len(os.Args) == 2 && os.Args[1] == upgrade.ChildCommand {
+		os.Exit(upgrade.Child(os.Stdin, os.Stdout, os.Stderr))
+	}
 	if strings.TrimSuffix(filepath.Base(os.Args[0]), ".exe") == "varlatchd" {
 		dir := filepath.Dir(os.Args[0])
 		args, _ := json.Marshal(os.Args[1:])
@@ -199,6 +205,10 @@ func TestAdminFrontsRunVarlatchd(t *testing.T) {
 			[]string{"admin", "backup", "test-bucket"}, "Bucket test with k:\n  delivery: FAILED\n", "varlatchd admin backup test-bucket: the bucket refused\n"},
 		{[]string{"backup", "restore", "--in", "/tmp/a.tar", "--backup-key-file", "/k"}, "Restore completed for arc_1.\n", "", 0,
 			[]string{"admin", "backup", "restore", "--in", "/tmp/a.tar", "--backup-key-file", "/k"}, "Restore completed for arc_1.\n", ""},
+		{[]string{"restore", "status"}, `{"held":false}` + "\n", "", 0,
+			[]string{"admin", "restore", "status"}, "{\n  \"held\": false\n}\n", ""},
+		{[]string{"restore", "resume", "--config", "/c"}, "Resumed.\n", "", 0,
+			[]string{"admin", "restore", "resume", "--config", "/c"}, "Resumed.\n", ""},
 		{[]string{"security", "reset", "--org", "acme", "--all", "--json"}, `{"organization":{"id":"org_1","slug":"acme"},"reset":[]}`, "", 0,
 			[]string{"admin", "security", "reset", "--org", "acme", "--all", "--json"}, "{\n  \"organization\": {\n    \"id\": \"org_1\",\n    \"slug\": \"acme\"\n  },\n  \"reset\": []\n}\n", ""},
 		{[]string{"unfreeze", "--org", "acme", "--confirm", "acme"}, "Unfrozen acme.\n", "", 0,

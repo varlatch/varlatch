@@ -31,6 +31,7 @@ import {
   LISTENERS_STALE_MS,
   NODE_PLACEHOLDER,
   REASON_TEXT,
+  addTailnetLines,
   checkRows,
   enableEndpointLines,
   endpointRule,
@@ -93,7 +94,7 @@ describe("checkRows", () => {
 });
 
 describe("guidance", () => {
-  it("gives the grant setup prints, with a placeholder for the node", () => {
+  it("gives a grant, with a placeholder for the node", () => {
     expect(JSON.parse(endpointRule("https://varlatch.example.ts.net:8688"))).toEqual({
       src: ["autogroup:member"],
       dst: [NODE_PLACEHOLDER],
@@ -103,37 +104,42 @@ describe("guidance", () => {
     expect(JSON.parse(endpointRule(null)).ip).toEqual(["tcp:8688"]);
   });
 
-  it("fills in the configured tailnet, never the machine name it cannot know", () => {
-    expect(enableEndpointLines("coolify", "example.ts.net")).toContain("VARLATCH_TAILNET_ENDPOINT=https://<machine>.example.ts.net:8688");
-    expect(enableEndpointLines("coolify", null)).toContain("VARLATCH_TAILNET_ENDPOINT=https://<machine>.<your-tailnet>.ts.net:8688");
-    expect(enableEndpointLines("setup", "example.ts.net")).toEqual(["varlatch setup --dir /srv/varlatch --tailnet-endpoint"]);
+  it("gives varlatchd.conf's lines", () => {
+    expect(addTailnetLines("host")).toEqual([
+      "tailnet = on",
+      "tailnet_hostname = varlatch",
+      "tailnet_tags = tag:varlatch",
+      "tailnet_port = 8687",
+      "tailnet_auth_key_file = /etc/varlatch/tailnet-auth-key",
+      "tailnet_https_port = 8688",
+    ]);
+    expect(addTailnetLines("container")).toContain("tailnet_auth_key_file = /keys/tailnet-auth-key");
+    expect(enableEndpointLines()).toEqual(["tailnet_https_port = 8688"]);
   });
 
-  it("says what to change for each deployment", () => {
-    expect(remedy("NOT_CHECKED", "setup", ENDPOINT)).toBeNull();
-    expect(remedy("NOT_RUNNING", "setup", null)).toBe("Inspect: docker compose logs tailscale varlatchd");
-    expect(remedy("NAME_CHANGED", "coolify", ENDPOINT)).toBe(
-      "Set VARLATCH_TAILNET_NODE to the node's new name and VARLATCH_TAILNET_ENDPOINT to https://<new name>.example.ts.net:8688, then redeploy",
-    );
-    expect(remedy("NO_CERTIFICATE", "coolify", ENDPOINT)).toMatch(/VARLATCH_TAILNET_CERT_UID must be 999/);
-    // A self-hosted control server's node without exactly tailnet_tags: the same remedy for either deployment.
-    for (const deployment of ["setup", "coolify"] as const) {
+  it("says what to change, with the commands of a service or of a container", () => {
+    expect(remedy("NOT_CHECKED", "host", ENDPOINT)).toBeNull();
+    expect(remedy("NOT_RUNNING", "host", null)).toBe("Inspect: journalctl -u varlatchd");
+    expect(remedy("NOT_RUNNING", "container", null)).toBe("Inspect: docker logs <container>");
+    expect(remedy("NO_CERTIFICATE", "host", ENDPOINT)).toMatch(/^Enable HTTPS certificates for the tailnet/);
+    // A self-hosted control server's node without exactly tailnet_tags: the same remedy for either.
+    for (const deployment of ["host", "container"] as const) {
       expect(remedy("TAGS_DIFFER", deployment, null)).toMatch(/^Give the node exactly tailnet_tags in Headscale \(headscale nodes tag/);
     }
     expect(REASON_TEXT.TAGS_DIFFER).toBe("The node's tags are not tailnet_tags");
   });
 
-  it("never fixes the tailnet name without the endpoint URL that depends on it", () => {
-    // varlatchd's endpoint host is <machine>.<tailnet>; the dashboard's CSP allows VARLATCH_TAILNET_ENDPOINT.
-    const withEndpoint = remedy("OTHER_TAILNET", "coolify", ENDPOINT)!;
-    expect(withEndpoint).toMatch(/^Rejoin the node to the configured tailnet/);
-    expect(withEndpoint).toContain("VARLATCH_TAILNET_NAME");
-    expect(withEndpoint).toContain("VARLATCH_TAILNET_ENDPOINT to https://<machine>.<that tailnet>:8688");
-    expect(withEndpoint).toContain("VARLATCH_TAILNET_NODE");
-    const without = remedy("OTHER_TAILNET", "coolify", null)!;
-    expect(without).toMatch(/^Rejoin the node to the configured tailnet/);
-    expect(without).not.toContain("VARLATCH_TAILNET_ENDPOINT");
-    expect(remedy("OTHER_TAILNET", "setup", ENDPOINT)).toBe("Rerun varlatch setup: it stops and says what changed");
+  it("puts a moved or renamed node back, or re-pins a tailnet changed on purpose", () => {
+    expect(remedy("OTHER_TAILNET", "host", ENDPOINT, { name: "varlatch", tailnet: "other.ts.net" })).toBe(
+      "Rejoin the node to the configured tailnet. If the change to other.ts.net is intended, accept it on the host: sudo varlatch tailnet repin",
+    );
+    expect(remedy("OTHER_TAILNET", "container", null)).toBe(
+      "Rejoin the node to the configured tailnet. If the change is intended, accept it on the host: docker exec -it <container> varlatch tailnet repin",
+    );
+    expect(remedy("NAME_CHANGED", "host", ENDPOINT, { name: "varlatch-1", tailnet: "example.ts.net" })).toBe(
+      "Rename the node back to varlatch in the tailnet's admin console (it is varlatch-1 now); access reopens at the next check",
+    );
+    expect(remedy("NAME_CHANGED", "container", null)).toContain("back to its tailnet_hostname");
   });
 
   it("points the rule at the node's tags, else its IPv4 address, else the placeholder, on the configured port", () => {
@@ -143,44 +149,6 @@ describe("guidance", () => {
     expect(ruleDestination({ addresses: ["fd7a::7", "100.64.0.7"] })).toEqual({ dst: ["100.64.0.7"], kind: "address" });
     expect(ruleDestination({ addresses: ["fd7a::7"] })).toEqual({ dst: [NODE_PLACEHOLDER], kind: "placeholder" });
     expect(ruleDestination(undefined)).toEqual({ dst: [NODE_PLACEHOLDER], kind: "placeholder" });
-  });
-
-  it("names the observed node in the Coolify fixes, keeping the port, and keeps placeholders without usable data", () => {
-    const custom = "https://varlatch.example.ts.net:9443";
-    expect(remedy("NAME_CHANGED", "coolify", custom, { name: "varlatch-1", tailnet: "example.ts.net" })).toBe(
-      "Set VARLATCH_TAILNET_NODE to varlatch-1 and VARLATCH_TAILNET_ENDPOINT to https://varlatch-1.example.ts.net:9443, then redeploy",
-    );
-    expect(remedy("OTHER_TAILNET", "coolify", custom, { name: "varlatch", tailnet: "other.ts.net" })).toContain(
-      "VARLATCH_TAILNET_NAME to other.ts.net, VARLATCH_TAILNET_ENDPOINT to https://varlatch.other.ts.net:9443, and VARLATCH_TAILNET_NODE to varlatch",
-    );
-    expect(remedy("OTHER_TAILNET", "coolify", null, { tailnet: "other.ts.net" })).toBe(
-      "Rejoin the node to the configured tailnet, or set VARLATCH_TAILNET_NAME to other.ts.net, then redeploy",
-    );
-    // A name without the node's tailnet is not enough to build its host.
-    expect(remedy("OTHER_TAILNET", "coolify", custom, { name: "varlatch" })).toContain("https://<machine>.<that tailnet>:9443");
-    expect(remedy("NAME_CHANGED", "setup", custom, { name: "varlatch-1" })).toBe("Rerun varlatch setup: it stops and says what changed");
-  });
-
-  it("fills the endpoint lines with the node's name only when it is on the configured tailnet", () => {
-    expect(enableEndpointLines("coolify", "example.ts.net", { name: "varlatch", tailnet: "example.ts.net" })).toEqual([
-      "VARLATCH_TAILNET_HTTPS_PORT=8688",
-      "VARLATCH_TAILNET_NODE=varlatch",
-      "VARLATCH_TAILNET_ENDPOINT=https://varlatch.example.ts.net:8688",
-      "VARLATCH_TAILNET_CERT_UID=999",
-    ]);
-    expect(enableEndpointLines("coolify", "example.ts.net", { name: "varlatch", tailnet: "other.ts.net" })).toContain("VARLATCH_TAILNET_NODE=<machine>");
-    expect(enableEndpointLines("coolify", "example.ts.net", { name: "varlatch" })).toContain("VARLATCH_TAILNET_NODE=<machine>");
-  });
-
-  it("keeps a non-default endpoint port when a fix rewrites the endpoint URL", () => {
-    // VARLATCH_TAILNET_HTTPS_PORT=9443: a fix that wrote :8688 would point the dashboard's CSP at a port varlatchd does not serve.
-    const custom = "https://varlatch.example.ts.net:9443";
-    for (const reason of ["OTHER_TAILNET", "NAME_CHANGED"] as const) {
-      const fix = remedy(reason, "coolify", custom)!;
-      expect(fix).toContain(":9443");
-      expect(fix).not.toContain(":8688");
-    }
-    expect(remedy("NAME_CHANGED", "coolify", custom)).toContain("https://<new name>.example.ts.net:9443");
   });
 });
 
@@ -221,12 +189,12 @@ describe("Tailnet tab", () => {
     expect(text(byTestId("tailnet-not-configured"))).toContain("No tailnet listener configured in Varlatch");
     expect(text(byTestId("tailnet-not-configured"))).toContain("does not tell whether Tailscale is installed or joined elsewhere");
     expect(all("tailnet-checks")).toHaveLength(0);
-    expect(text(byTestId("tailnet-add-lines"))).toContain("--tailnet-endpoint");
-    expect(text(byTestId("tailnet-guidance"))).toContain("Switching an existing installation to the tailnet ingress is not supported");
+    expect(text(byTestId("tailnet-add-lines"))).toContain("tailnet_https_port = 8688");
+    expect(text(byTestId("tailnet-guidance"))).toContain("sudo systemctl restart varlatchd");
 
-    await act(async () => byTestId("tailnet-deployment-coolify").props.onClick());
-    expect(text(byTestId("tailnet-add-lines"))).toContain("docker-compose.coolify-tailscale.yml");
-    expect(text(byTestId("tailnet-endpoint-lines"))).toContain("VARLATCH_TAILNET_CERT_UID=999");
+    await act(async () => byTestId("deployment-container").props.onClick());
+    expect(text(byTestId("tailnet-add-lines"))).toContain("/keys/tailnet-auth-key");
+    expect(text(byTestId("tailnet-guidance"))).toContain("restart its container");
   });
 
   it("names a reason this dashboard does not know by its code, as a newer server may send one", async () => {
@@ -237,7 +205,7 @@ describe("Tailnet tab", () => {
     expect(text(row("node"))).toContain("SOME_NEW_REASON");
   });
 
-  it("shows one check time for the whole report, each check's result, and the fix for the chosen deployment", async () => {
+  it("shows one check time for the whole report, each check's result, and the fix", async () => {
     await mount(async () => ({ tailnet: report({ node: { status: "fail", reason: "NAME_CHANGED" } }, ago(4 * 60_000)) }));
     // The report says which port is configured, not who can connect to it: the listener may bind 0.0.0.0.
     expect(text(byTestId("tailnet-configured"))).toContain("port 8687");
@@ -248,13 +216,11 @@ describe("Tailnet tab", () => {
     expect(row("listener").props["data-status"]).toBe("pass");
     expect(row("node").props["data-status"]).toBe("fail");
     expect(text(row("node"))).toContain("The node's name is no longer the browser endpoint's host");
-    expect(text(row("node"))).toContain("Rerun varlatch setup");
+    expect(text(row("node"))).toContain("Rename the node back to varlatch");
     expect(text(row("browserTls"))).toContain("Certificate valid until");
     expect(all("tailnet-stale")).toHaveLength(0);
     expect(text(byTestId("tailnet-server-side"))).toContain("only that device can find out");
 
-    await act(async () => byTestId("tailnet-deployment-coolify").props.onClick());
-    expect(text(row("node"))).toContain("VARLATCH_TAILNET_ENDPOINT to https://<new name>.example.ts.net:8688");
     expect(text(byTestId("tailnet-rule"))).toContain("tcp:8688");
   });
 
@@ -302,7 +268,7 @@ describe("Tailnet tab", () => {
     expect(all("tailnet-stale")).toHaveLength(1);
     expect(byTestId("tailnet-summary").props["data-tone"]).toBe("warn");
     expect(text(byTestId("tailnet-endpoint"))).toBe("Off");
-    expect(text(byTestId("tailnet-endpoint-lines"))).toContain("varlatch setup --dir /srv/varlatch --tailnet-endpoint");
+    expect(text(byTestId("tailnet-endpoint-lines"))).toContain("tailnet_https_port = 8688");
   });
 
   it("says when the report cannot be read", async () => {

@@ -85,6 +85,22 @@ the Linux host of the installation it migrates`):
   refuse it before anything is done: `Docker Compose <version> is too old:
   varlatch migrate needs 2.32.0 or later`. An undo (`--resume`, `--abort`)
   works with an earlier one too.
+- **No certificate authority the old server alone trusts.** A server whose
+  `varlatchd` has `NODE_EXTRA_CA_CERTS` trusts the authorities in that file
+  beside its own. The new server does not read that variable: it trusts the
+  system's, or the file `SSL_CERT_FILE` names in the place of the system's,
+  which must then hold the system's authorities and yours. The preflight, a
+  dry run's too, says so with `Warning: the source's varlatchd trusts
+  certificate authorities of its own (NODE_EXTRA_CA_CERTS="<file>", ...)` and
+  goes on; it does not read the file. Give the new server the authority
+  before the migration, or its connections to the webhooks, platforms, OIDC
+  issuers and backup destinations that need it fail:
+  - **A host install:** add it to the host's trust store (on Debian and
+    Ubuntu, `update-ca-certificates`), or set `SSL_CERT_FILE` with `systemctl
+    edit varlatchd` (`[Service]`, `Environment=SSL_CERT_FILE=<file>`; a file
+    the service may read, not under `/home`).
+  - **The image:** mount a file with both, and set `SSL_CERT_FILE` to it in
+    the service's environment (the image sets it to its own).
 - **The Backup Encryption Key** (`--bek-file`) and, when the Root KEK is not
   where the installation's `.env` says, its file (`--kek-file`). The new
   server uses the same two keys, so every archive, old and new, opens with
@@ -93,7 +109,7 @@ the Linux host of the installation it migrates`):
   `--destinations-file`) and its **read credentials**
   (`--read-credentials-file`): the preflight uploads a fresh backup, then
   downloads it and verifies it, as
-  [Create and verify](backup.md#create-and-verify) describes.
+  [0.23.0's runbook](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/operations/backup.md#create-and-verify) describes.
 - **The target**, in one of two shapes:
   - **A host install** (`--config /etc/varlatch/varlatchd.conf`, and
     `--unit` when its systemd unit is not `varlatchd`). There is no need to
@@ -638,6 +654,12 @@ release that ends the window:
 > This release ends the migration's rollback window: after it, `varlatch
 > migrate --rollback` can no longer return this installation to the
 > TypeScript release (0.23.0). Its data stays; only the way back goes.
+
+An upgrade has its own way back, `sudo varlatch upgrade --rollback`, to the
+release it came from (0.50.0-rc.4 or later). It leaves this window as it is,
+and says so: open, or ended by the upgrade, which going back does not undo.
+It refuses while a migration or its rollback is under way, and for an upgrade
+made before the migration.
 
 ### Roll back
 

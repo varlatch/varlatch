@@ -3,6 +3,7 @@
 package keyenv
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
@@ -24,6 +25,18 @@ func random(t *testing.T) []byte {
 func TestRefusal(t *testing.T) {
 	kek, bek := random(t), random(t)
 	keys := []Key{{RootKEK, kek}, {BEK, bek}}
+	// A key whose base64 has several of the two alphabets' own characters.
+	slashes := bytes.Repeat([]byte{0xfb, 0xff, 0xbf, 0xef}, 8)
+	keys = append(keys, Key{BEK, slashes})
+	mixed := func(h string) string {
+		b := []byte(h)
+		for i := range b {
+			if i%2 == 0 {
+				b[i] = strings.ToUpper(string(b[i]))[0]
+			}
+		}
+		return string(b)
+	}
 	if why := Refusal([]string{"PATH=/usr/bin", "HOME=/var/lib/varlatch", "SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt"}, keys...); why != "" {
 		t.Fatalf("an environment without a key: %s", why)
 	}
@@ -32,6 +45,8 @@ func TestRefusal(t *testing.T) {
 	}{
 		{"ROOT_KEY", hex.EncodeToString(kek), RootKEK},
 		{"KEY_UPPER", strings.ToUpper(hex.EncodeToString(kek)), RootKEK},
+		{"KEY_MIXED", mixed(hex.EncodeToString(kek)), RootKEK},
+		{"B64_MIXED", strings.Replace(strings.Replace(base64.StdEncoding.EncodeToString(slashes), "/", "_", 1), "+", "-", 1), BEK},
 		{"EMBEDDED", "prefix-" + hex.EncodeToString(bek) + "-suffix", BEK},
 		{"B64", base64.StdEncoding.EncodeToString(bek), BEK},
 		{"B64RAW", base64.RawStdEncoding.EncodeToString(kek), RootKEK},
