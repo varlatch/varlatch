@@ -40,9 +40,10 @@ change the binaries or the directories it works in, when a disk is too
 small, and when what it writes could not be made to survive a power cut.
 
 When the new release is not rollback-safe, the command says so and asks;
-without a terminal it needs `--accept-not-rollback-safe`. While a migration's
+without a terminal it needs `--accept-not-rollback-safe`, and `--yes` is
+not enough. While a migration's
 [rollback window](migrate-to-0.50.md#the-rollback-window) is open, an
-upgrade that would end it needs `--end-rollback-window`.
+upgrade that would end it needs `--end-rollback-window` the same way.
 
 It refuses while the installation is held after a
 [restore](backup.md#restore-on-a-fresh-host-or-retry-an-interrupted-restore):

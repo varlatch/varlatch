@@ -308,7 +308,7 @@ In short:
 3. Restore.
 4. The files have their owner back.
 5. You put right what changed since the archive, deletions first.
-6. No upgrade is pending; resume; open the ways in again.
+6. Resume; open the ways in again.
 
 Step by step:
 
