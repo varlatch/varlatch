@@ -404,15 +404,15 @@ func previousServes(t *testing.T, h *host, j *journal.Journal) {
 	}
 }
 
-// Killed at each point, the next run finishes the upgrade (after its
-// checks) or undoes it (before them), and the host ends in that state.
+// Killed, with the real varlatchd and database, the next run finishes the
+// upgrade (after its checks) or undoes it (before them), and the host ends
+// in that state. Every point is crash_test.go's; here are the ones the real
+// thing differs at.
 func TestAKilledUpgradeIsFinishedOrUndone(t *testing.T) {
-	points := []string{"verified", "snapshot", "stopping", "stop:done", "stopped", "data:copy-database:create:varlatch.db", "prepared",
-		"data:keep-original:rename:original", "kept", "install:" + toVersion + ":varlatchd", "install:" + toVersion + ":varlatch", "installed",
-		"data:swap:rename:varlatch.db", "swapped", "start:" + toVersion, "started", "checked", "done"}
+	points := []string{"snapshot", "stop:done", "data:copy-database:create:varlatch.db", "data:keep-original:rename:original",
+		"install:" + toVersion + ":varlatchd", "data:swap:rename:varlatch.db", "start:" + toVersion, "started", "checked", "done"}
 	for _, point := range points {
 		t.Run(point, func(t *testing.T) {
-			t.Parallel()
 			h := newHost(t)
 			inst := h.inspect(t)
 			j, err := h.upgrader(func(p string) bool { return p == point }).Run(context.Background(), inst, h.release(t, "to", safe))
@@ -454,9 +454,8 @@ func TestAKilledUpgradeIsFinishedOrUndone(t *testing.T) {
 
 // An undo that is itself killed is undone again by the next run.
 func TestAKilledUndoIsUndoneAgain(t *testing.T) {
-	for _, point := range []string{"undo:stopped", "data:put-back:rename:varlatch.db", "undo:files-back", "install:" + fromVersion + ":varlatchd", "undo:binaries-back", "start:" + fromVersion, "undo:checked"} {
+	for _, point := range []string{"data:put-back:rename:varlatch.db", "undo:files-back", "start:" + fromVersion} {
 		t.Run(point, func(t *testing.T) {
-			t.Parallel()
 			h := newHost(t)
 			inst := h.inspect(t)
 			u := h.upgrader(func(p string) bool { return p == point })
@@ -483,7 +482,6 @@ func TestAFullDiskIsUndone(t *testing.T) {
 		{"the database copy", filepath.Join("db"+makingDir, "varlatch.db")},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			t.Parallel()
 			h := newHost(t)
 			inst := h.inspect(t)
 			u := h.upgrader(nil)
