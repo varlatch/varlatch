@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -243,7 +244,7 @@ func admin(args []string, stdout, stderr io.Writer) int {
 		// daemon, whose admission holds the migration's gate; offline, on
 		// the data directory.
 		defer giveDataFiles(cfg.DataDir)
-		return route(cfg, append([]string{sub}, rest...), stdout, stderr)
+		return route(cfg, filepath.Dir(path), append([]string{sub}, rest...), stdout, stderr)
 	case sub == "migrate":
 		defer giveDataFiles(cfg.DataDir)
 		return runMigrate(cfg, rest, os.Stdin, stdout, stderr)
@@ -252,7 +253,7 @@ func admin(args []string, stdout, stderr io.Writer) int {
 	case sub == "release-check":
 		return runReleaseCheck(cfg, rest, stdout, stderr)
 	}
-	return route(cfg, append([]string{sub}, rest...), stdout, stderr)
+	return route(cfg, filepath.Dir(path), append([]string{sub}, rest...), stdout, stderr)
 }
 
 // adminAsRoot is whether admin runs as root (never on Windows, where

@@ -257,3 +257,41 @@ func TestMigrationGateForms(t *testing.T) {
 		}
 	}
 }
+
+// An upgrade's hold admits nothing, /v1/meta under a migration's gate
+// included, whatever the gate, and ends without touching it.
+func TestHoldForUpgrade(t *testing.T) {
+	dir := t.TempDir()
+	a := Open(dir, nil)
+	a.HoldForUpgrade()
+	if _, ok := a.Enter(); ok || !a.Isolated() || a.AdmitsMeta() {
+		t.Fatal("admitted while held")
+	}
+	if g, err := a.Gate(); g != nil || err != nil {
+		t.Fatalf("a gate: %+v, %v", g, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, backup.GateFile)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the hold is written: %v", err)
+	}
+	if _, err := a.BeginBarrier("mig_a"); err != nil || a.AdmitsMeta() {
+		t.Fatalf("under a migration's gate: %v, meta %v", err, a.AdmitsMeta())
+	}
+	a.EndUpgrade()
+	if _, ok := a.Enter(); ok || !a.AdmitsMeta() {
+		t.Fatal("the gate went with the hold")
+	}
+	if err := a.ReleaseBarrier("mig_a"); err != nil {
+		t.Fatal(err)
+	}
+	leave, ok := a.Enter()
+	if !ok || a.Isolated() {
+		t.Fatal("closed after the hold and the gate")
+	}
+	leave()
+	// Another process's admission is not held.
+	b := Open(dir, nil)
+	a.HoldForUpgrade()
+	if b.Isolated() {
+		t.Fatal("the hold is not this process's only")
+	}
+}
