@@ -1001,7 +1001,7 @@ func TestAKillInTheRestore(t *testing.T) {
 	_ = os.Remove(filepath.Join(h.data, databaseFile+walSuffix))
 	for name, content := range map[string]string{
 		"varlatch.db": "a part", "varlatch.db-wal": "another", "varlatch.db.restore": "a part", ".restore-work/database.sqlite": "an archive's",
-		backup.GateFile: `{"id":"x","kind":"restore","phase":"paused","archiveId":"a"}`,
+		backup.GateFile: `{"id":"x","kind":"restore","phase":"paused","archiveId":"` + plan.Last.SnapshotArchive + `"}`,
 	} {
 		if err := os.WriteFile(filepath.Join(h.data, name), []byte(content), 0o600); err != nil {
 			t.Fatal(err)
