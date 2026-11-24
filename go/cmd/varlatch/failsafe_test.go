@@ -15,8 +15,8 @@ import (
 )
 
 // TestEveryWriteGoesThroughTheFailSafe parses every Go file of the CLI
-// (go/cmd/varlatch; tests, `//go:build ignore` generators and the
-// test-only transcript replayer excepted) and fails on any way to stdout or
+// (go/cmd/varlatch; tests, `//go:build ignore` generators, the test-only
+// transcript replayer and fakegithub excepted) and fails on any way to stdout or
 // stderr outside the fail-safe:
 //   - any reference to os.Stdout or os.Stderr, to a Stdout or Stderr field,
 //     or to a stdout or stderr variable, outside the allow-listed sites
@@ -278,9 +278,11 @@ func slashed(path string, sep byte) string {
 }
 
 // failSafeSkipsDir reports whether the guard skips a directory (a slash
-// path): the test-only transcript replayer and the test data.
+// path): the test-only transcript replayer, the program go/install's upgrade
+// test stands in for GitHub with (a main package, so never part of the CLI),
+// and the test data.
 func failSafeSkipsDir(rel string) bool {
-	return rel == "internal/transcript" || rel == "testdata"
+	return rel == "internal/transcript" || rel == "internal/selfupdate/fakerelease/fakegithub" || rel == "testdata"
 }
 
 // TestFailSafeGuardPathsOnWindows: with Windows separators, the guard skips
@@ -295,6 +297,8 @@ func TestFailSafeGuardPathsOnWindows(t *testing.T) {
 	}{
 		{`internal\transcript`, "internal/transcript", true},
 		{`testdata`, "testdata", true},
+		{`internal\selfupdate\fakerelease\fakegithub`, "internal/selfupdate/fakerelease/fakegithub", true},
+		{`internal\selfupdate\fakerelease`, "internal/selfupdate/fakerelease", false},
 		{`internal\cli`, "internal/cli", false},
 		{`internal\transcript\transcript.go`, "internal/transcript/transcript.go", false},
 		{`internal\cli\cli.go`, "internal/cli/cli.go", false},
