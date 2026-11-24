@@ -5,7 +5,7 @@
 # runner VM; ADR-0059 step 6, slice 6.4a): the setup suite's replacement.
 #
 #   sudo VARLATCH_TEST_DISPOSABLE_ROOT=1 [VARLATCH_TEST_PEBBLE=<dir url> VARLATCH_TEST_PEBBLE_ROOT=<pem>] \
-#     go/install/test-setup.sh <directory holding varlatch, varlatchd and enrollpasskey>
+#     go/install/test-setup.sh <directory holding varlatch, varlatchd, enrollpasskey and setupterminal>
 #
 # For each ingress mode (localhost, own proxy, and public against Pebble
 # when it is given), from an empty host: the binaries and the unit
@@ -20,8 +20,12 @@
 # a rerun must change nothing and restart nothing. G13 through setup: the
 # localhost installation's latest archive and its two keys' copies, on the
 # host emptied again, restored by `setup --restore` (the administrator and
-# their passkey back, no link issued, a backup verified). Then setup
-# stopped after each step and run again ends as a run in one go.
+# their passkey back, no link issued, a backup verified). Then setup on a
+# terminal (setupterminal, a pseudo-terminal), which acts only on what the
+# terminal shows: the passkey enrolled from the link shown, the two keys
+# pasted back as shown; and the links `varlatch admin reenroll` and
+# `varlatchd admin recover` print enroll one too. Then setup stopped after
+# each step and run again ends as a run in one go.
 #
 # It touches only a disposable machine: it refuses to start unless
 # VARLATCH_TEST_DISPOSABLE_ROOT=1, as root, with nothing of a Varlatch
@@ -35,7 +39,7 @@ set -eu
 }
 [ "$(id -u)" = 0 ] || { echo "refusing: needs root" >&2; exit 2; }
 bin=${1:-}
-[ -x "$bin/varlatch" ] && [ -x "$bin/varlatchd" ] && [ -x "$bin/enrollpasskey" ] || { echo "refusing: no varlatch, varlatchd and enrollpasskey in '$bin'" >&2; exit 2; }
+[ -x "$bin/varlatch" ] && [ -x "$bin/varlatchd" ] && [ -x "$bin/enrollpasskey" ] && [ -x "$bin/setupterminal" ] || { echo "refusing: no varlatch, varlatchd, enrollpasskey and setupterminal in '$bin'" >&2; exit 2; }
 unit=$(cd "$(dirname "$0")" && pwd)/varlatchd.service
 [ -f "$unit" ] || { echo "refusing: no $unit" >&2; exit 2; }
 
@@ -277,6 +281,35 @@ if [ -n "${VARLATCH_TEST_PEBBLE:-}" ]; then
 else
   echo "SKIP  public: no Pebble (VARLATCH_TEST_PEBBLE)"
 fi
+
+# On a terminal: what a person sees is enough to finish, and the links
+# shown later work too.
+set +e
+"$bin/setupterminal" -enrollpasskey "$bin/enrollpasskey" -connect http://127.0.0.1:8686 -link-file "$work/terminal-link" \
+  -public-url https://vault.varlatch.test /usr/local/bin/varlatch >"$work/terminal.out" 2>&1
+status=$?
+set -e
+if [ "$status" = 0 ] && grep -q '^Setup is done' "$work/terminal.out"; then
+  pass "terminal: the link shown enrolls the passkey, the keys shown are the keys, setup exits 0"
+else
+  fail "terminal: setup ended with $status: $(tail -n 8 "$work/terminal.out")"
+fi
+admin=$(/usr/local/bin/varlatchd admin bootstrap-status --config /etc/varlatch/varlatchd.conf | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+# link_works <name> <command...>: the link the command prints enrolls.
+link_works() {
+  what=$1
+  shift
+  (umask 077; "$@" 2>/dev/null | grep -o 'https://[^ ]*/enroll#[^ ]*' >"$work/shown-link" || true)
+  if [ "$(wc -l <"$work/shown-link")" = 1 ] && "$bin/enrollpasskey" -link-file "$work/shown-link" -connect http://127.0.0.1:8686 >/dev/null; then
+    pass "terminal: the link $what prints enrolls a passkey"
+  else
+    fail "terminal: the link $what prints does not work"
+  fi
+  rm -f "$work/shown-link"
+}
+link_works "varlatch admin reenroll" /usr/local/bin/varlatch admin reenroll --all
+link_works "varlatchd admin recover" /usr/local/bin/varlatchd admin recover --identity "$admin" --config /etc/varlatch/varlatchd.conf
+teardown
 
 # Interrupted after each step, then run again: as a run in one go.
 for step in answers user data-dir probe keys config unit ready admin key-copies custody backup; do

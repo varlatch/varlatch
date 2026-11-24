@@ -9,6 +9,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -214,7 +215,9 @@ func setupCommand(r *Run) (bool, error) {
 		Say:       func(line string) error { return r.out(line + "\n") },
 		StopAfter: r.Getenv("VARLATCH_SETUP_STOP_AFTER"),
 	}
-	if isTerminal(r.Stdin) && isTerminal(r.Stdout) {
+	// In assisted mode a coding agent reads the terminal: setup asks and
+	// shows nothing there, so the link and the keys go to the files named.
+	if !r.Assisted.On && isTerminal(r.Stdin) && isTerminal(r.Stdout) {
 		o.Ask = setupAsker{newTerminalPrompter(r)}
 		o.ShowKeys = func(kek, bek []byte) error { return r.showKeys(kek, bek) }
 		o.ShowLink = func(link, expires string) error { return r.showEnrollLink(link, expires) }
@@ -282,12 +285,24 @@ func (a setupAsker) Secret(q string) ([]byte, error) {
 	return []byte(v), err
 }
 
+// enrollLinkPattern is a first administrator's link as varlatchd prints it:
+// the public URL, /enroll#, and the token of its bootstrap, or, for an
+// administrator who never enrolled a passkey, of its recovery.
+var enrollLinkPattern = regexp.MustCompile(`^https?://[^\s#/]+(/[^\s#]*)?/enroll#(vlt_(?:setup|recover)_[A-Za-z0-9_-]+)$`)
+
 // showEnrollLink shows the first administrator's one-time link on the
-// terminal, once per run.
+// terminal, once per run: the one writer that shows its token, which the
+// fail-safe redacts everywhere else.
 func (r *Run) showEnrollLink(link, expires string) error {
-	return r.out("\nOpen this one-time link in the browser where you will sign in, and create the first administrator's\n" +
-		"passkey. It works once and expires " + expires + "; setup waits for it, and a rerun gives a new one.\n\n" +
-		"  " + link + "\n\n")
+	m := enrollLinkPattern.FindStringSubmatch(link)
+	if m == nil {
+		return Fail("varlatch setup: varlatchd answered an enrollment link this varlatch does not recognise; nothing of it was printed", ExitFailure)
+	}
+	if err := r.out("\nOpen this one-time link in the browser where you will sign in, and create the first administrator's\n" +
+		"passkey. It works once and expires " + Printable(expires) + "; setup waits for it, and a rerun gives a new one.\n\n"); err != nil {
+		return err
+	}
+	return r.outShowing("  "+link+"\n\n", m[2])
 }
 
 // setupDoctor is setup's last step: `varlatch doctor`'s report, and
