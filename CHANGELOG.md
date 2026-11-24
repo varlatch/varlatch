@@ -300,7 +300,6 @@ Changes since 0.50.0-rc.2, by pull request:
   assisted mode setup neither asks nor shows anything on the terminal, as
   without one: a coding agent would read the link and the keys.
 <!-- END SLOT #451 -->
-<!-- SLOT #446 (armed, head d6a9d52d; recheck against the merged PR, then remove both markers; or drop) -->
 - **`varlatch migrate` says what an undo, a rollback and a wait are doing
   (#446).** Each step says when it starts, every 15 seconds while it
   lasts (how long so far, and what it waits for) and when it ends; so do the
@@ -310,7 +309,6 @@ Changes since 0.50.0-rc.2, by pull request:
   whole step again. rc.2's entry on #423 is corrected: Ctrl-C or a kill ends
   `varlatch migrate` at once, and the old node can stay on the tailnet until
   `--resume`.
-<!-- END SLOT #446 -->
 - **A stop during a certificate issuance ends `varlatchd` (#440).** With
   `listen_https`, the server kept trying again without end after a stop
   interrupted an issuance or a renewal, until it was killed (after the 30
@@ -347,12 +345,10 @@ Changes since 0.50.0-rc.2, by pull request:
   members yet", and Invite shows only to someone who may invite; the server
   refused both before too. A members list that cannot be read says so, with
   Try again. The Audit page fits a phone's width.
-<!-- SLOT #447 (armed, head a50e4c43; its place is in the line below) -->
 - **The migration's rehearsals (#435, #447).** Fixes to the rehearsal harness
   for the image target and for a public address with its own certificate
   authority; Coolify and the Tailscale sidecar together, and `--resume` after
   a kill. No change to what is shipped.
-<!-- END SLOT #447 -->
 - **The release process (#438).** The G1 gate reads its walkthrough record
   from a commit of its own (`walkthrough_ref`), which differs from the
   candidate it judges only in regular files added or changed under
