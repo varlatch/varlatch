@@ -136,6 +136,13 @@ fixes.
 - **`varlatch migrate --rollback` makes the dashboard again** once the
   rebuilt server starts. Its nginx resolves the server's address once, and
   one that kept running could answer 502 when the address had changed.
+- **`varlatch setup` on a terminal shows the first administrator's link.**
+  In 0.50.0-rc.2 and earlier it showed `/enroll#[redacted]`, so an
+  interactive setup could not go on without a link from `varlatchd admin
+  bootstrap --revoke-unused`. Setup without a terminal, and the links of
+  `varlatch invite`, `move` and `admin reenroll`, were not affected. In
+  assisted mode setup neither asks nor shows anything on the terminal, as
+  without one: a coding agent would read the link and the keys.
 - **`install.sh` updates an existing Go install again.** In 0.50.0-rc.2 it
   refused to replace any Go varlatch already installed, a run over its own
   fresh install included, with "varlatch is installed with Homebrew; update
