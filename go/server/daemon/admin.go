@@ -200,6 +200,9 @@ func admin(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "varlatchd admin %s: %s\n", sub, err.Error())
 		return ExitFailure
 	}
+	// Before any command opens the database (storage.Open refuses, with the
+	// reason, when there is no place; a command that only reads goes on).
+	_, _ = storage.PrepareTemp(cfg.DataDir)
 	switch {
 	case sub == "config":
 		return runConfigCheck(cfg, stdout, stderr)

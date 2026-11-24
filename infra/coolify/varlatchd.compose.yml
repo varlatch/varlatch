@@ -43,8 +43,9 @@ services:
       # Coolify mounts the default paths, whatever the variables below are set
       # to (README.md); they are for plain Docker Compose.
       #
-      # Writable data directory: SQLite database, local backups, control
-      # socket, ACME cache, and in-process tsnet tailnet state. Owned by
+      # Writable data directory, the only one (no tmpfs is needed): SQLite
+      # database and its temporary files, local backups, control socket,
+      # ACME cache, and in-process tsnet tailnet state. Owned by
       # 65532:65532 (mode 0700).
       - ${VARLATCH_DATA_DIR:-/srv/varlatch/data}:/var/lib/varlatch
       # Keys directory (Root KEK, Backup Encryption Key, optional initial
