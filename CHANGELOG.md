@@ -227,10 +227,13 @@ Changes since 0.50.0-rc.2, by pull request:
   from a commit of its own (`walkthrough_ref`), which differs from the
   candidate it judges only in regular files added or changed under
   `docs/evidence/`. No change to what is shipped.
-<!-- SLOT #441 #442 (both open, armed, heads e2dac419 and 7eff8b36; recheck against the merged PRs) -->
-- **CI (#441, #442).** CI takes MinIO's pinned image from its own cache, and
-  pulls it with retries when the cache has none.
-<!-- END SLOT #441 #442 -->
+- **CI (#441, #442, #443).** CI takes MinIO's pinned image from its own
+  cache, and pulls it with retries when the cache has none. The migration's
+  gate (G5) has 45 minutes. No change to what is shipped.
+<!-- SLOT #445 (open, armed, head 595bb9a4; recheck against the merged PR) -->
+- **Tests (#445).** Three Go tests no longer pick a port and let it go before
+  they use it. No change to what is shipped.
+<!-- END SLOT #445 -->
 
 - **Prerelease only.** It is published as a GitHub prerelease and never
   becomes the latest release. What follows the latest release (`varlatch
