@@ -93,7 +93,7 @@ the Linux host of the installation it migrates`):
   `--destinations-file`) and its **read credentials**
   (`--read-credentials-file`): the preflight uploads a fresh backup, then
   downloads it and verifies it, as
-  [Create and verify](backup.md#create-and-verify) describes.
+  [0.23.0's runbook](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/operations/backup.md#create-and-verify) describes.
 - **The target**, in one of two shapes:
   - **A host install** (`--config /etc/varlatch/varlatchd.conf`, and
     `--unit` when its systemd unit is not `varlatchd`). There is no need to

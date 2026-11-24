@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -330,6 +331,37 @@ func TestExampleParses(t *testing.T) {
 	defer f.Close()
 	if _, err := Parse(f, env(map[string]string{"CREDENTIALS_DIRECTORY": "/c"})); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Every setting is in the configuration reference, with a section and a row
+// in its list, and in the example; the reference has no section for a
+// setting that does not exist.
+func TestEverySettingDocumented(t *testing.T) {
+	read := func(path string) string {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	page := read("../../../docs/self-hosting/configuration.md")
+	example := read("../../install/varlatchd.conf.example")
+	for _, key := range keys {
+		if n := strings.Count(page, "\n### `"+key+"`\n"); n != 1 {
+			t.Errorf("docs/self-hosting/configuration.md has %d sections named `%s`, not 1", n, key)
+		}
+		if n := strings.Count(page, "\n| [`"+key+"`](#"+key+") |"); n != 1 {
+			t.Errorf("docs/self-hosting/configuration.md lists `%s` %d times, not once", key, n)
+		}
+		if !regexp.MustCompile(`(?m)^#?` + key + ` =`).MatchString(example) {
+			t.Errorf("varlatchd.conf.example does not have %s", key)
+		}
+	}
+	for _, m := range regexp.MustCompile("(?m)^### `([^`]+)`$").FindAllStringSubmatch(page, -1) {
+		if !slices.Contains(keys, m[1]) {
+			t.Errorf("docs/self-hosting/configuration.md has a section for %s, which is not a setting", m[1])
+		}
 	}
 }
 

@@ -41,10 +41,13 @@ export default defineConfig({
             "self-hosting",
             "self-hosting/configuration",
             { label: "Self-hosted tailnet control server (Headscale)", slug: "self-hosting/self-hosted-tailnet-control" },
+            { label: "Upgrading", slug: "operations/upgrade" },
+            { label: "Migrating to 0.50", slug: "operations/migrate-to-0.50" },
             { label: "Backup and recovery", slug: "operations/backup" },
             { label: "First off-host backup (B2)", slug: "operations/backup-b2" },
             { label: "Moving to another address", slug: "operations/move-installation" },
             { label: "Verifying a release", slug: "operations/verify-release" },
+            { label: "Docker Compose (0.23.0 and earlier)", slug: "self-hosting/compose" },
           ],
         },
         {
