@@ -546,7 +546,22 @@ func (c *combined) forward(step string) bool {
 	down, states := c.down()
 	c.record(step+": the sidecar and the dashboard are stopped", down, states)
 	c.name(step+": the tailnet name is Go's", isGo)
+	// Production's shape: the image's service, its root read-only. Not only
+	// that it answers: that it takes a client's writes.
+	c.writer(step).writes()
 	return true
+}
+
+// writer writes on the Go app, its admin commands in its container.
+func (c *combined) writer(step string) *goWriter {
+	return &goWriter{t: c.t, item: combinedItem, what: step, dir: c.f.tmp, base: "https://" + prof.publicName, http: c.client,
+		admin: func(args ...string) ran {
+			names := goContainers()
+			if len(names) != 1 {
+				return ran{code: -1, stderr: fmt.Sprintf("the Go app's containers: %v", names)}
+			}
+			return run("", nil, nil, "docker", append(append([]string{"exec", names[0], "/opt/varlatch/varlatchd", "admin"}, args...), "--config", "/etc/varlatch/varlatchd.conf")...)
+		}}
 }
 
 // reversed is what a finished rollback leaves.

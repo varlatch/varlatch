@@ -298,6 +298,7 @@ docker run --rm --name "vl-rh-$run-build" -u "$(id -u):$(id -g)" -e HOME=/tmp -e
   -v "$gomod/..:/src" -v "$root/bin:/out" -w /src/go golang:1.27.4 sh -c '
     go build -buildvcs=false -tags rehearsal,crashpoint -o /out/varlatch ./cmd/varlatch &&
     go build -buildvcs=false -o /out/varlatchd ./cmd/varlatchd &&
+    go build -buildvcs=false -o /out/enrollpasskey ./server/auth/authtest/enrollpasskey &&
     go test -buildvcs=false -c -tags rehearsal -o /out/rehearsal.test ./test/rehearsal/'
 # The sync case's platform stand-ins (VL_RH_SYNC=fakes), beside the
 # binaries: the runner sees the run's directory, not this checkout.

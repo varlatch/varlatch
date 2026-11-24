@@ -140,6 +140,10 @@ func killThenResume(t *testing.T, rel release, s3 *s3Server) {
 			return
 		}
 	}
+	if prof.kill == "transfer" {
+		// The run's own objects, after what is compared of the copy's.
+		defer func() { in.hostWriter(t, killItem, "after --resume").writes() }()
+	}
 	if rd == nil {
 		return
 	}
