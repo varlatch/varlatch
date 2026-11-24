@@ -137,7 +137,8 @@ VARLATCH=/usr/local/bin/varlatch VARLATCHD=/usr/local/bin/varlatchd
 # The client is the candidate's, whatever the host runs, with its own home.
 client_bin=$built/releases/$CANDIDATE/$(cd "$built/releases/$CANDIDATE" && echo varlatch-*)
 chmod 755 "$client_bin"
-client() { (cd "$work/repo" && HOME="$work/home" VARLATCH_TOKEN="$(cat "$work/token")" "$client_bin" "$@"); }
+# It waits out a 503 by itself, for longer than a check here.
+client() { (cd "$work/repo" && HOME="$work/home" VARLATCH_TOKEN="$(cat "$work/token")" timeout 10 "$client_bin" "$@"); }
 
 # --- what must hold of the host ---
 
@@ -376,7 +377,7 @@ for point in $KILLS; do
   # ready at once: it is tried for a few seconds.
   item=MEANWHILE_$(echo "$point" | tr -c 'A-Za-z0-9\n' _ | tr '[:lower:]' '[:upper:]')
   written=no
-  for _ in 1 2 3 4 5; do
+  for _ in 1 2; do
     if put "$item"; then written=yes; break; fi
     sleep 1
   done
