@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -58,6 +59,8 @@ const (
 	headscaleDomain = "rh.example"
 	headscaleUser   = "rh"
 	tailnetTag      = "tag:varlatch"
+	// publishedPort is Headscale's on an address of the host's.
+	publishedPort = "18443"
 	// tailnetPort is the release's tailnet listener (VARLATCH_TAILNET_PORT).
 	tailnetPort = "8687"
 	// clientProxy is the client node's outbound HTTP proxy, on its loopback.
@@ -75,11 +78,15 @@ type tailnetWorld struct {
 	// its address and control URL.
 	server, holder string
 	ip, url        string
-	suffix         string
-	nodeKeyFile    string // the sidecars' and targets' reusable tagged key
-	oauthFile      string // the owner's OAuth client (Tailscale)
-	client         string // the client node's container
-	runs           int
+	// published is the address of the host's Headscale is published on,
+	// for nodes in networks that are not the run's ("": in holder's
+	// network, on the run's).
+	published   string
+	suffix      string
+	nodeKeyFile string // the sidecars' and targets' reusable tagged key
+	oauthFile   string // the owner's OAuth client (Tailscale)
+	client      string // the client node's container
+	runs        int
 }
 
 // writeTailnetCerts writes the run's CA (ca.pem) and Headscale's
@@ -297,9 +304,12 @@ func (w *tailnetWorld) headscaleCLI(args ...string) ran {
 // startTailnet starts the run's tailnet: its control server (Headscale,
 // or the owner's Tailscale tailnet) and a client node, by the run's names,
 // removed by those names when the case ends.
-func startTailnet(t *testing.T) *tailnetWorld {
+func startTailnet(t *testing.T) *tailnetWorld { return startTailnetOn(t, "") }
+
+// startTailnetOn is startTailnet, Headscale published on address.
+func startTailnetOn(t *testing.T, address string) *tailnetWorld {
 	t.Helper()
-	w := &tailnetWorld{t: t, headscale: prof.tailscaleOAuth == "", network: "vl-rh-" + runID + "-tailnet", dir: filepath.Join(workDir, "tailnet-net"),
+	w := &tailnetWorld{t: t, published: address, headscale: prof.tailscaleOAuth == "", network: "vl-rh-" + runID + "-tailnet", dir: filepath.Join(workDir, "tailnet-net"),
 		server: "vl-rh-" + runID + "-headscale", holder: "vl-rh-" + runID + "-headscale-net", client: "vl-rh-" + runID + "-tailnet-client"}
 	if err := os.MkdirAll(w.dir, 0o755); err != nil {
 		t.Fatal(err)
@@ -349,14 +359,26 @@ func startTailnet(t *testing.T) *tailnetWorld {
 // starts: its certificate and server_url name it.
 func (w *tailnetWorld) startHeadscale() {
 	t := w.t
+	if w.published != "" {
+		w.ip = w.published
+		w.serveHeadscale(publishedPort, "--network", w.network, "-p", w.ip+":"+publishedPort+":"+headscalePort)
+		return
+	}
 	must(t, w.docker("run", "-d", "--name", w.holder, "--network", w.network, "-u", "1000:1000", fakesImage, "sleep", "infinity"), "start the Headscale network holder")
 	t.Cleanup(func() { w.docker("rm", "-fv", w.holder) })
 	w.ip = strings.TrimSpace(must(t, w.docker("inspect", "-f", `{{(index .NetworkSettings.Networks "`+w.network+`").IPAddress}}`, w.holder), "the holder's address").stdout)
+	w.serveHeadscale(headscalePort, "--network", "container:"+w.holder)
+}
+
+// serveHeadscale runs Headscale with docker's network arguments, known as
+// https on the world's address and port.
+func (w *tailnetWorld) serveHeadscale(port string, network ...string) {
+	t := w.t
 	ip := net.ParseIP(w.ip)
 	if ip == nil {
-		t.Fatalf("the holder has no address on %s", w.network)
+		t.Fatalf("Headscale has no address (%q)", w.ip)
 	}
-	w.url = "https://" + w.ip + ":" + headscalePort
+	w.url = "https://" + w.ip + ":" + port
 	if err := writeTailnetCerts(w.dir, ip); err != nil {
 		t.Fatal(err)
 	}
@@ -365,9 +387,9 @@ func (w *tailnetWorld) startHeadscale() {
 			t.Fatal(err)
 		}
 	}
-	must(t, w.docker("run", "-d", "--name", w.server, "--network", "container:"+w.holder, "--read-only",
-		"-v", filepath.Join(w.dir, "hs")+":/etc/headscale:ro", "--tmpfs", "/var/lib/headscale", "--tmpfs", "/var/run/headscale",
-		headscaleImage, "serve"), "start Headscale")
+	must(t, w.docker(slices.Concat([]string{"run", "-d", "--name", w.server}, network, []string{"--read-only",
+		"-v", filepath.Join(w.dir, "hs") + ":/etc/headscale:ro", "--tmpfs", "/var/lib/headscale", "--tmpfs", "/var/run/headscale",
+		headscaleImage, "serve"})...), "start Headscale")
 	t.Cleanup(func() { w.docker("rm", "-fv", w.server) })
 	ready := pollUntil(90*time.Second, 500*time.Millisecond, func() bool { return w.headscaleCLI("users", "list", "--output", "json").code == 0 })
 	if !ready {
@@ -376,12 +398,12 @@ func (w *tailnetWorld) startHeadscale() {
 	must(t, w.headscaleCLI("users", "create", headscaleUser), "headscale users create")
 }
 
-// preauthKey is a reusable pre-auth key for two hours: tagged with the
+// preauthKey is a reusable pre-auth key for six hours (a run with pauses): tagged with the
 // nodes' tag (the sidecars' and the targets', which Headscale makes tagged
 // devices) or the user's (the client node). Never shown.
 func (w *tailnetWorld) preauthKey(tagged bool) string {
 	t := w.t
-	args := []string{"preauthkeys", "create", "--reusable", "--expiration", "2h", "--output", "json"}
+	args := []string{"preauthkeys", "create", "--reusable", "--expiration", "6h", "--output", "json"}
 	if tagged {
 		args = append(args, "--tags", tailnetTag)
 	} else {

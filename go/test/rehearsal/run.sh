@@ -24,6 +24,13 @@
 # installation is kept whole, the Root KEK's copy in its Compose
 # directory's secrets/ included: remove it by hand (shred -u) when done.
 #
+# VL_RH_KILL=barrier|transfer (own proxy or public ingress) adds the kill
+# case: two fresh sources, a migration of each killed there, then --abort on
+# the first and --resume on the second (VL_RH_ONLY=kill runs it alone).
+# VL_RH_ONLY=setup only sets the source up. Each of the two variables is
+# honoured or refused before anything starts, never left aside: the cases of
+# VL_RH_INGRESS=coolify, tailnet and combined take neither.
+#
 # VL_RH_PROFILE=box (the experiments server; internal
 # docs/design/go-step8-rehearsals.md): run by the owner as root on the
 # host (sudo -i first), the test binary directly on the host, with real
@@ -63,6 +70,18 @@
 # whose database holds both tokens sealed, beside its Root KEK: remove it
 # by hand when done.
 #
+# VL_RH_INGRESS=combined (B3 on production's topology, the box, with
+# VL_RH_TARGET=image and the B3 inputs above): the lab Coolify and the
+# tailscale sidecar together. The source app is deployed from the release's
+# docker-compose.coolify-tailscale.yml in a copy of its infra/ the run serves
+# over Git (VL_RH_GIT_NAME, a name that leads to the lab Coolify's proxy),
+# with two settings and a mount added to the sidecar: the login server (the
+# run's Headscale, published on docker0's address) and its CA.
+# VL_RH_COOLIFY_TARGET is the Go app's UUID; its paths are the Compose file's
+# defaults, in /srv/varlatch (Coolify ignores the variables), which must not
+# be there: the run makes it, marks it as its own, and removes it. The run writes the route migrate
+# prints to the proxy's dynamic configuration, and removes it.
+#
 # VL_RH_INGRESS=tailnet (a workstation or the box): the tailnet case, the
 # name handoff on a Headscale the run starts; with VL_RH_TAILSCALE_OAUTH_FILE,
 # VL_RH_TAILSCALE_AUTH_KEY_FILE and VL_RH_TAILSCALE_TAILNET (the owner, on
@@ -89,6 +108,7 @@ duration_seconds() {
 }
 pause_budget=0
 [ "${VL_RH_INGRESS:-proxy}" != coolify ] || pause_budget=8
+[ "${VL_RH_INGRESS:-proxy}" != combined ] || pause_budget=14
 pause_seconds=$(duration_seconds "${VL_RH_PAUSE_TIMEOUT:-2h}") || {
   echo "VL_RH_PAUSE_TIMEOUT is hours, minutes and seconds (2h, 90m, 1h30m), not ${VL_RH_PAUSE_TIMEOUT}" >&2
   exit 64
@@ -203,7 +223,17 @@ cleanup() {
       docker compose -p "vl-rh-$run-$p" --profile deploy down -v --remove-orphans --timeout 20 >/dev/null 2>&1 || true
     done
     [ -z "${VL_RH_TAILSCALE_OAUTH_FILE:-}" ] || docker exec "vl-rh-$run-tailnet-client" tailscale logout >/dev/null 2>&1 || true
-    docker rm -fv "vl-rh-$run-tailnet-client" "vl-rh-$run-headscale" "vl-rh-$run-headscale-net" >/dev/null 2>&1 || true
+    docker rm -fv "vl-rh-$run-tailnet-client" "vl-rh-$run-headscale" "vl-rh-$run-headscale-net" \
+      "vl-rh-$run-git" "vl-rh-$run-address" >/dev/null 2>&1 || true
+    # The combined case's route in the lab Coolify's proxy, only this run's.
+    if [ "$profile" = box ] && [ -n "${VL_RH_PUBLIC_NAME:-}" ] && [ "${VL_RH_INGRESS:-}" = combined ] &&
+      grep -qsF "Host(\`$VL_RH_PUBLIC_NAME\`)" /data/coolify/proxy/dynamic/varlatch-rollback.yaml; then
+      rm -f /data/coolify/proxy/dynamic/varlatch-rollback.yaml
+    fi
+    # Its Go app's directory, only when this run made it.
+    if [ "$profile" = box ] && [ -e "/srv/varlatch/.vl-rh-$run" ]; then
+      rm -rf /srv/varlatch
+    fi
     docker network rm "vl-rh-$run-tailnet" >/dev/null 2>&1 || true
     rm -rf "$root/work/tailnet-net" 2>/dev/null || true
     if [ "$created_release" = 1 ]; then
@@ -253,7 +283,7 @@ release=$(cd "$release" && pwd)
 pass=(VL_RH_PROFILE VL_RH_TARGET VL_RH_INGRESS VL_RH_PUBLIC_NAME VL_RH_PUBLIC_BIND VL_RH_SOURCE VL_RH_KILL VL_RH_SYNC
   VL_RH_CONTINUE_DIR VL_RH_GO_IMAGE VL_RH_COOLIFY_SOURCE_DIR VL_RH_PAUSE_TIMEOUT VL_RH_SEED VL_RH_SEED_VALUES
   VL_RH_KEEP VL_RH_ONLY VL_RH_RESTORE_BEK VL_RH_RESTORE_KEK VL_RH_BUNDLE_OUT VL_RH_RESTORE_READ
-  VL_RH_TAILSCALE_OAUTH_FILE VL_RH_TAILSCALE_AUTH_KEY_FILE VL_RH_TAILSCALE_TAILNET)
+  VL_RH_TAILSCALE_OAUTH_FILE VL_RH_TAILSCALE_AUTH_KEY_FILE VL_RH_TAILSCALE_TAILNET VL_RH_COOLIFY_TARGET VL_RH_GIT_NAME)
 if [ "$profile" = box ]; then
   # On the box: as root on the host, real systemd, the target under a
   # root-owned path; the run's files handed back to the sudo user after.

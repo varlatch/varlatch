@@ -52,6 +52,11 @@ func TestProfileRefusals(t *testing.T) {
 			{"setup", "", "", ""},
 			{"sync", "", "", "VL_RH_ONLY=sync needs VL_RH_SYNC=fakes or real"},
 			{"sync", "", "fakes", ""},
+			{"setup", "transfer", "", "VL_RH_ONLY=setup only sets the source up"},
+			{"setup", "", "fakes", "VL_RH_ONLY=setup only sets the source up"},
+			{"kill", "barrier", "fakes", "leave VL_RH_SYNC unset"},
+			{"sync", "barrier", "fakes", "leave VL_RH_KILL unset"},
+			{"bundle", "barrier", "", "no VL_RH_KILL or VL_RH_SYNC"},
 		} {
 			t.Setenv("VL_RH_ONLY", c.only)
 			t.Setenv("VL_RH_KILL", c.kill)
