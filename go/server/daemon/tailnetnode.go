@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -200,25 +201,44 @@ var nodeWait = 30 * time.Second
 // or less where its own --timeout ended first.
 func waited(begun time.Time) time.Duration { return time.Since(begun).Round(time.Second) }
 
-// nodePoll is how often it looks again at the tags meanwhile.
-const nodePoll = 200 * time.Millisecond
+// snapshot is a node as one status of it: what the enrolment waited for is
+// what it pins and reports, whatever the node reads a moment later.
+type snapshot struct {
+	tailnet.DERPNode
+	st tailnet.Status
+}
+
+func (s snapshot) Status(context.Context) (tailnet.Status, error) { return s.st, nil }
 
 // obtainNamedCert is one attempt at the node's certificate for domain, once
-// the node's own map names it that: a certificate is issued for no other
-// name, and asked for too early, right after a rename, the node refuses it
-// at once, and a handoff's few attempts would be spent in an instant.
+// the node's own map both names it that and lets it obtain a certificate for
+// exactly that: tsnet goes by the map's certificate domains, which need not
+// come with the name, and refuses any other name at once, so asked for too
+// early, right after a rename, a handoff's few attempts would be spent in an
+// instant.
 func obtainNamedCert(ctx context.Context, node *tailnet.TSNode, dataDir, domain string) ([]byte, error) {
 	begun := time.Now()
-	st, named, err := node.AwaitStatus(ctx, nodeWait, func(st tailnet.Status) bool {
-		return st.BackendState == "Running" && strings.EqualFold(st.DNSName, domain)
+	named := func(st tailnet.Status) bool { return st.BackendState == "Running" && st.DNSName == domain }
+	st, ready, err := node.AwaitStatus(ctx, nodeWait, func(st tailnet.Status) bool {
+		return named(st) && slices.Contains(st.CertDomains, domain)
 	})
-	if err != nil {
+	switch {
+	case err != nil:
 		return nil, fmt.Errorf("the node's status: %w", err)
-	}
-	if !named {
+	case !ready && !named(st):
 		return nil, fmt.Errorf("the node's name is %s, not %s, for %s: the control plane's rename has not reached it, so no certificate was asked for", st.DNSName, domain, waited(begun))
+	case !ready:
+		return nil, fmt.Errorf("the control plane lets the node obtain certificates for %s, not for %s, for %s, so none was asked for (are HTTPS certificates on in the tailnet's DNS settings?)", certDomains(st.CertDomains), domain, waited(begun))
 	}
 	return obtainNodeCert(ctx, node, dataDir, domain)
+}
+
+// certDomains names the domains, or that there are none.
+func certDomains(domains []string) string {
+	if len(domains) == 0 {
+		return "no name"
+	}
+	return strings.Join(domains, ", ")
 }
 
 // keyTags is whether the node commands' nodes take their tags from the
@@ -361,32 +381,55 @@ func runTailnetEnroll(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer) i
 	if err := node.Up(ctx); err != nil {
 		return fail("the node did not join its tailnet: %v", err)
 	}
-	// The name first, before the pin's check: a node the control plane
-	// named otherwise (its temporary name another node's: temp-1) is
-	// refused before anything is recorded of it, so no name-suffixed
-	// closure outlives the collision. The control plane's name (the one an
-	// undone handoff has just given back, most of all) may reach the node
-	// after it is up: waited for, and never taken for granted.
+	// One status of the node must say all of it, the name and, on a
+	// self-hosted control server, the tags (they are its key's: a node
+	// without exactly tailnet_tags would open nothing after the handoff, so
+	// it is refused here; ADR-0059 amendment 11), of one node throughout.
+	// Before anything is recorded: a node the control plane named otherwise
+	// (its temporary name another node's: temp-1) is refused with no
+	// name-suffixed closure left behind. What the control plane changed a
+	// moment ago (the name an undone handoff has just given back, most of
+	// all; tags the operator has just given it) may reach the node after it
+	// is up: waited for, all of it within one nodeWait, and never taken for
+	// granted.
 	begun := time.Now()
-	st, named, err := node.AwaitStatus(ctx, nodeWait, func(st tailnet.Status) bool {
-		return st.BackendState == "Running" && st.SelfID != "" && st.Label() == c.hostname
+	stableID := ""
+	named := func(st tailnet.Status) bool { return st.BackendState == "Running" && st.Label() == c.hostname }
+	tagged := func(st tailnet.Status) bool { return t.ControlURL == "" || tailnet.SameTags(st.Tags, t.Tags) }
+	st, ready, err := node.AwaitStatus(ctx, nodeWait, func(st tailnet.Status) bool {
+		if stableID == "" {
+			stableID = st.SelfID
+		}
+		return named(st) && st.SelfID != "" && st.SelfID == stableID && st.Suffix != "" && tagged(st)
 	})
 	if err != nil {
 		return fail("the node's status: %v", err)
 	}
-	if rehold && !named {
+	unheld := "the node stays held"
+	if rehold {
+		unheld = "nothing was changed"
+	}
+	switch {
+	case ready:
+	case !named(st) && rehold:
 		return fail("the node is enrolled as %s and not held for a handoff: enroll holds again only a node named %s, which the control plane did not name it in %s; nothing was changed", st.DNSName, c.hostname, waited(begun))
+	case !named(st):
+		return fail("the node joined as %s, not %s, and the control plane did not name it so in %s: it gave it another name (one held by another node?). "+
+			"Delete the node in the tailnet's admin console, then enrol again", st.DNSName, c.hostname, waited(begun))
+	case !tagged(st):
+		return fail("%s They did not match in %s; then run enroll again (%s).", tailnet.TagsDetail(st.Tags, t.Tags), waited(begun), unheld)
+	default:
+		return fail("the node is %s with StableID %q (first %q) on the tailnet %q, after %s: it is not on its tailnet as one node yet; run enroll again (%s)",
+			st.BackendState, st.SelfID, stableID, st.Suffix, waited(begun), unheld)
 	}
 	if rehold {
 		if err := tailnet.SaveHold(cfg.DataDir, &tailnet.Hold{Hostname: c.hostname, Since: time.Now().UTC()}); err != nil {
 			return fail("writing the hold: %v", err)
 		}
 	}
-	if !named {
-		return fail("the node joined as %s, not %s, and the control plane did not name it so in %s: it gave it another name (one held by another node?). "+
-			"Delete the node in the tailnet's admin console, then enrol again", st.DNSName, c.hostname, waited(begun))
-	}
-	m, err := tailnet.NewManager(node, controlURL, cfg.DataDir, t.Port, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	// Pinned from that same status: another read could fail, or find
+	// another name, after the wait.
+	m, err := tailnet.NewManager(snapshot{DERPNode: node, st: st}, controlURL, cfg.DataDir, t.Port, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	if err != nil {
 		return fail("%v", err)
 	}
@@ -394,20 +437,12 @@ func runTailnetEnroll(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer) i
 	// configured one, which another node holds (no name-suffixed latch).
 	m.SetHeldName(c.hostname)
 	if t.ControlURL != "" {
-		// On a self-hosted control server the node's tags are its key's:
-		// a node without exactly tailnet_tags would open nothing after the
-		// handoff, so it is refused here (ADR-0059 amendment 11).
 		m.RequireTags(t.Tags)
 	}
 	m.Check(ctx)
-	// Tags the operator has just given it may reach the node after it is up.
-	for end := time.Now().Add(nodeWait); m.Closed() == tailnet.TagsDiffer && ctx.Err() == nil && time.Now().Before(end); {
-		time.Sleep(nodePoll)
-		m.Check(ctx)
-	}
-	if m.Closed() == tailnet.TagsDiffer {
-		detail, _ := m.Explain()
-		return fail("%s Then run enroll again (the node stays held).", detail)
+	switch why := m.Closed(); why {
+	case tailnet.NotEnrolled, tailnet.PinUnknown, tailnet.TagsDiffer:
+		return fail("the node's tailnet was not pinned (%s): run enroll again (the node stays held)", why)
 	}
 	suffix, open := m.Pinned()
 	res := enrollResult{Hostname: c.hostname, DNSName: st.DNSName, StableID: st.SelfID, Suffix: st.Suffix, TailnetID: st.TailnetID,

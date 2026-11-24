@@ -100,19 +100,32 @@ fixes.
   renamed, retagged or moved since could read back as it was: `varlatchd
   admin tailnet enroll` refused (or held) a node by a name of an earlier
   start, which failed a handoff resumed after an undo, and varlatchd judged
-  its pin, tags and name by that map until the new one came. The map is
-  never cached now, what an earlier version cached is removed at the next
-  start, and the tailnet listener opens only once the control plane has
-  answered. A restart while the control plane is unreachable keeps the
-  tailnet listener closed until it answers.
+  its pin, tags and name by that map until the new one came. A map on disk is
+  never read now, and the tailnet listener opens only once the control plane
+  has answered. The client may still write the node's own map (its name,
+  tags and addresses, no peers) while it runs, for which it has no switch;
+  varlatchd removes it when the node starts and when it stops. A restart
+  while the control plane is unreachable keeps the tailnet listener closed
+  until it answers.
+- **The tailnet listener opens when the control plane recovers, without a
+  restart.** A control plane that limited the node's registration (HTTP 429)
+  while varlatchd started left the tailnet listener closed until varlatchd
+  was restarted. It is waited for now, however long it takes, and the host
+  commands and the restore's probe wait too, within their own time. The log,
+  `varlatch doctor` and the listeners report's `warnings` say what the node
+  waits for: its control plane, or a login or an approval there. A node the
+  control plane refuses (an auth key it does not take) keeps the listener
+  closed as before, and they say so.
 - **The handoff's host commands wait for the control plane's change to reach
   the node**, for 30 seconds at most, and refuse as before, naming what the
-  node is and what it must be, when it does not: `admin tailnet enroll` for
-  the node's name (and, on a self-hosted control server, its tags), and
-  `admin tailnet certificate obtain` and `take-name` for the name a
-  certificate is asked for. Right after a rename, the node itself refuses a
-  certificate for a name that has not reached it, so the handoff's three
-  attempts could be spent at once.
+  node is and what it must be, when it does not. `admin tailnet enroll` takes
+  the node's name and, on a self-hosted control server, its tags from one
+  reading of the node, and pins that one: it could succeed with the name seen
+  first and the tags later, under another name. `admin tailnet certificate
+  obtain` and `take-name` wait for the name and for the control plane to list
+  exactly that name among the node's certificate domains: before it does, the
+  node itself refuses the certificate, so the handoff's three attempts could
+  be spent at once.
 
 ### Documentation
 

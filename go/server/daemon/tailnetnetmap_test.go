@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -46,9 +47,12 @@ type netmapWorld struct {
 // netmapTemp is the handoff's temporary name.
 const netmapTemp = "vault-vl-0123456789ab-n"
 
-func newNetmapWorld(t *testing.T) *netmapWorld {
+func newNetmapWorld(t *testing.T, tune ...func(*testcontrol.Server)) *netmapWorld {
 	t.Helper()
 	w := &netmapWorld{control: startTestControl(t), temp: netmapTemp}
+	for _, f := range tune {
+		f(w.control)
+	}
 	prev := nodeControlURL
 	nodeControlURL = w.control.BaseURL()
 	t.Cleanup(func() { nodeControlURL = prev })
@@ -117,6 +121,35 @@ func (w *netmapWorld) renameLate(t *testing.T, label string, d time.Duration) {
 }
 
 func (w *netmapWorld) stateDir() string { return filepath.Join(w.in.data, tailnet.StateDir) }
+
+// mapper has control answer every map poll with its own map as change leaves
+// it, again and again (n counts a poll's maps): what a node is told, in what
+// order.
+func mapper(change func(n int, res *tailcfg.MapResponse)) func(*testcontrol.Server) {
+	return func(control *testcontrol.Server) {
+		control.AltMapStream = func(ctx context.Context, w testcontrol.MapStreamWriter, req *tailcfg.MapRequest) {
+			if !req.Stream {
+				_ = w.SendMapMessage(&tailcfg.MapResponse{})
+				return
+			}
+			for n := 0; ; n++ {
+				res, err := control.MapResponse(req)
+				if err != nil || res == nil {
+					return
+				}
+				change(n, res)
+				if w.SendMapMessage(res) != nil {
+					return
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(150 * time.Millisecond):
+				}
+			}
+		}
+	}
+}
 
 // cacheMap starts and stops the node as a varlatchd before this one did,
 // tsnet's network map cache on, until the node's map is on disk.
@@ -263,29 +296,87 @@ func TestACertificateWaitsForTheNodesName(t *testing.T) {
 	}
 }
 
+// The map's name may come before the domains it lets the node obtain
+// certificates for, by which tsnet goes: no certificate is asked for until
+// exactly the name's is among them.
+func TestACertificateWaitsForItsDomain(t *testing.T) {
+	var mu sync.Mutex
+	domains := []string{netmapTemp + ".corp.ts.net"}
+	set := func(to ...string) {
+		mu.Lock()
+		defer mu.Unlock()
+		domains = to
+	}
+	w := newNetmapWorld(t, mapper(func(_ int, res *tailcfg.MapResponse) {
+		mu.Lock()
+		defer mu.Unlock()
+		res.DNSConfig.CertDomains = slices.Clone(domains)
+	}))
+	ca, err := tailnettest.NewCA()
+	if err != nil {
+		t.Fatal(err)
+	}
+	prev := obtainNodeCert
+	var asked [][]string
+	obtainNodeCert = func(ctx context.Context, n *tailnet.TSNode, dataDir, domain string) ([]byte, error) {
+		st, err := n.Status(ctx)
+		if err != nil {
+			return nil, err
+		}
+		asked = append(asked, st.CertDomains)
+		certPEM, keyPEM, err := ca.CertPair(ctx, domain, 0)
+		clear(keyPEM)
+		return certPEM, err
+	}
+	t.Cleanup(func() { obtainNodeCert = prev })
+	obtain := func() (int, string, string) {
+		return runAdmin(t, "tailnet", "certificate", "obtain", "--name", "vault", "--json", "--config", w.in.conf)
+	}
+	w.rename(t, "vault")
+	shortNodeWait(t, 2*time.Second)
+	// The name is there; its domain is not (others that hold or resemble it
+	// are not it), or there are none at all.
+	for _, c := range []struct {
+		domains []string
+		says    string
+	}{
+		{[]string{netmapTemp + ".corp.ts.net", "x.vault.corp.ts.net", "vault.corp.ts.net.example"}, `certificates for ` + netmapTemp + `\.corp\.ts\.net, x\.vault\.corp\.ts\.net, vault\.corp\.ts\.net\.example, not for vault\.corp\.ts\.net, for \d+s`},
+		{nil, `certificates for no name, not for vault\.corp\.ts\.net, for \d+s.*HTTPS certificates on`},
+	} {
+		set(c.domains...)
+		code, out, errOut := obtain()
+		if code != ExitFailure || len(asked) != 0 || !strings.Contains(out, `"refusal":"failed"`) || !regexp.MustCompile(c.says).MatchString(errOut) {
+			t.Fatalf("obtain with the domains %v: %d %q %q, asked with %v", c.domains, code, out, errOut, asked)
+		}
+	}
+	shortNodeWait(t, 20*time.Second)
+	set(netmapTemp + ".corp.ts.net")
+	late := time.AfterFunc(3*time.Second, func() { set("vault.corp.ts.net") })
+	defer late.Stop()
+	if code, out, errOut := obtain(); code != ExitOK || len(asked) != 1 || !slices.Equal(asked[0], []string{"vault.corp.ts.net"}) {
+		t.Fatalf("obtain with a domain that comes after the name: %d %q %q, asked with %v", code, out, errOut, asked)
+	}
+}
+
 // On a self-hosted control server the node's tags are checked at the
 // enrolment: tags the operator has just given it are waited for, and other
 // ones refused as before.
 func TestEnrollWaitsForTheNodesTags(t *testing.T) {
 	control := startTestControl(t)
-	prev := nodeControlURL
-	nodeControlURL = control.BaseURL()
-	t.Cleanup(func() { nodeControlURL = prev })
-	in := newInstall(t, "")
-	keyFile := filepath.Join(in.dir, "tailnet-auth-key")
-	if err := os.WriteFile(keyFile, []byte("hermetic\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	in.write(t, fmt.Sprintf("tailnet = on\ntailnet_hostname = vault\ntailnet_tags = tag:varlatch\ntailnet_port = 8687\ntailnet_auth_key_file = %s\ntailnet_control_url = https://192.0.2.10\n", keyFile))
-	if err := os.MkdirAll(in.data, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	enroll := func() (int, string, string) {
-		return runAdmin(t, "tailnet", "enroll", "--hostname", netmapTemp, "--json", "--config", in.conf)
-	}
+	in, enroll := selfHostedEnroll(t, control)
 	shortNodeWait(t, 2*time.Second)
-	if code, _, errOut := enroll(); code != ExitFailure || !strings.Contains(errOut, "run enroll again (the node stays held)") {
+	if code, _, errOut := enroll(); code != ExitFailure ||
+		!regexp.MustCompile(`The node's tags \(none\) are not tailnet_tags \(tag:varlatch\).*did not match in \d+s; then run enroll again \(the node stays held\)`).MatchString(errOut) {
 		t.Fatalf("enroll without its tags: %d %q", code, errOut)
+	}
+	// The command's own --timeout ends the wait, and the refusal says so.
+	shortNodeWait(t, 2*time.Minute)
+	begun := time.Now()
+	if code, _, errOut := enroll("--timeout", "4s"); code != ExitFailure || time.Since(begun) > 20*time.Second || !regexp.MustCompile(`did not match in [0-9]s;`).MatchString(errOut) {
+		t.Fatalf("enroll past its --timeout: %d in %v %q", code, time.Since(begun), errOut)
+	}
+	if pin, err := tailnet.LoadPin(filepath.Join(in.data, tailnet.PinFile)); err != nil || pin == nil || !pin.Enrolling {
+		t.Fatalf("a refused enrolment pinned its tailnet: %+v %v", pin, err)
 	}
 	shortNodeWait(t, 20*time.Second)
 	done := make(chan struct{})
@@ -301,5 +392,70 @@ func TestEnrollWaitsForTheNodesTags(t *testing.T) {
 	<-done
 	if code != ExitOK {
 		t.Fatalf("enroll with tags given while it looks: %d %q", code, errOut)
+	}
+}
+
+// selfHostedEnroll is an installation on a self-hosted control server, and
+// its enroll.
+func selfHostedEnroll(t *testing.T, control *testcontrol.Server) (install, func(...string) (int, string, string)) {
+	t.Helper()
+	prev := nodeControlURL
+	nodeControlURL = control.BaseURL()
+	t.Cleanup(func() { nodeControlURL = prev })
+	in := newInstall(t, "")
+	keyFile := filepath.Join(in.dir, "tailnet-auth-key")
+	if err := os.WriteFile(keyFile, []byte("hermetic\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	in.write(t, fmt.Sprintf("tailnet = on\ntailnet_hostname = vault\ntailnet_tags = tag:varlatch\ntailnet_port = 8687\ntailnet_auth_key_file = %s\ntailnet_control_url = https://192.0.2.10\n", keyFile))
+	if err := os.MkdirAll(in.data, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return in, func(more ...string) (int, string, string) {
+		return runAdmin(t, append([]string{"tailnet", "enroll", "--hostname", netmapTemp, "--json", "--config", in.conf}, more...)...)
+	}
+}
+
+// The name and the tags come together or not at all: a name seen with other
+// tags and then tags seen with another name, a node renamed while its tags
+// are waited for, and another node's StableID, are refused, with nothing
+// pinned.
+func TestEnrollTakesTheNameAndTheTagsTogether(t *testing.T) {
+	right, other := netmapTemp+".corp.ts.net.", "vault.corp.ts.net."
+	tagged := []string{"tag:varlatch"}
+	for _, c := range []struct {
+		what   string
+		change func(n int, res *tailcfg.MapResponse)
+		says   string
+	}{
+		{"never together", func(n int, res *tailcfg.MapResponse) {
+			if res.Node.Name, res.Node.Tags = right, nil; n%2 == 1 {
+				res.Node.Name, res.Node.Tags = other, tagged
+			}
+		}, `joined as vault\.corp\.ts\.net, not |did not match in \d+s`},
+		{"renamed while the tags are waited for", func(n int, res *tailcfg.MapResponse) {
+			if res.Node.Name, res.Node.Tags = right, nil; n > 8 {
+				res.Node.Name, res.Node.Tags = other, tagged
+			}
+		}, `joined as vault\.corp\.ts\.net, not ` + netmapTemp + `, and the control plane did not name it so in \d+s`},
+		{"another node", func(n int, res *tailcfg.MapResponse) {
+			if res.Node.Name, res.Node.Tags = right, nil; n > 8 {
+				res.Node.Tags, res.Node.StableID = tagged, "TESTCTRLffffffff"
+			}
+		}, `StableID "TESTCTRLffffffff" \(first "TESTCTRL`},
+	} {
+		t.Run(c.what, func(t *testing.T) {
+			control := startTestControl(t)
+			mapper(c.change)(control)
+			in, enroll := selfHostedEnroll(t, control)
+			shortNodeWait(t, 4*time.Second)
+			code, out, errOut := enroll()
+			if code != ExitFailure || !regexp.MustCompile(c.says).MatchString(errOut) {
+				t.Fatalf("enroll: %d %q %q", code, out, errOut)
+			}
+			if pin, err := tailnet.LoadPin(filepath.Join(in.data, tailnet.PinFile)); err != nil || pin == nil || !pin.Enrolling || pin.Closed != nil {
+				t.Fatalf("a refused enrolment pinned its tailnet: %+v %v", pin, err)
+			}
+		})
 	}
 }

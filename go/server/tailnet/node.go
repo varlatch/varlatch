@@ -3,6 +3,7 @@
 package tailnet
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"tailscale.com/client/local"
@@ -65,12 +67,22 @@ type Status struct {
 	Tags      []string
 	// Addresses are its tailnet addresses.
 	Addresses []string
+	// CertDomains are the names its control plane's map lets it obtain
+	// certificates for, as the map writes them: tsnet refuses every other.
+	CertDomains []string
+	// AuthNeeded: somebody must log it in or approve it at its control
+	// server before it can join.
+	AuthNeeded bool
 }
 
 // TSNode is varlatchd's node, in process: tsnet.
 type TSNode struct {
 	srv *tsnet.Server
 	lc  *local.Client
+	dir string
+	// closed is closed by Close.
+	closed    chan struct{}
+	closeOnce sync.Once
 }
 
 // TailscaleControlURL is Tailscale's coordination server: the node's,
@@ -113,11 +125,15 @@ func newServer(cfg NodeConfig) (*tsnet.Server, error) {
 }
 
 // netmapCacheEnv is tsnet's switch for its network map cache. With it on
-// (its default), tsnet writes the node's own map to its state directory
-// (at every change of its home DERP region, whatever the control plane
-// allows) and, at the next start, is Running on that map before it has
-// spoken to the control plane: a node renamed, retagged or moved since
-// reads back as it was, and trust would rest on it.
+// (its default), tsnet is, at its next start, Running on the map it last
+// wrote to its state directory, before it has spoken to the control plane:
+// a node renamed, retagged or moved since reads back as it was, and trust
+// would rest on it. Off, no map is read from there at a start, and none
+// with the node's peers is written. The node's own (its name, tags and
+// addresses, no peer) may still be, whatever the switch: tsnet writes it at
+// each change of the node's home DERP region and drops it at the next whole
+// map, and has no hook to prevent that. So what is there is never read, and
+// is removed when the node starts and when it closes (dropNetmapCache).
 const netmapCacheEnv = "TS_USE_CACHED_NETMAP"
 
 // prepareTsnet sets what every tsnet node in this process starts with:
@@ -132,10 +148,10 @@ func prepareTsnet() {
 	logtail.Disable()
 }
 
-// dropNetmapCache removes a network map an earlier start cached in the
-// node's state directory (a varlatchd before this one): it is never read
-// again, and nothing of it is left at rest. Only below dir, never through a
-// link out of it; what cannot be removed is not read either.
+// dropNetmapCache removes a network map tsnet wrote to the node's state
+// directory (this start's, one that was killed, or a varlatchd's before the
+// cache was off). Only below dir, never through a link out of it; what
+// cannot be removed is not read either.
 func dropNetmapCache(dir string) {
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -180,16 +196,7 @@ func StartNode(cfg NodeConfig) (*TSNode, error) {
 		_ = srv.Close()
 		return nil, err
 	}
-	return &TSNode{srv: srv, lc: lc}, nil
-}
-
-// Up waits until the node is on the tailnet: Running, on a network map the
-// control plane sent since the node started. That map may still lag the
-// control plane's own records (a rename just made through its API): where
-// the node must be as expected, AwaitStatus waits for it.
-func (n *TSNode) Up(ctx context.Context) error {
-	_, err := n.srv.Up(ctx)
-	return err
+	return &TSNode{srv: srv, lc: lc, dir: cfg.Dir, closed: make(chan struct{})}, nil
 }
 
 // Listen accepts tailnet connections on port, on the node's own
@@ -199,8 +206,13 @@ func (n *TSNode) Listen(port int) (net.Listener, error) {
 }
 
 // Close leaves the tailnet; the node is never logged out, so it keeps its
-// identity across restarts.
-func (n *TSNode) Close() error { return n.srv.Close() }
+// identity across restarts. No network map of it stays on disk.
+func (n *TSNode) Close() error {
+	n.closeOnce.Do(func() { close(n.closed) })
+	err := n.srv.Close()
+	dropNetmapCache(n.dir)
+	return err
+}
 
 // WhoIs is the local API's WhoIs, in process.
 func (n *TSNode) WhoIs(ctx context.Context, remote string) (Peer, error) {
@@ -260,7 +272,11 @@ func (n *TSNode) Status(ctx context.Context) (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
-	out := Status{BackendState: st.BackendState}
+	out := Status{BackendState: st.BackendState, CertDomains: slices.Clone(st.CertDomains)}
+	// Without a network map, NeedsLogin is also a first registration still
+	// under way (or a control server that does not answer it).
+	out.AuthNeeded = st.AuthURL != "" || st.BackendState == ipn.NeedsMachineAuth.String() ||
+		st.BackendState == ipn.NeedsLogin.String() && st.CurrentTailnet != nil
 	if st.Self != nil {
 		out.SelfID = string(st.Self.ID)
 		out.DNSName = strings.ToLower(strings.TrimSuffix(st.Self.DNSName, "."))
@@ -292,10 +308,12 @@ func (s Status) Label() string {
 const awaitEvery = 200 * time.Millisecond
 
 // AwaitStatus reads the node's status until it is as expected, for wait at
-// most, or until ctx ends. It answers the last status read, and whether it
+// most, or until ctx ends; each read has lookupTimeout, and none that ends
+// after the wait counts. It answers the last status read, and whether it
 // was as expected: what is expected is never relaxed, only waited for, so a
-// caller refuses when it was not. An error is a node whose status could not
-// be read at all.
+// caller refuses when it was not. Everything expected is found in that one
+// status, never pieced together from several. An error is a node whose
+// status could not be read at all.
 func (n *TSNode) AwaitStatus(ctx context.Context, wait time.Duration, expected func(Status) bool) (Status, bool, error) {
 	return awaitStatus(ctx, wait, n.Status, expected)
 }
@@ -308,22 +326,19 @@ func awaitStatus(ctx context.Context, wait time.Duration, read func(context.Cont
 	var last Status
 	var known bool
 	for {
-		// The read keeps ctx, so that the last one is not cut short by the
-		// wait's own end.
-		st, err := read(ctx)
+		rctx, rcancel := context.WithTimeout(wctx, lookupTimeout)
+		st, err := read(rctx)
+		rcancel()
 		if err == nil {
 			last, known = st, true
-			if expected(st) {
+			if wctx.Err() == nil && expected(st) {
 				return st, true, nil
 			}
 		}
 		select {
 		case <-wctx.Done():
 			if !known {
-				if err == nil {
-					err = wctx.Err()
-				}
-				return Status{}, false, err
+				return Status{}, false, fmt.Errorf("the node answered no status in %s: %w", wait, cmp.Or(err, wctx.Err()))
 			}
 			return last, false, nil
 		case <-tick.C:

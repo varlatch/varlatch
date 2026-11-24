@@ -2134,14 +2134,24 @@ serves the tailnet listener on the node's own addresses
   binding is off (a userspace node has no TUN device). The node joins in
   the background: the ordinary listener serves at once, the tailnet
   listener once the node runs.
-- **No cached network map.** tsnet caches the node's own map in its state
-  directory and, by default, is Running on it at the next start before it
-  has spoken to the control plane (`TS_USE_CACHED_NETMAP`). varlatchd turns
-  that off for every node it starts, whatever its environment says, and
-  removes a cache an earlier version left (`profile-data/*/netmap-cache`):
-  the node's name, tags and tailnet, and so the pin's and the tags' checks,
-  are what the control plane answers this start. While it does not answer,
-  the node is not up and the tailnet listener does not open.
+- **No network map read from disk.** tsnet writes the node's own map to its
+  state directory and, by default, is Running on it at the next start before
+  it has spoken to the control plane (`TS_USE_CACHED_NETMAP`). varlatchd
+  turns that off for every node it starts, whatever its environment says: no
+  map is read from disk. tsnet still writes the node's own (its name, tags
+  and addresses, no peers) at a change of its home DERP region, and has no
+  switch for that; `profile-data/*/netmap-cache` is removed when the node
+  starts and when it closes. The node's name, tags and tailnet, and so the
+  pin's and the tags' checks, are what the control plane answers this start.
+- **Until it joins.** While the control plane does not answer, or puts the
+  node off (a rate limit), the node is not up and the tailnet listener does
+  not open; varlatchd waits for it without end, and the listener opens when
+  the node joins, with no restart. The log, doctor and the report's
+  `warnings` say what it waits for (`waiting-for-control`, or `login-needed`
+  when it must be logged in or approved there). A control plane that refuses
+  the node (`join-refused`: an auth key it does not take) ends the wait: the
+  listener stays closed until varlatchd is restarted. The refusal's own words
+  are in the log only.
 - **Coordination server.** Tailscale's by default (`tailnet_control_url`
   unset, or Tailscale's own URL), and the node is always given its control
   URL explicitly (an empty one would let tsnet read `TS_CONTROL_URL`).
@@ -2306,11 +2316,13 @@ serves the tailnet listener on the node's own addresses
     reports the same node; an enrolled node no handoff holds is held again
     only while the control plane names it exactly the temporary name.
 
-    The node's name, and on a self-hosted control server its tags, are what
-    the control plane sends this start (never a cached network map), and
-    waited for up to 30 seconds, since a rename just made reaches the node
-    a moment after the control plane records it. What is expected is never
-    relaxed: past that it is refused, naming both.
+    The node's name and, on a self-hosted control server, its tags are what
+    the control plane sends this start (never a map read from disk), and
+    waited for, together, up to 30 seconds, since a rename just made reaches
+    the node a moment after the control plane records it. One reading of the
+    node must show all of it, with one StableID throughout, and that reading
+    is what is pinned and reported. What is expected is never relaxed: past
+    the wait it is refused, naming both.
   - **A varlatchd started under the hold** joins under the hold's
     temporary name, never announcing the configured one, which another
     node holds, and reads its name back as the hold's (open sets the
@@ -2326,9 +2338,9 @@ serves the tailnet listener on the node's own addresses
     [--json]` works on `<name>.<pinned suffix>`:
     - `obtain` is one attempt, through the running varlatchd's node or
       offline through the enrolled node, started for it, once the node's
-      own map names it that (up to 30 seconds: before, the node itself
-      refuses the name). A refusal for the
-      authority's rate limit is answered as `refusal: "rate-limited"`.
+      own map names it that and lists exactly that among its certificate
+      domains (up to 30 seconds: before, the node itself refuses the name).
+      A refusal for the authority's rate limit is answered as `refusal: "rate-limited"`.
     - `expiry` reads the node's cached certificate (`tailnet/certs/`,
       tsnet's ACME store) and never issues one.
   - `varlatchd admin tailnet reaches --name <name> --stable-id <id>

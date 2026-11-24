@@ -17,16 +17,18 @@ import (
 	"tailscale.com/types/logger"
 )
 
-// cachedMap starts and stops tsnet on the node's state directory as a
-// varlatchd before this one did, with tsnet's network map cache on, until
-// the node's map is cached there.
-func cachedMap(t *testing.T, control *testcontrol.Server, dir, hostname string) {
+// cachedMap starts and stops tsnet on the node's state directory until the
+// node's map is written there: with tsnet's network map cache on, as a
+// varlatchd before this one did, or off, as this one has it, where tsnet
+// still writes the map at a change of the node's home DERP region. It ends
+// as a killed process does: nothing removes it.
+func cachedMap(t *testing.T, control *testcontrol.Server, dir, hostname, cache string) {
 	t.Helper()
 	// Off again for whatever starts after it.
 	t.Cleanup(func() { envknob.Setenv(netmapCacheEnv, "false") })
 	prepareTsnet()
 	for range 40 {
-		envknob.Setenv(netmapCacheEnv, "true")
+		envknob.Setenv(netmapCacheEnv, cache)
 		srv := &tsnet.Server{Dir: dir, Hostname: hostname, ControlURL: control.BaseURL(), AdvertiseTags: []string{"tag:varlatch"}, Logf: logger.Discard, UserLogf: logger.Discard}
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		if _, err := srv.Up(ctx); err != nil {
@@ -93,8 +95,10 @@ func TestARestartedNodeNeverReadsACachedMap(t *testing.T) {
 	}
 	_ = n.Close()
 	name := "vault-1"
-	for _, to := range []string{"vault-2", "vault-3", "vault-4"} {
-		cachedMap(t, control, dir, name)
+	for i, to := range []string{"vault-2", "vault-3", "vault-4", "vault-5"} {
+		// One written with the cache on, and one with it off (at a home
+		// DERP change), in turn.
+		cachedMap(t, control, dir, name, []string{"true", "false"}[i%2])
 		rename(t, control, name, to)
 		n := start()
 		if hasCachedMap(dir) {
@@ -105,6 +109,9 @@ func TestARestartedNodeNeverReadsACachedMap(t *testing.T) {
 		}
 		st, err := n.Status(ctx)
 		_ = n.Close()
+		if hasCachedMap(dir) {
+			t.Error("a closed node left a map on disk")
+		}
 		if err != nil || st.Label() != to {
 			t.Fatalf("renamed %s to %s while it was stopped, the node reads %q: %v", name, to, st.DNSName, err)
 		}
@@ -128,7 +135,7 @@ func TestANodeIsNotUpWithoutItsControlPlane(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = n.Close()
-	cachedMap(t, control, dir, "varlatch")
+	cachedMap(t, control, dir, "varlatch", "false")
 	url := control.BaseURL()
 	control.HTTPTestServer.Close()
 	n, err = StartNode(NodeConfig{Dir: dir, Hostname: "varlatch", ControlURL: url, Tags: []string{"tag:varlatch"}})
@@ -224,6 +231,36 @@ func TestAwaitStatus(t *testing.T) {
 		if _, ok, _ := awaitStatus(ctx, 10*time.Millisecond, reads(&n, named(other)), want); ok {
 			t.Errorf("%s passed for vault", other)
 		}
+	}
+	// A read slower than the wait does not pass it, whatever it answers: one
+	// that ends when its context does, and one that does not.
+	for _, obeys := range []bool{true, false} {
+		begun = time.Now()
+		_, ok, _ := awaitStatus(ctx, 300*time.Millisecond, func(rctx context.Context) (Status, error) {
+			select {
+			case <-rctx.Done():
+				if obeys {
+					return Status{}, rctx.Err()
+				}
+			case <-time.After(5 * time.Second):
+				t.Error("a read had more than its wait")
+			}
+			return named("vault"), nil
+		}, want)
+		if ok || time.Since(begun) > 4*time.Second {
+			t.Errorf("a slow read (obeys its context: %v): %v in %v", obeys, ok, time.Since(begun))
+		}
+	}
+	// Nor does one hold up the wait: each read has its own time.
+	n, begun = 0, time.Now()
+	if st, ok, err := awaitStatus(ctx, 20*time.Second, func(rctx context.Context) (Status, error) {
+		if n++; n == 1 {
+			<-rctx.Done()
+			return Status{}, rctx.Err()
+		}
+		return named("vault"), nil
+	}, want); err != nil || !ok || st.Label() != "vault" || time.Since(begun) > 10*time.Second {
+		t.Errorf("a read that hangs once: %v %v in %v", ok, err, time.Since(begun))
 	}
 	// Never readable, and the caller's end.
 	n = 0

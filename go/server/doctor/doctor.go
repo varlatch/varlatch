@@ -129,7 +129,8 @@ type Live struct {
 	Tailnet       bool   `json:"tailnet"`
 	TailnetClosed string `json:"tailnetClosed,omitempty"`
 	// TailnetDetail says why the node's tags close access (TailnetClosed
-	// tags-differ: both sets named); TailnetWarnings what the last check
+	// tags-differ: both sets named), or why the node has not joined its
+	// tailnet; TailnetWarnings what the last check
 	// found that closes nothing (a self-hosted control server's DERP map
 	// listing Tailscale's DERP servers).
 	TailnetDetail   string   `json:"tailnetDetail,omitempty"`
@@ -667,6 +668,17 @@ func tailnetPin(live *Live) Check {
 		// pre-auth key gave it others than tailnet_tags.
 		c.Status, c.Detail = Fail, "tailnet access is closed: "+live.TailnetDetail
 		c.Remedy = "Give the node exactly tailnet_tags in Headscale (headscale nodes tag -i <node id> -t <tailnet_tags>), or enrol it again with a pre-auth key tagged with them; access reopens at the next check"
+	case live.TailnetClosed == closed.WaitingForControl, live.TailnetClosed == closed.LoginNeeded, live.TailnetClosed == closed.JoinRefused:
+		// Not on its tailnet since varlatchd started: nothing to re-pin.
+		c.Status, c.Detail = Fail, "tailnet access is closed: "+live.TailnetDetail
+		switch live.TailnetClosed {
+		case closed.WaitingForControl:
+			c.Remedy = "Check that this host reaches the tailnet's control server; nothing needs restarting here"
+		case closed.LoginNeeded:
+			c.Remedy = "Approve the node, or extend its key, in the tailnet's admin console; to enrol it anew, give a new auth key (tailnet_auth_key_file)"
+		default:
+			c.Remedy = "Read the control server's answer in varlatchd's log, put it right, then restart varlatchd"
+		}
 	case live.TailnetClosed != "":
 		c.Status, c.Detail = Fail, "tailnet access is closed: "+live.TailnetClosed
 		c.Remedy = "Run `sudo varlatch tailnet repin` on this host: it shows the pinned and the observed tailnet, and offers what can be re-pinned"

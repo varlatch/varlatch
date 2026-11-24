@@ -155,7 +155,10 @@ func probeJoin(ctx context.Context, c ProbeConfig, look func(context.Context, *l
 	}
 	jctx, cancel := context.WithTimeout(ctx, c.Timeout)
 	defer cancel()
-	if _, err := srv.Up(jctx); err != nil {
+	if err := srv.Start(); err != nil {
+		return err
+	}
+	if err := join(jctx, nil, upOf(srv), nil); err != nil {
 		return err
 	}
 	lc, err := srv.LocalClient()
