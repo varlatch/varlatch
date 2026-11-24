@@ -1264,8 +1264,8 @@ daemon's maintenance admission and its one backup at a time.
   with the audit export's port). In the copy unpacked from the archive it
   opens the database with this release, checks the installation and its
   canary and records `installation.restored` (archive, manifest hash,
-  installation): a failure up to here changed nothing, and a backup's own
-  check and `--check` make the same writes in a copy they throw away. It
+  installation): a failure up to here changed nothing, and `--check` and
+  `--verify-remote` make the same writes in a copy they throw away. It
   then opens a restore gate, copies that database beside the one that is
   there, removes the old WAL, renames it into place, leaves the restore hold
   and removes the gate. A restore that fails or is killed from the gate on

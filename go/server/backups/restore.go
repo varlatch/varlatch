@@ -325,8 +325,8 @@ func openRestoreGate(dir, archiveID string, now func() time.Time) (backup.Gate, 
 // KEK, and records installation.restored, every live audit export's stream
 // restarted at its restored cursor in the same job (recordRestore). It ends
 // with the database whole in its one file. A restore puts that file in
-// place; a check makes the same writes, to know that a restore can, and
-// throws the copy away.
+// place; a check asked for (restore --check, the remote copy's) makes the
+// same writes, to know that a restore can, and throws the copy away.
 func reconcile(ctx context.Context, opened *backup.Opened, rootKEK []byte, now time.Time) error {
 	path, m := opened.Path(backup.ComponentDatabase), opened.Manifest
 	store, err := storage.Open(ctx, storage.Options{Path: path, ReadConns: 1})

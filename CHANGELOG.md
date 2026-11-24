@@ -207,10 +207,10 @@ fixes.
   archive format"). `admin backup run` prints both sizes.
 - **An archive's check asks what a restore asks.** A backup's own check,
   `--verify-remote` and `admin backup restore --check` also read the archive's
-  settings and its database's installation, and make a restore's writes in a
-  copy they throw away: an archive whose settings could not be read passed
-  them and was then refused. A restore does all of it before it changes the
-  data directory.
+  settings and its database's installation; the last two also make a
+  restore's writes, in a copy they throw away. An archive whose settings
+  could not be read passed them and was then refused. A restore does all of
+  it before it changes the data directory.
 - **An offline backup does not take its time.** `admin backup run` with
   `varlatchd` stopped, `varlatch migrate --finish`'s final archive, the
   converter's, and the copy `varlatch migrate --rollback` is made from were

@@ -193,10 +193,15 @@ func TestRestoreContents(t *testing.T) {
 			if err := backup.Seal(archive, manifest, paths, bek, backup.SealOptions{}); err != nil {
 				t.Fatal(err)
 			}
-			v, err := s.verify(ctx, res.ArchiveID, archive, bek, t.TempDir(), nil)
+			v, err := s.verify(ctx, res.ArchiveID, archive, bek, t.TempDir(), nil, true)
 			whole := v.Integrity && v.Compatibility
 			if err != nil || whole != (tc.why == "") || !v.KeyMatch {
 				t.Errorf("its own check: %+v %v", v, err)
+			}
+			// A run's own check is the same but for a restore's writes.
+			v, err = s.verify(ctx, res.ArchiveID, archive, bek, t.TempDir(), nil, false)
+			if err != nil || v.Integrity != (tc.why == "" || tc.why == "refused by the test") || !v.Compatibility || !v.KeyMatch {
+				t.Errorf("a run's own check: %+v %v", v, err)
 			}
 			cfg := f.target(t)
 			refused := func(what string, err error) {
@@ -270,7 +275,7 @@ func TestRestoreUncompressed(t *testing.T) {
 	if err := backup.Seal(older, manifest, []string{o.Path(backup.ComponentDatabase), o.Path(backup.ComponentConfiguration)}, f.bekOf(t), backup.SealOptions{Uncompressed: true}); err != nil {
 		t.Fatal(err)
 	}
-	if v, err := s.verify(ctx, res.ArchiveID, older, f.bekOf(t), t.TempDir(), nil); err != nil || !v.Integrity || !v.Compatibility || !v.KeyMatch {
+	if v, err := s.verify(ctx, res.ArchiveID, older, f.bekOf(t), t.TempDir(), nil, true); err != nil || !v.Integrity || !v.Compatibility || !v.KeyMatch {
 		t.Errorf("its verification: %+v %v", v, err)
 	}
 	cfg := f.target(t)
