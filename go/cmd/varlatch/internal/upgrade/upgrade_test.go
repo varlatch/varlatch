@@ -409,6 +409,7 @@ func TestAKilledUpgradeIsFinishedOrUndone(t *testing.T) {
 		"data:swap:rename:varlatch.db", "swapped", "start:" + toVersion, "started", "checked", "done"}
 	for _, point := range points {
 		t.Run(point, func(t *testing.T) {
+			t.Parallel()
 			h := newHost(t)
 			inst := h.inspect(t)
 			j, err := h.upgrader(func(p string) bool { return p == point }).Run(context.Background(), inst, h.release(t, "to", safe))
@@ -452,6 +453,7 @@ func TestAKilledUpgradeIsFinishedOrUndone(t *testing.T) {
 func TestAKilledUndoIsUndoneAgain(t *testing.T) {
 	for _, point := range []string{"undo:stopped", "data:put-back:rename:varlatch.db", "undo:files-back", "install:" + fromVersion + ":varlatchd", "undo:binaries-back", "start:" + fromVersion, "undo:checked"} {
 		t.Run(point, func(t *testing.T) {
+			t.Parallel()
 			h := newHost(t)
 			inst := h.inspect(t)
 			u := h.upgrader(func(p string) bool { return p == point })
@@ -478,6 +480,7 @@ func TestAFullDiskIsUndone(t *testing.T) {
 		{"the database copy", filepath.Join("db"+makingDir, "varlatch.db")},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			h := newHost(t)
 			inst := h.inspect(t)
 			u := h.upgrader(nil)

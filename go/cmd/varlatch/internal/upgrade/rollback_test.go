@@ -400,6 +400,7 @@ func TestAKilledRollbackIsFinishedOrUndone(t *testing.T) {
 				name = "safe:" + point
 			}
 			t.Run(name, func(t *testing.T) {
+				t.Parallel()
 				h := upgraded(t, c.safe)
 				plan, err := h.upgrader(nil).PlanRollback(context.Background())
 				if err != nil {
@@ -448,6 +449,7 @@ func TestTheRollbackRuleNeedsTheDeclarationAndTheOpenCheck(t *testing.T) {
 		{"neither", "unsafe", unsafeDecl, false, false, "does not declare it rollback-safe for " + fromVersion + ", and " + fromVersion + " cannot open the database"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			h := upgradedWith(t, c.build, c.decl)
 			plan, err := h.upgrader(nil).PlanRollback(context.Background())
 			if err != nil || plan.Safe || plan.Declared != c.declared || plan.Opens != c.opens || plan.Lost == nil || !strings.Contains(plan.Rule, c.rule) {
