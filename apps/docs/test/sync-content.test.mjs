@@ -14,6 +14,12 @@ describe("toPage", () => {
     expect(toPage({ source: "CONTEXT.md", title: "Concepts" }, "# Varlatch\n\nBody.\n")).toContain('title: "Concepts"');
   });
 
+  it("keeps the dots of a page's address", () => {
+    const page = { source: "docs/operations/migrate-to-0.50.md", route: "operations/migrate-to-0.50" };
+    expect(toPage(page, "# Migrating\n\nBody.\n")).toContain('slug: "operations/migrate-to-0.50"');
+    expect(toPage({ ...page, route: "operations/backup" }, "# Backup\n\nBody.\n")).not.toContain("slug:");
+  });
+
   it("refuses a file that does not start with a title", () => {
     expect(() => toPage({ source: "docs/x.md" }, "Body.\n")).toThrow(/docs\/x\.md: the first line must be/);
   });

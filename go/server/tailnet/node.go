@@ -3,18 +3,24 @@
 package tailnet
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"net/netip"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
+	"time"
 
 	"tailscale.com/client/local"
 	"tailscale.com/envknob"
 	"tailscale.com/ipn"
+	"tailscale.com/ipn/ipnlocal"
 	"tailscale.com/logtail"
 	"tailscale.com/net/netns"
 	"tailscale.com/tsnet"
@@ -61,12 +67,25 @@ type Status struct {
 	Tags      []string
 	// Addresses are its tailnet addresses.
 	Addresses []string
+	// CertDomains are the names its control plane's map lets it obtain
+	// certificates for, as the map writes them: tsnet refuses every other.
+	CertDomains []string
+	// AuthNeeded: somebody must log it in or approve it at its control
+	// server before it can join.
+	AuthNeeded bool
+	// HaveNodeKey: a control server has registered it, now or ever: it has
+	// an identity, which its state directory holds.
+	HaveNodeKey bool
 }
 
 // TSNode is varlatchd's node, in process: tsnet.
 type TSNode struct {
 	srv *tsnet.Server
 	lc  *local.Client
+	dir string
+	// closed is closed by Close.
+	closed    chan struct{}
+	closeOnce sync.Once
 }
 
 // TailscaleControlURL is Tailscale's coordination server: the node's,
@@ -98,6 +117,12 @@ func newServer(cfg NodeConfig) (*tsnet.Server, error) {
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
+	// tsnet logs the control server's answers. It calls a Logf once for a
+	// whole message (nothing here is an io.Writer that could be handed a key
+	// in two pieces; its own log buffer takes nothing, logtail being
+	// disabled), so each message is looked at whole.
+	say := logf
+	logf = func(format string, args ...any) { say("%s", withoutKey(fmt.Sprintf(format, args...), cfg.AuthKey)) }
 	advertise := slices.Clone(cfg.Tags)
 	if cfg.KeyTags {
 		advertise = nil
@@ -108,11 +133,57 @@ func newServer(cfg NodeConfig) (*tsnet.Server, error) {
 	}, nil
 }
 
+// netmapCacheEnv is tsnet's switch for its network map cache. With it on
+// (its default), tsnet is, at its next start, Running on the map it last
+// wrote to its state directory, before it has spoken to the control plane:
+// a node renamed, retagged or moved since reads back as it was, and trust
+// would rest on it. Off, no map is read from there at a start, and none
+// with the node's peers is written. The node's own (its name, tags and
+// addresses, no peer) may still be, whatever the switch: tsnet writes it at
+// each change of the node's home DERP region and drops it at the next whole
+// map, and has no hook to prevent that. So what is there is never read, and
+// is removed when the node starts and when it closes (dropNetmapCache).
+const netmapCacheEnv = "TS_USE_CACHED_NETMAP"
+
+// prepareTsnet sets what every tsnet node in this process starts with:
+// network-namespace binding off (userspace tsnet has no TUN device, and the
+// binding makes every control connection hang on a host without a default
+// route), nothing to Tailscale's log service, and no cached network map:
+// what a node says of itself is the control plane's answer to this start.
+func prepareTsnet() {
+	netns.SetEnabled(false)
+	envknob.Setenv("TS_NO_LOGS_NO_SUPPORT", "true")
+	envknob.Setenv(netmapCacheEnv, "false")
+	logtail.Disable()
+}
+
+// dropNetmapCache removes a network map tsnet wrote to the node's state
+// directory (this start's, one that was killed, or a varlatchd's before the
+// cache was off). Only below dir, never through a link out of it; what
+// cannot be removed is not read either.
+func dropNetmapCache(dir string) {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return
+	}
+	defer root.Close()
+	profiles, err := fs.ReadDir(root.FS(), ipnlocal.ProfileDataDir)
+	if err != nil {
+		return
+	}
+	for _, p := range profiles {
+		if p.IsDir() {
+			_ = root.RemoveAll(filepath.Join(ipnlocal.ProfileDataDir, p.Name(), netmapCacheDir))
+		}
+	}
+}
+
+// netmapCacheDir is the cache's directory in a tsnet profile's data.
+const netmapCacheDir = "netmap-cache"
+
 // StartNode starts the node: tagged, never ephemeral, its control server
-// explicit, network-namespace binding off (userspace tsnet has no TUN
-// device, and the binding makes every control connection hang on a host
-// without a default route), and tsnet's log uploads off. It returns at
-// once; Up waits for the tailnet.
+// explicit, and tsnet as prepareTsnet sets it. It returns at once; Up waits
+// for the tailnet.
 func StartNode(cfg NodeConfig) (*TSNode, error) {
 	srv, err := newServer(cfg)
 	if err != nil {
@@ -124,25 +195,17 @@ func StartNode(cfg NodeConfig) (*TSNode, error) {
 	if err := os.Chmod(cfg.Dir, 0o700); err != nil {
 		return nil, err
 	}
-	netns.SetEnabled(false)
-	// Nothing about this node goes to Tailscale's log service.
-	envknob.Setenv("TS_NO_LOGS_NO_SUPPORT", "true")
-	logtail.Disable()
+	prepareTsnet()
+	dropNetmapCache(cfg.Dir)
 	if err := srv.Start(); err != nil {
-		return nil, fmt.Errorf("tailnet: starting the node: %w", err)
+		return nil, fmt.Errorf("tailnet: starting the node: %w", keyless(err, cfg.AuthKey))
 	}
 	lc, err := srv.LocalClient()
 	if err != nil {
 		_ = srv.Close()
 		return nil, err
 	}
-	return &TSNode{srv: srv, lc: lc}, nil
-}
-
-// Up waits until the node is on the tailnet.
-func (n *TSNode) Up(ctx context.Context) error {
-	_, err := n.srv.Up(ctx)
-	return err
+	return &TSNode{srv: srv, lc: lc, dir: cfg.Dir, closed: make(chan struct{})}, nil
 }
 
 // Listen accepts tailnet connections on port, on the node's own
@@ -152,8 +215,13 @@ func (n *TSNode) Listen(port int) (net.Listener, error) {
 }
 
 // Close leaves the tailnet; the node is never logged out, so it keeps its
-// identity across restarts.
-func (n *TSNode) Close() error { return n.srv.Close() }
+// identity across restarts. No network map of it stays on disk.
+func (n *TSNode) Close() error {
+	n.closeOnce.Do(func() { close(n.closed) })
+	err := n.srv.Close()
+	dropNetmapCache(n.dir)
+	return err
+}
 
 // WhoIs is the local API's WhoIs, in process.
 func (n *TSNode) WhoIs(ctx context.Context, remote string) (Peer, error) {
@@ -213,7 +281,11 @@ func (n *TSNode) Status(ctx context.Context) (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
-	out := Status{BackendState: st.BackendState}
+	out := Status{BackendState: st.BackendState, CertDomains: slices.Clone(st.CertDomains), HaveNodeKey: st.HaveNodeKey}
+	// Without a network map, NeedsLogin is also a first registration still
+	// under way (or a control server that does not answer it).
+	out.AuthNeeded = st.AuthURL != "" || st.BackendState == ipn.NeedsMachineAuth.String() ||
+		st.BackendState == ipn.NeedsLogin.String() && st.CurrentTailnet != nil
 	if st.Self != nil {
 		out.SelfID = string(st.Self.ID)
 		out.DNSName = strings.ToLower(strings.TrimSuffix(st.Self.DNSName, "."))
@@ -233,6 +305,54 @@ func (n *TSNode) Status(ctx context.Context) (Status, error) {
 		out.Suffix = strings.ToLower(strings.TrimSuffix(st.MagicDNSSuffix, "."))
 	}
 	return out, nil
+}
+
+// Label is the first label of the node's MagicDNS name.
+func (s Status) Label() string {
+	label, _, _ := strings.Cut(s.DNSName, ".")
+	return label
+}
+
+// awaitEvery is how often AwaitStatus reads the node.
+const awaitEvery = 200 * time.Millisecond
+
+// AwaitStatus reads the node's status until it is as expected, for wait at
+// most, or until ctx ends; each read has lookupTimeout, and none that ends
+// after the wait counts. It answers the last status read, and whether it
+// was as expected: what is expected is never relaxed, only waited for, so a
+// caller refuses when it was not. Everything expected is found in that one
+// status, never pieced together from several. An error is a node whose
+// status could not be read at all.
+func (n *TSNode) AwaitStatus(ctx context.Context, wait time.Duration, expected func(Status) bool) (Status, bool, error) {
+	return awaitStatus(ctx, wait, n.Status, expected)
+}
+
+func awaitStatus(ctx context.Context, wait time.Duration, read func(context.Context) (Status, error), expected func(Status) bool) (Status, bool, error) {
+	wctx, cancel := context.WithTimeout(ctx, wait)
+	defer cancel()
+	tick := time.NewTicker(awaitEvery)
+	defer tick.Stop()
+	var last Status
+	var known bool
+	for {
+		rctx, rcancel := context.WithTimeout(wctx, lookupTimeout)
+		st, err := read(rctx)
+		rcancel()
+		if err == nil {
+			last, known = st, true
+			if wctx.Err() == nil && expected(st) {
+				return st, true, nil
+			}
+		}
+		select {
+		case <-wctx.Done():
+			if !known {
+				return Status{}, false, fmt.Errorf("the node answered no status in %s: %w", wait, cmp.Or(err, wctx.Err()))
+			}
+			return last, false, nil
+		case <-tick.C:
+		}
+	}
 }
 
 // family is 4 or 6, for ordering IPv4 first.

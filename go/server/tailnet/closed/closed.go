@@ -31,3 +31,21 @@ const NameSuffixed = "name-suffixed"
 // control server does not carry exactly tailnet_tags (ADR-0059 amendment
 // 11): never latched, checked again at every check.
 const TagsDiffer = "tags-differ"
+
+// NotEnrolled is why access is closed for a node that has not been on its
+// tailnet yet: its pin is recorded the first time it is.
+const NotEnrolled = "not-enrolled"
+
+// Why a node that has not joined its tailnet since varlatchd started keeps
+// access closed (tailnet.Manager's SetJoin).
+const (
+	// WaitingForControl: the control server does not answer, or puts the
+	// node off; it joins, and the listener opens, when the server does.
+	WaitingForControl = "waiting-for-control"
+	// LoginNeeded: the node must be logged in or approved at its control
+	// server; it joins, and the listener opens, once it is.
+	LoginNeeded = "login-needed"
+	// JoinRefused: the control server refused the node; the listener stays
+	// closed until varlatchd starts again.
+	JoinRefused = "join-refused"
+)

@@ -80,7 +80,9 @@ func stagePattern() string {
 // target's directory, made executable, run once (it must report d's
 // version), then renamed over target. Nothing changes at target until the
 // rename. On Windows target is renamed aside first (a running file cannot
-// be replaced, only renamed); CleanUp removes it on the next run.
+// be replaced, only renamed); CleanUp removes it on the next run. A rename
+// there that another process's hold on a file stops is tried again for a
+// few seconds.
 func Install(ctx context.Context, d *Download, target string) error {
 	dir := filepath.Dir(target)
 	f, err := os.CreateTemp(dir, stagePattern())
@@ -110,7 +112,7 @@ func Install(ctx context.Context, d *Download, target string) error {
 	if err := reports(ctx, staged, d.Version); err != nil {
 		return err
 	}
-	if err := replace(staged, target); err != nil {
+	if err := replace(ctx, staged, target); err != nil {
 		return writeError(err, target, d.Version)
 	}
 	done = true
@@ -137,7 +139,7 @@ func reports(ctx context.Context, path, version string) error {
 // replace renames staged over target. Windows cannot replace a running
 // file, but can rename it: target goes aside first, and comes back if the
 // new file cannot take its place.
-func replace(staged, target string) error {
+func replace(ctx context.Context, staged, target string) error {
 	if runtime.GOOS != "windows" {
 		return os.Rename(staged, target)
 	}
@@ -146,15 +148,79 @@ func replace(staged, target string) error {
 		// An earlier aside still running: another name.
 		aside = target + ".old-" + filepath.Base(staged)
 	}
-	if err := os.Rename(target, aside); err != nil {
-		return err
-	}
-	if err := os.Rename(staged, target); err != nil {
-		_ = os.Rename(aside, target)
+	m := mover{rename: os.Rename, held: isHeld, sleep: sleep}
+	if err := m.swap(ctx, staged, target, aside); err != nil {
 		return err
 	}
 	_ = os.Remove(aside) // fails while it runs; CleanUp removes it later
 	return nil
+}
+
+// How long a rename is tried again while another process (a virus scanner
+// or an indexer reading the new file, say) holds one of the files: the
+// waits are firstWait, doubled up to longestWait, and maxWait in all.
+const (
+	firstWait   = 25 * time.Millisecond
+	longestWait = 500 * time.Millisecond
+	maxWait     = 5 * time.Second
+)
+
+// mover renames files that another process may hold for a moment.
+type mover struct {
+	rename func(from, to string) error
+	// held reports whether a rename failed for what another process may
+	// soon let go of.
+	held func(error) bool
+	// sleep waits, and reports whether to go on.
+	sleep func(context.Context, time.Duration) bool
+}
+
+// retry runs do again while it fails because a file is held and there is
+// waiting left.
+func (m mover) retry(ctx context.Context, left *time.Duration, do func() error) error {
+	for wait := firstWait; ; wait = min(2*wait, longestWait) {
+		err := do()
+		d := min(wait, *left)
+		if err == nil || d <= 0 || !m.held(err) || !m.sleep(ctx, d) {
+			return err
+		}
+		*left -= d
+	}
+}
+
+// swap puts staged in target's place, target at aside. A held file is
+// tried again from the start with target back in its place, so target is
+// there during those waits. Putting target back is tried again the same
+// way, with a maxWait of its own (one for all the times) and even when ctx
+// is done: only that leaves target as it was.
+func (m mover) swap(ctx context.Context, staged, target, aside string) error {
+	forward, back := maxWait, maxWait
+	return m.retry(ctx, &forward, func() error {
+		if err := m.rename(target, aside); err != nil {
+			return err
+		}
+		err := m.rename(staged, target)
+		if err == nil {
+			return nil
+		}
+		undo := m.retry(context.WithoutCancel(ctx), &back, func() error { return m.rename(aside, target) })
+		if undo != nil {
+			return fail("could not replace %s: %v; the binary that was there is at %s and could not be put back: %v. Rename it to %s", target, err, aside, undo, filepath.Base(target))
+		}
+		return err
+	})
+}
+
+// sleep waits d, or until ctx is done, which it reports as false.
+func sleep(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 // CleanUp removes what an update on Windows left beside the running

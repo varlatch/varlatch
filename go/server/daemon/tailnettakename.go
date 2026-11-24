@@ -244,9 +244,17 @@ func runTailnetTakeName(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer)
 		return fail("%v", err)
 	}
 	defer done()
-	st, err := node.Status(ctx)
+	// Who the node is, and on which tailnet: what the handoff is planned
+	// with, so a node that does not say both yet is waited for.
+	begun := time.Now()
+	st, known, err := node.AwaitStatus(ctx, nodeWait, func(st tailnet.Status) bool {
+		return st.BackendState == "Running" && st.SelfID != "" && st.Suffix != ""
+	})
 	if err != nil {
 		return fail("the node's status: %v", err)
+	}
+	if !known {
+		return fail("the node is %s, with StableID %q on the tailnet %q, after %s: it is not on its tailnet yet; nothing was done", st.BackendState, st.SelfID, st.Suffix, waited(begun))
 	}
 	if t.AuthKeyFile == "" {
 		return fail("no auth key (tailnet_auth_key_file): the reach check's probe joins with it (it must be reusable)")
@@ -811,7 +819,7 @@ func (r probeResolver) Reaches(ctx context.Context, name, nodeID string) (bool, 
 			wait = max(left, 0)
 		}
 	}
-	dir, err := os.MkdirTemp("", reachDirPrefix)
+	dir, err := makeReachDir(r.cfg)
 	if err != nil {
 		return false, err
 	}
@@ -832,7 +840,7 @@ func (c nodeCerts) Obtain(ctx context.Context, role tailhandoff.Role, name strin
 	if role != tailhandoff.Incoming {
 		return errors.New("a restore asks the dead node for no certificate")
 	}
-	_, err := obtainNodeCert(ctx, c.node, c.dataDir, name+"."+c.suffix)
+	_, err := obtainNamedCert(ctx, c.node, c.dataDir, name+"."+c.suffix)
 	if err != nil && strings.HasPrefix(certRefusal(err).Error(), "rate-limited: ") {
 		return fmt.Errorf("%w: %v", tailhandoff.ErrRateLimited, err)
 	}

@@ -53,7 +53,10 @@ stack, so a key set there as a variable would be in every container: give
 it as a file instead.
 
 The container runs with a read-only root filesystem (`docker run
---read-only`): it writes only to the data volume.
+--read-only`) and needs no tmpfs: it writes only to the data volume.
+SQLite's temporary files go there too (the image sets `SQLITE_TMPDIR`, and
+varlatchd falls back to the data directory by itself), and have no name in
+it.
 
 Give it 30 seconds to stop (`docker run --stop-timeout 30`, or
 `stop_grace_period: 30s` in a Compose file): at a stop `varlatchd` gives
@@ -69,7 +72,8 @@ node go/image/check-image.mjs <image>
 
 `<dir>` holds `varlatchd-<v>-linux-<arch>` and `varlatch-<v>-linux-<arch>`
 (`go/release/build-assets.sh` writes them). `--check` instead of `--load`
-builds every platform given and keeps nothing. The check uses Docker only;
+builds every platform given and keeps nothing. The check uses Docker and its
+compose plugin only;
 every container and volume it makes is named `vl-image-test-<run>-*` and
 removed by that name. `VARLATCH_TEST_SLOWDOWN` multiplies its waits (the
 release runs it on an emulated arm64 image when no arm64 runner is

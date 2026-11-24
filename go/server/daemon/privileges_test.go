@@ -19,6 +19,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/varlatch/varlatch/go/lib/backup"
 	"github.com/varlatch/varlatch/go/lib/envelope"
@@ -427,6 +428,46 @@ func TestAdminAsRootTakeName(t *testing.T) {
 	}
 	if out, status := h.admin("tailnet", "take-name", "--oauth-client-file", oauth); status != ExitFailure || !strings.Contains(out, "tighten it to 0600") {
 		t.Fatalf("an authority open to others: %d %s", status, out)
+	}
+}
+
+// A command that stays root (tailnet reaches) neither makes nor removes
+// anything in another user's data directory; that user's commands do.
+func TestAdminAsRootReachDirs(t *testing.T) {
+	h := newRootHost(t)
+	old := filepath.Join(h.data, reachDirPrefix+"old")
+	if err := os.Mkdir(old, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	past := time.Now().Add(-2 * reachSweepAfter)
+	if err := os.Chtimes(old, past, past); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", "")
+	if got := reachParents(h.cfg()); len(got) != 1 || got[0] != os.TempDir() {
+		t.Errorf("root sweeps %q", got)
+	}
+	// No place for a temporary directory, as on a read-only root file system.
+	nowhere := filepath.Join(h.dir, "nowhere")
+	reachTemp = func(string, string) (string, error) {
+		return "", &fs.PathError{Op: "mkdir", Path: nowhere, Err: syscall.EROFS}
+	}
+	defer func() { reachTemp = os.MkdirTemp }()
+	if dir, err := makeReachDir(h.cfg()); err == nil || dir != "" {
+		t.Errorf("root made %q", dir)
+	}
+	if entries, err := os.ReadDir(h.data); err != nil || len(entries) != 1 {
+		t.Errorf("%v, %v", entries, err)
+	}
+	// Root's own data directory has both.
+	if err := os.Chown(h.data, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	if got := reachParents(h.cfg()); len(got) != 2 || got[1] != h.data {
+		t.Errorf("%q", got)
+	}
+	if dir, err := makeReachDir(h.cfg()); err != nil || filepath.Dir(dir) != h.data {
+		t.Errorf("%q, %v", dir, err)
 	}
 }
 

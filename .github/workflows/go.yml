@@ -120,6 +120,7 @@ on:
       - "scripts/redact-output.mjs"
       - "scripts/redact-tokens.mjs"
       # IMAGE_PATTERNS: what the image's build copies in.
+      - "infra/coolify/varlatchd.compose.yml"
       - "LICENSE"
       - "THIRD-PARTY-NOTICES.md"
       - "LICENSES/**"
@@ -256,9 +257,11 @@ jobs:
           # daemon), the configuration they parse; and the key-environment
           # refusal varlatchd and the CLI share (lib/keyenv, with the key
           # parsers it uses) and the CLI's entrypoint, which applies it in
-          # the image. scripts/conformance/test/routing.test.mjs checks
-          # that these select every file the image's build and check read
-          # and the refusal's Go sources.
+          # the image; the storage engine (its temporary files, under a
+          # read-only root filesystem) and the Compose file the check runs.
+          # scripts/conformance/test/routing.test.mjs checks that these
+          # select every file the image's build and check read and the
+          # refusal's Go sources.
           IMAGE_PATTERNS: |
             go/image/*
             go/cmd/varlatchd/*
@@ -267,7 +270,9 @@ jobs:
             go/lib/keyenv/*
             go/lib/backup/*
             go/lib/envelope/*
+            go/lib/storage/*
             go/cmd/varlatch/main.go
+            infra/coolify/varlatchd.compose.yml
             LICENSE
             THIRD-PARTY-NOTICES.md
             LICENSES/*
@@ -767,8 +772,10 @@ jobs:
       # an empty host to a ready installation (the first administrator's
       # passkey enrolled by enrollpasskey, a test tool, the custody attested,
       # the first backup verified), a rerun changing nothing, setup stopped
-      # after each step and resumed, and no key in its output, its journal,
-      # the configuration, the unit's journal or a backup.
+      # after each step and resumed, setup on a pseudo-terminal (what it
+      # shows is enough to finish: setupterminal, a test tool), and no key
+      # in its output, its journal, the configuration, the unit's journal or
+      # a backup.
       # GitHub-hosted runners only: it changes the machine's systemd, users
       # and /etc, so it is skipped, never run, on a self-hosted varlatch-ci
       # VM (long-lived, its systemd ours), whatever runner this job lands on.
@@ -778,7 +785,8 @@ jobs:
           CGO_ENABLED: "0"
         run: |
           (cd go && go build -o "$RUNNER_TEMP/setup-bin/varlatch" ./cmd/varlatch && go build -o "$RUNNER_TEMP/setup-bin/varlatchd" ./cmd/varlatchd &&
-            go build -o "$RUNNER_TEMP/setup-bin/enrollpasskey" ./server/auth/authtest/enrollpasskey)
+            go build -o "$RUNNER_TEMP/setup-bin/enrollpasskey" ./server/auth/authtest/enrollpasskey &&
+            go build -o "$RUNNER_TEMP/setup-bin/setupterminal" ./install/setupterminal)
           eval "$(go/server/publictls/testdata/pebble.sh start "$RUNNER_TEMP/setup-pebble")"
           trap 'go/server/publictls/testdata/pebble.sh stop' EXIT
           sudo VARLATCH_TEST_DISPOSABLE_ROOT=1 VARLATCH_TEST_PEBBLE="$VARLATCH_TEST_PEBBLE" VARLATCH_TEST_PEBBLE_ROOT="$VARLATCH_TEST_PEBBLE_ROOT" \
