@@ -25,40 +25,48 @@ func unknownHostCommands(text string) (n int, problems []string) {
 		if words[0] == "--assisted" {
 			words = words[1:]
 		}
-		// The command's entries in the whole usage, which is this CLI's.
+		// The command's entries in the whole usage, which is this CLI's: each
+		// form with its options, without the explanation after it.
 		var entries []string
 		in := false
 		for _, l := range strings.Split(Usage, "\n") {
 			f := strings.Fields(strings.TrimPrefix(strings.TrimSpace(l), "sudo "))
-			if len(f) > 1 && f[0] == "varlatch" && strings.HasPrefix(l, "  ") && !strings.HasPrefix(l, "   ") {
-				in = f[1] == words[0]
-			}
-			if in {
-				entries = append(entries, l)
+			switch {
+			case len(f) > 1 && f[0] == "varlatch" && strings.HasPrefix(l, "  ") && !strings.HasPrefix(l, "   "):
+				if in = f[1] == words[0]; in {
+					entries = append(entries, strings.Join(f, " "))
+				}
+			case len(f) == 0 || strings.HasPrefix(f[0], "("):
+				in = false
+			case in:
+				entries[len(entries)-1] += " " + strings.Join(f, " ")
 			}
 		}
 		if len(entries) == 0 {
 			problems = append(problems, fmt.Sprintf("varlatch%s: no command %s", m[1], words[0]))
 			continue
 		}
-		// Its words together, as a form of an entry, and each option.
-		form := []string{"varlatch", words[0]}
+		// One entry with its words together and every option it names.
+		form, options := []string{"varlatch", words[0]}, []string{}
 		for _, w := range words[1:] {
 			if strings.HasPrefix(w, "-") {
-				if !regexp.MustCompile(`(?m)(^|[\s\[(|])` + regexp.QuoteMeta(w) + `([\s\]|)<=]|$)`).MatchString(strings.Join(entries, "\n")) {
-					problems = append(problems, fmt.Sprintf("varlatch%s: %s has no %s", m[1], words[0], w))
-				}
-				continue
+				options = append(options, w)
+			} else {
+				form = append(form, w)
 			}
-			form = append(form, w)
 		}
-		if !slices.ContainsFunc(entries, func(l string) bool {
-			f := strings.Fields(strings.TrimPrefix(strings.TrimSpace(l), "sudo "))
+		if !slices.ContainsFunc(entries, func(e string) bool {
+			f := strings.Fields(e)
 			if len(f) < len(form) {
 				return false
 			}
 			for i, w := range form {
 				if !slices.Contains(strings.Split(f[i], "|"), w) {
+					return false
+				}
+			}
+			for _, o := range options {
+				if !regexp.MustCompile(`(^|[\s\[(|])` + regexp.QuoteMeta(o) + `([\s\]|)<=]|$)`).MatchString(e) {
 					return false
 				}
 			}
@@ -86,7 +94,7 @@ func TestTheSkillsHostCommandsAreThisCLIs(t *testing.T) {
 		t.Error(p)
 	}
 	// Controls: each is reported.
-	for _, broken := range []string{"varlatch adopt\n", "sudo varlatch setup --dir /srv\n", "varlatch admin backup create\n", "docker exec <container> varlatch doctor --nosuch\n", "see `varlatch migrate --nosuch`"} {
+	for _, broken := range []string{"varlatch adopt\n", "sudo varlatch setup --dir /srv\n", "varlatch admin backup create\n", "docker exec <container> varlatch doctor --nosuch\n", "see `varlatch migrate --nosuch`", "varlatch admin backup status --json\n"} {
 		if n, problems := unknownHostCommands(broken); n != 1 || len(problems) == 0 {
 			t.Errorf("%q: %d commands, %v", broken, n, problems)
 		}

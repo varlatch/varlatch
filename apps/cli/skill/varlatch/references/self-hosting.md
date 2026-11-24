@@ -33,8 +33,10 @@ sudo varlatch upgrade --check
 sudo varlatch upgrade
 ```
 
-`upgrade` takes an encrypted snapshot before it changes anything, and keeps
-the new release only when its health checks pass.
+`upgrade` takes an encrypted snapshot before it stops the service or changes
+the database and the binaries, keeps the new release only when its health
+checks pass, and otherwise goes back. When it cannot go back it says what is
+left: give the human that message.
 
 ## Backups
 
@@ -44,8 +46,9 @@ sudo varlatch admin backup status
 sudo varlatch admin backup test-bucket
 ```
 
-Backups are encrypted and verified. Restoring is a human decision, and a
-restored installation stays closed to clients until the human resumes it.
+Backups are encrypted and verified. Restoring is a human decision: what
+changed since the archive is gone, and the human keeps clients away and
+checks the installation first.
 
 ## In a container
 
@@ -61,7 +64,14 @@ docker exec <container> varlatch --assisted doctor --json
 ## From a Compose installation
 
 `varlatch migrate` moves a Compose installation of the last TypeScript
-release to this one, with a dry run first (`--dry-run`) and a way back
-(`--rollback`). It is the human's to start, with the migration guide
+release to this one. Beside the installation's own options, it takes a dry
+run first, and has a way back:
+
+```text
+sudo varlatch migrate --dry-run
+sudo varlatch migrate --rollback
+```
+
+It is the human's to start, with the migration guide
 (https://docs.varlatch.com). Commands that take `--dir <compose-directory>`
 are the TypeScript CLI's, for such an installation.

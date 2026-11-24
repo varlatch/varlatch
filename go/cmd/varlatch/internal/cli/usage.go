@@ -73,13 +73,16 @@ func hostUsage(text string) string {
 			out = append(out, line)
 		}
 	}
+	// The TypeScript title has a dash the Go CLI's text does without.
+	out[0] = strings.Replace(out[0], "varlatch \u2014 ", "varlatch: ", 1)
 	return strings.Join(out, "\n")
 }
 
 // tailnetRepinEntry is `tailnet repin`'s entry.
 var tailnetRepinEntry = "  " + strings.TrimPrefix(repinUsage, "Usage: ") + `
-               (on the installation's host: re-pins the server to the tailnet node it joined as, after a tailnet
-                change it refused; asks before it changes anything without --yes)`
+               (on the installation's host: pins the server to the tailnet its node is on now, after a change it
+                refused: a renamed tailnet, or --adopt when the pin is missing. Without --yes it shows what it would
+                pin and, on a terminal and without --json, asks)`
 
 // TailnetHelp is `tailnet`'s help: the TypeScript text and repin's entry.
 func TailnetHelp() string {

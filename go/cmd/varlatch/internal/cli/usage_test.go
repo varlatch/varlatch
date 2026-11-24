@@ -134,11 +134,12 @@ func TestUsageIsAGoInstallations(t *testing.T) {
 		m := start.FindStringSubmatch(line)
 		return m != nil && slices.Contains([]string{"admin", "setup", "adopt", "move", "doctor", "self-update", "upgrade", "migrate"}, m[1])
 	}
-	// Without the host commands' entries both texts are the same.
+	// Without the host commands' entries, and the title's dash, both texts
+	// are the same.
 	rest := func(text string) string {
 		var out []string
 		dropping := false
-		for _, line := range strings.Split(strings.Replace(text, tailnetRepinEntry+"\n", "", 1), "\n") {
+		for _, line := range strings.Split(strings.Replace(strings.Replace(text, tailnetRepinEntry+"\n", "", 1), "varlatch \u2014 ", "varlatch: ", 1), "\n") {
 			if start.MatchString(line) {
 				dropping = host(line)
 			} else if !entryMore.MatchString(line) {
