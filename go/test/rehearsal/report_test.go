@@ -7,9 +7,11 @@ package rehearsal_test
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -141,8 +143,8 @@ func writeReport(t *testing.T) {
 		fmt.Fprintf(&md, "| %d | %s | %s | %s |\n", c.Item, c.Name, res, strings.ReplaceAll(c.Detail, "|", "\\|"))
 	}
 	fmt.Fprintf(&md, "\n## Measurements\n\n")
-	for k, v := range report.Measurements {
-		fmt.Fprintf(&md, "- %s: %s\n", k, v)
+	for _, k := range slices.Sorted(maps.Keys(report.Measurements)) {
+		fmt.Fprintf(&md, "- %s: %s\n", k, report.Measurements[k])
 	}
 	fmt.Fprintf(&md, "\n## Where the real TypeScript side differs from G5's stand-ins\n\n")
 	if len(report.Differences) == 0 {

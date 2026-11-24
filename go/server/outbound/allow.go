@@ -107,7 +107,7 @@ func parsePort(raw string, present bool, entry string) (Port, error) {
 	}
 	n, err := strconv.Atoi(raw)
 	if !portDigits.MatchString(raw) || err != nil || n < 1 || n > 65535 {
-		return Port{}, allowError("VARLATCH_OUTBOUND_ALLOW: %s has an invalid port", entry)
+		return Port{}, allowError("outbound_allow: %s has an invalid port", entry)
 	}
 	return Port{N: n}, nil
 }
@@ -120,7 +120,7 @@ func cidrEntry(text, address, prefixText string, hasPrefix bool, portText string
 		a, ok = parseIP(normalized)
 	}
 	if !ok {
-		return Entry{}, allowError("VARLATCH_OUTBOUND_ALLOW: %s is not a valid address or CIDR range", text)
+		return Entry{}, allowError("outbound_allow: %s is not a valid address or CIDR range", text)
 	}
 	// normalizeAddress turns ::ffff:a.b.c.d into a.b.c.d: an entry for a
 	// mapped address is an entry for the IPv4 address it carries.
@@ -131,7 +131,7 @@ func cidrEntry(text, address, prefixText string, hasPrefix bool, portText string
 		check = prefixText
 	}
 	if !prefixRe.MatchString(check) || prefix > bits(a.family) {
-		return Entry{}, allowError("VARLATCH_OUTBOUND_ALLOW: %s is not a valid CIDR range", text)
+		return Entry{}, allowError("outbound_allow: %s is not a valid CIDR range", text)
 	}
 	shift := uint(bits(a.family) - prefix)
 	base := new(big.Int).Lsh(new(big.Int).Rsh(a.value, shift), shift)
@@ -190,7 +190,7 @@ func parseEntry(text string) (Entry, error) {
 		name = lower[2:]
 	}
 	if n := len([]rune(name)); n < 1 || n > 253 || !hostName.MatchString(name) || digitsDots.MatchString(name) {
-		return Entry{}, allowError("VARLATCH_OUTBOUND_ALLOW: %s is not a host name, a *.suffix, an address or a CIDR range", text)
+		return Entry{}, allowError("outbound_allow: %s is not a host name, a *.suffix, an address or a CIDR range", text)
 	}
 	port, err := parsePort(portText, hasPort, text)
 	if err != nil {

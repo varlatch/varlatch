@@ -19,8 +19,8 @@ passwords. Start from where you are:
 
 ## Reference
 
-- [Install the CLI](reference/install-the-cli.md): checking the release
-  signature, Windows, and the Node.js versions the CLI needs.
+- [Install the CLI](reference/install-the-cli.md): Linux, macOS and Windows,
+  and checking the release signature.
 - [Members and access](reference/members.md): inviting people, what they
   can reach, and removing them.
 - [Passkeys and sessions](reference/passkeys-and-sessions.md): trusted

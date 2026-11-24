@@ -138,7 +138,7 @@ succeeds there means the lock was applied. Elsewhere, the Security page says
 "lock headers accepted, not verified for this provider" unless the key can
 read the retention back, which verifies it anywhere. A MinIO or other store
 on your LAN, a Docker network or a tailnet needs the host operator's
-outbound allow list (`VARLATCH_OUTBOUND_ALLOW`, see
+outbound allow list (`outbound_allow`, see
 [Outbound policy](outbound-policy.md)).
 
 ## Set it up
@@ -364,15 +364,15 @@ cleared at the 30-day deadline.
 
 ## For the host operator
 
-- **`VARLATCH_AUDIT_EXPORT=off`** turns audit export off on the whole
+- **`audit_export = off`** in `varlatchd.conf` turns audit export off on the whole
   installation: nothing is delivered, and no export can be set up or
   changed; organizations see that the host operator stopped it, and can
   still remove theirs. It is on by default. See
-  [Configuration](../self-hosting/configuration.md#varlatch_audit_export).
+  [Configuration](../self-hosting/configuration.md#audit_export).
   A deleted organization's export key is still cleared at its deadline, but
   its final events are not delivered.
 - **A destination on a private network** (a MinIO on the LAN, a tailnet)
-  needs an entry in `VARLATCH_OUTBOUND_ALLOW`.
+  needs an entry in `outbound_allow`.
 - **A pending object whose retention date is too close.** An object is
   planned with its retain-until date before it is written; if a long
   outage brings that date within one hour, the object is not written.

@@ -38,6 +38,9 @@ type Answers struct {
 	TailnetTags        string `json:"tailnetTags,omitempty"`
 	TailnetPort        string `json:"tailnetPort,omitempty"`
 	TailnetAuthKeyFile string `json:"tailnetAuthKeyFile,omitempty"`
+	// TailnetHTTPSPort is the tailnet browser endpoint's port (off unless
+	// given): the dashboard reads tailnet-protected values through it.
+	TailnetHTTPSPort string `json:"tailnetHttpsPort,omitempty"`
 	// TailscaleOAuthClientFile is a restore's authority over the tailnet
 	// (an OAuth client with the devices:core scope only, go-step7 O4): the
 	// restored node takes the dead one's name over, by rename, rather than
@@ -82,6 +85,7 @@ var Flags = []Flag{
 	{"tailnet-tags", func(a *Answers, v string) { a.TailnetTags = v }, func(a *Answers) string { return a.TailnetTags }},
 	{"tailnet-port", func(a *Answers, v string) { a.TailnetPort = v }, func(a *Answers) string { return a.TailnetPort }},
 	{"tailnet-auth-key-file", func(a *Answers, v string) { a.TailnetAuthKeyFile = v }, func(a *Answers) string { return a.TailnetAuthKeyFile }},
+	{"tailnet-https-port", func(a *Answers, v string) { a.TailnetHTTPSPort = v }, func(a *Answers) string { return a.TailnetHTTPSPort }},
 	{"tailscale-oauth-client-file", func(a *Answers, v string) { a.TailscaleOAuthClientFile = v }, func(a *Answers) string { return a.TailscaleOAuthClientFile }},
 	{"tailnet-control-url", func(a *Answers, v string) { a.TailnetControlURL = v }, func(a *Answers) string { return a.TailnetControlURL }},
 	{"headscale-api-key-file", func(a *Answers, v string) { a.HeadscaleAPIKeyFile = v }, func(a *Answers) string { return a.HeadscaleAPIKeyFile }},
@@ -117,7 +121,11 @@ const (
 	DefaultTailnetHostname = "varlatch"
 	DefaultTailnetTags     = "tag:varlatch"
 	DefaultTailnetPort     = "8687"
-	DefaultDestination     = "offsite"
+	// DefaultTailnetHTTPSPort is the browser endpoint's, when it is asked for.
+	DefaultTailnetHTTPSPort = "8688"
+	DefaultDestination      = "offsite"
+	// Off answers a question with no.
+	Off = "off"
 )
 
 // Merge fills what a is missing from b, and says which answers of b differ
@@ -138,16 +146,19 @@ func (a *Answers) Merge(b Answers) (differ []string) {
 
 // Missing is the first question without an answer that the answers so far
 // call for, "" when every one is answered.
-func (a *Answers) Missing() string {
+func (a *Answers) Missing() string { return a.missing(false) }
+
+// missing is Missing; answered is a journal whose answers are done: one of
+// a release that did not ask a tailnet installation for its address is
+// complete without it.
+func (a *Answers) missing(answered bool) string {
 	if a.Ingress == "" {
 		return "ingress"
 	}
-	switch a.Ingress {
-	case Public, Proxy:
-		if a.PublicURL == "" {
-			return "public-url"
-		}
-	case Tailnet:
+	if a.PublicURL == "" && (a.Ingress == Public || a.Ingress == Proxy || a.Ingress == Tailnet && !answered) {
+		return "public-url"
+	}
+	if a.Ingress == Tailnet {
 		if a.TailnetAuthKeyFile == "" {
 			return "tailnet-auth-key-file"
 		}
@@ -157,6 +168,15 @@ func (a *Answers) Missing() string {
 	}
 	if a.Backups == "bucket" && a.BackupDestinationsFile == "" {
 		return "backup-destinations-file"
+	}
+	return ""
+}
+
+// optional is the first question without an answer that has a default, and
+// is asked where there is someone to ask.
+func (a *Answers) optional() string {
+	if a.Ingress == Tailnet && a.TailnetControlURL == "" && a.TailnetHTTPSPort == "" {
+		return "tailnet-https-port"
 	}
 	return ""
 }
@@ -180,6 +200,11 @@ func (a *Answers) Defaults() {
 			a.ListenHTTPS = DefaultListenHTTPS
 		}
 	case Tailnet:
+		// The address people open is a proxy's on this host, as with
+		// ingress proxy.
+		if a.TrustedProxies == "" && strings.HasPrefix(a.PublicURL, "https://") {
+			a.TrustedProxies = DefaultTrustedProxies
+		}
 		if a.TailnetHostname == "" {
 			a.TailnetHostname = DefaultTailnetHostname
 		}
@@ -188,6 +213,9 @@ func (a *Answers) Defaults() {
 		}
 		if a.TailnetPort == "" {
 			a.TailnetPort = DefaultTailnetPort
+		}
+		if a.TailnetHTTPSPort == "" {
+			a.TailnetHTTPSPort = Off
 		}
 	}
 	if a.Backups == "bucket" && a.BackupDestination == "" {
@@ -237,6 +265,8 @@ func (a *Answers) Check() error {
 		switch {
 		case a.Ingress == Localhost && (u.Scheme != "http" || !loopback):
 			return bad("public-url", "with ingress localhost, must be http://localhost:<port>")
+		case a.Ingress == Tailnet && u.Scheme == "http" && loopback:
+			// Reached through a tunnel to the plain listener.
 		case a.Ingress != Localhost && u.Scheme != "https":
 			return bad("public-url", "must be https")
 		case a.Ingress == Public && (net.ParseIP(host) != nil || !dnsName.MatchString(host)):
@@ -256,15 +286,31 @@ func (a *Answers) Check() error {
 			return bad("listen-http-redirect", "must be host:port or off")
 		}
 	}
+	tailnetPort := 0 // compared as varlatchd does, by value
 	if a.Ingress == Tailnet {
 		if !hostName.MatchString(a.TailnetHostname) {
 			return bad("tailnet-hostname", "must be a host name (lower-case letters, digits and -)")
 		}
-		if n, err := strconv.Atoi(a.TailnetPort); err != nil || n < 1 || n > 65535 {
+		n, err := strconv.Atoi(a.TailnetPort)
+		if err != nil || n < 1 || n > 65535 {
 			return bad("tailnet-port", "must be a port from 1 to 65535")
 		}
+		tailnetPort = n
 		if !strings.HasPrefix(a.TailnetAuthKeyFile, "/") {
-			return bad("tailnet-auth-key-file", "must be an absolute path (the key is read by varlatchd, never by setup)")
+			return bad("tailnet-auth-key-file", "must be an absolute path")
+		}
+	}
+	if p := a.TailnetHTTPSPort; p != "" && p != Off {
+		n, err := strconv.Atoi(p)
+		switch {
+		case a.Ingress != Tailnet:
+			return bad("tailnet-https-port", "goes with ingress tailnet only")
+		case err != nil || n < 1 || n > 65535:
+			return bad("tailnet-https-port", "must be a port from 1 to 65535, or off")
+		case n == tailnetPort:
+			return bad("tailnet-https-port", "must differ from --tailnet-port ("+a.TailnetPort+")")
+		case a.TailnetControlURL != "":
+			return bad("tailnet-https-port", "serves a Tailscale certificate, which a self-hosted control server (--tailnet-control-url) does not issue")
 		}
 	}
 	if a.TailscaleOAuthClientFile != "" {

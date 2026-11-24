@@ -371,7 +371,7 @@ func ReadStatusFor(dir string, now time.Time, life Lifecycle) (Status, error) {
 	if remote != nil && !remote.Delivery.RemoteVerification.passed() {
 		warnings = append(warnings, fmt.Sprintf("Remote copy of %s failed retrieval and verification", remote.ArchiveID))
 	} else if delivered && !(remote != nil && now.Sub(at(remote.Delivery.RemoteVerification.CheckedAt)) < remoteVerificationMaxAge) {
-		warnings = append(warnings, "No remote copy has passed retrieval and verification within the last 30 days")
+		warnings = append(warnings, noRemoteCheck)
 	}
 	// The Root KEK versions every archive needs, TypeScript-format ones
 	// included: converting one still needs its key.
@@ -395,6 +395,36 @@ func ReadStatusFor(dir string, now time.Time, life Lifecycle) (Status, error) {
 		}
 	}
 	return Status{Archives: archives, TypeScriptArchives: typescript, Warnings: warnings}, nil
+}
+
+// noRemoteCheck is the warning of a delivered archive none of whose remote
+// copies passed a check within 30 days.
+const noRemoteCheck = "No remote copy has passed retrieval and verification within the last 30 days"
+
+// RemoteUnchecked is whether archives were delivered and no remote copy was
+// ever checked.
+func (s Status) RemoteUnchecked() bool {
+	delivered := false
+	for _, a := range s.Archives {
+		if a.Delivery != nil {
+			delivered = true
+			if a.Delivery.RemoteVerification != nil {
+				return false
+			}
+		}
+	}
+	return delivered
+}
+
+// WithoutRemoteCheck is s without the warning that no remote copy passed a
+// check, when none was ever made: the destination's key may be one that
+// only uploads, and then this host can make none and the warning would
+// never clear. Once a check was made here, the warning stays.
+func (s Status) WithoutRemoteCheck() Status {
+	if s.RemoteUnchecked() {
+		s.Warnings = slices.DeleteFunc(slices.Clone(s.Warnings), func(w string) bool { return w == noRemoteCheck })
+	}
+	return s
 }
 
 // Gate is the maintenance gate (maintenance.ts Gate): while one is open,

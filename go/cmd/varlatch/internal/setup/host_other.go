@@ -7,6 +7,7 @@ package setup
 import (
 	"context"
 	"errors"
+	"os"
 
 	"github.com/varlatch/varlatch/go/lib/diskprobe"
 )
@@ -27,6 +28,7 @@ func (SystemHost) LoginShell(string) (string, error)                { return "",
 func (SystemHost) SupplementaryGroups(string) ([]string, error)     { return nil, errNotLinux }
 func (SystemHost) SysUIDMax() int                                   { return 999 }
 func (SystemHost) Chown(string, int, int) error                     { return errNotLinux }
+func (SystemHost) ChownFile(*os.File, int, int) error               { return errNotLinux }
 func (SystemHost) Owner(string) (int, int, error)                   { return 0, 0, errNotLinux }
 func (SystemHost) Systemctl(...string) (string, error)              { return "", errNotLinux }
 func (SystemHost) SystemctlStdout(...string) (string, error)        { return "", errNotLinux }

@@ -17,7 +17,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/varlatch/varlatch/go/lib/backup"
+	"github.com/varlatch/varlatch/go/lib/buildinfo"
 	"github.com/varlatch/varlatch/go/lib/diskprobe"
+	"github.com/varlatch/varlatch/go/lib/release"
 	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/custody"
@@ -108,7 +110,8 @@ func checkOf(t *testing.T, r Report, id string) Check {
 }
 
 // TestHealthyInstallation: every check of a healthy installation passes,
-// except the release check, unknown until step 6.6; doctor does not fail.
+// except the release check, unknown while none is recorded; doctor does not
+// fail.
 func TestHealthyInstallation(t *testing.T) {
 	f := newFixture(t, "")
 	r := f.run(t)
@@ -123,6 +126,35 @@ func TestHealthyInstallation(t *testing.T) {
 	}
 	if r.Failed() || r.Via != "daemon" || r.Facts.PublicURL == nil || *r.Facts.PublicURL != "https://vault.example.com" || r.Facts.InstallationID == nil {
 		t.Errorf("report %+v", r)
+	}
+}
+
+// The remote copy's check: a host that never made one (its key may only
+// upload) says so and passes, as no check there could clear a warning; once
+// one was made, an old or failed one is a problem.
+func TestRemoteCopyUnchecked(t *testing.T) {
+	f := newFixture(t, "")
+	hour := f.now.Add(-time.Hour).UTC().Format("2006-01-02T15:04:05.000Z")
+	record := func(remote *backup.Verification) {
+		t.Helper()
+		if err := backup.SaveStatus(f.cfg.DataDir, backup.StatusRecord{ArchiveID: "0f0e0d0c-0b0a-4908-8706-050403020100", InstallationID: "inst_test", CreatedAt: hour, Release: "0.50.0", RequiredKeyVersions: []int{1},
+			Verification: &backup.Verification{Integrity: true, Compatibility: true, KeyMatch: true, TargetRelease: "0.50.0", CheckedAt: hour},
+			Delivery:     &backup.Delivery{Destination: "offsite", UploadedAt: hour, RemoteVerification: remote}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	record(nil)
+	if c := checkOf(t, f.run(t), "backups.status"); c.Status != Pass || !strings.Contains(c.Detail, "no remote copy was ever checked from this host") || strings.Contains(c.Detail, "30 days") {
+		t.Errorf("never checked: %+v", c)
+	}
+	old := f.now.Add(-31 * 24 * time.Hour).UTC().Format("2006-01-02T15:04:05.000Z")
+	record(&backup.Verification{Integrity: true, Compatibility: true, KeyMatch: true, TargetRelease: "0.50.0", CheckedAt: old})
+	if c := checkOf(t, f.run(t), "backups.status"); c.Status != Fail || !strings.Contains(c.Detail, "No remote copy has passed") {
+		t.Errorf("checked long ago: %+v", c)
+	}
+	record(&backup.Verification{TargetRelease: "0.50.0", CheckedAt: hour})
+	if c := checkOf(t, f.run(t), "backups.status"); c.Status != Fail || !strings.Contains(c.Detail, "failed retrieval and verification") {
+		t.Errorf("failed: %+v", c)
 	}
 }
 
@@ -160,6 +192,72 @@ func TestRestoreHold(t *testing.T) {
 	}
 	if c, ok := find(f.run(t)); !ok || !strings.Contains(c.Detail, "cannot be read") {
 		t.Errorf("unreadable: %+v", c)
+	}
+}
+
+// The release check, from what `varlatch upgrade --check` recorded: a newer
+// release fails it (advisory) however old the check, "none newer" passes
+// while the check is recent, and anything else is unknown, with how to check.
+func TestLatestRelease(t *testing.T) {
+	record := func(f *fixture, o release.CheckOutcome, at time.Time) {
+		t.Helper()
+		if _, err := release.RecordReleaseCheck(f.cfg.DataDir, o, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	found := func(v string) release.CheckOutcome {
+		return release.CheckOutcome{Repo: release.Repository, Latest: &release.Latest{Version: v}, ReleaseSet: true}
+	}
+	day := 24 * time.Hour
+	for _, c := range []struct {
+		name           string
+		record         func(f *fixture)
+		status         string
+		detail, remedy string
+	}{
+		{"none", func(*fixture) {}, Unknown, "no release check is recorded", "upgrade --check"},
+		{"newer, long ago", func(f *fixture) { record(f, found("99.0.0"), f.now.Add(-100*day)) }, Fail, "99.0.0 is available, " + buildinfo.Version + " is running", "sudo varlatch upgrade"},
+		{"the same, recent", func(f *fixture) { record(f, found(buildinfo.Version), f.now.Add(-day)) }, Pass, "no release newer than " + buildinfo.Version, ""},
+		{"the same, long ago", func(f *fixture) { record(f, found(buildinfo.Version), f.now.Add(-15*day)) }, Unknown, "older than 14 days", "upgrade --check"},
+		{"a failure only", func(f *fixture) {
+			record(f, release.CheckOutcome{Repo: release.Repository, Failed: "unreachable"}, f.now.Add(-day))
+		}, Unknown, "no successful release check is recorded; the last check failed (unreachable)", "upgrade --check"},
+		{"unreadable", func(f *fixture) {
+			if err := os.WriteFile(filepath.Join(f.cfg.DataDir, release.ReleaseCheckFile), []byte("{"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}, Unknown, "unreadable", "upgrade --check"},
+	} {
+		f := newFixture(t, "")
+		c.record(f)
+		r := f.run(t)
+		got := checkOf(t, r, "release.latest")
+		if got.Status != c.status || got.Class != Advisory || !strings.Contains(got.Detail, c.detail) || !strings.Contains(got.Remedy, c.remedy) || (c.remedy == "") != (got.Remedy == "") {
+			t.Errorf("%s: %+v", c.name, got)
+		}
+		if r.Failed() {
+			t.Errorf("%s: doctor failed", c.name)
+		}
+	}
+	// A prerelease, seen from a release, needs --prerelease; from a
+	// prerelease it does not.
+	running := buildinfo.Version
+	defer func() { buildinfo.Version = running }()
+	for version, want := range map[string]bool{"0.50.0": true, "0.50.0-rc.3": false} {
+		buildinfo.Version = version
+		f := newFixture(t, "")
+		record(f, found("99.0.0-rc.1"), f.now)
+		if got := checkOf(t, f.run(t), "release.latest"); got.Status != Fail || strings.HasSuffix(got.Remedy, "sudo varlatch upgrade --prerelease") != want {
+			t.Errorf("a prerelease from %s: %+v", version, got)
+		}
+	}
+	buildinfo.Version = running
+	// In the image, an upgrade is a deployment.
+	t.Setenv("VARLATCH_IMAGE", "varlatchd")
+	f := newFixture(t, "")
+	record(f, found("99.0.0"), f.now)
+	if got := checkOf(t, f.run(t), "release.latest"); strings.Contains(got.Remedy, "sudo") || !strings.Contains(got.Remedy, "image") {
+		t.Errorf("in the image: %+v", got)
 	}
 }
 

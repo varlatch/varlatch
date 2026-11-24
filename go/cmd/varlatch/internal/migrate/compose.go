@@ -217,47 +217,66 @@ func lastLine(b []byte) []byte {
 	return b
 }
 
-// outboundEnv is the source's outbound allow list's variable.
-const outboundEnv = "VARLATCH_OUTBOUND_ALLOW"
+// outboundEnv is the source's outbound allow list's variable, extraCAEnv the
+// one that names a file of certificate authorities Node.js trusts beside its
+// own.
+const (
+	outboundEnv = "VARLATCH_OUTBOUND_ALLOW"
+	extraCAEnv  = "NODE_EXTRA_CA_CERTS"
+)
 
-// outboundAllow is the source's outbound allow list, the value Compose
-// gave varlatchd (from .env, the shell or an overlay, its own way with
-// quotes and comments): the running container's environment (docker
-// inspect), else, the service not running, `docker compose config` with
-// interpolation (fromConfig). Only this variable is read of either: no
-// other value is kept, and no error carries their output.
-func (c *Compose) outboundAllow(ctx context.Context) (value string, fromConfig bool, err error) {
+// sourceEnv is what is read of the source varlatchd's environment.
+type sourceEnv struct {
+	outboundAllow, extraCA string
+	// fromConfig: it was not running, so they are docker compose config's.
+	fromConfig bool
+}
+
+// sourceEnv is the source's outbound allow list and its extra certificate
+// authorities' file, the values Compose gave varlatchd (from .env, the shell
+// or an overlay, its own way with quotes and comments): the running
+// container's environment (docker inspect), else, the service not running,
+// `docker compose config` with interpolation (fromConfig). Only these two
+// variables are read of either: no other value is kept, and no error carries
+// their output. The file itself is not read.
+func (c *Compose) sourceEnv(ctx context.Context) (sourceEnv, error) {
+	var got sourceEnv
 	r, err := c.docker(ctx, []string{"compose", "ps", "-q", service}, nil)
 	if err != nil {
-		return "", false, err
+		return got, err
 	}
 	ids := strings.Fields(string(r.Answer))
 	switch {
 	case r.Code != 0:
 		// Not "not running": Docker did not say.
-		return "", false, fmt.Errorf("docker compose ps -q %s failed (exit %d), so migrate cannot tell whether the source's %s runs: its %s cannot be read", service, r.Code, service, outboundEnv)
+		return got, fmt.Errorf("docker compose ps -q %s failed (exit %d), so migrate cannot tell whether the source's %s runs: its %s cannot be read", service, r.Code, service, outboundEnv)
 	case len(ids) > 1:
-		return "", false, fmt.Errorf("docker compose ps -q %s names %d running containers (%s): a migration takes an installation with one %s; its %s cannot be read", service, len(ids), strings.Join(ids, ", "), service, outboundEnv)
+		return got, fmt.Errorf("docker compose ps -q %s names %d running containers (%s): a migration takes an installation with one %s; its %s cannot be read", service, len(ids), strings.Join(ids, ", "), service, outboundEnv)
 	}
 	if len(ids) == 1 {
 		r, err := c.docker(ctx, []string{"inspect", "--format", "{{json .Config.Env}}", ids[0]}, nil)
 		if err != nil {
-			return "", false, err
+			return got, err
 		}
 		var env []string
 		if r.Code != 0 || json.Unmarshal(bytes.TrimSpace(r.Answer), &env) != nil {
-			return "", false, fmt.Errorf("docker inspect did not give the %s container's environment: its %s cannot be read", service, outboundEnv)
+			return got, fmt.Errorf("docker inspect did not give the %s container's environment: its %s cannot be read", service, outboundEnv)
 		}
 		for _, kv := range env {
-			if name, v, ok := strings.Cut(kv, "="); ok && name == outboundEnv {
-				value = v // the last of a name holds, as in the process
+			// The last of a name holds, as in the process.
+			switch name, v, ok := strings.Cut(kv, "="); {
+			case ok && name == outboundEnv:
+				got.outboundAllow = strings.TrimSpace(v)
+			case ok && name == extraCAEnv:
+				got.extraCA = strings.TrimSpace(v)
 			}
 		}
-		return strings.TrimSpace(value), false, nil
+		return got, nil
 	}
+	got.fromConfig = true
 	r, err = c.docker(ctx, []string{"compose", "config", "--format", "json"}, nil)
 	if err != nil {
-		return "", true, err
+		return got, err
 	}
 	if r.Code != 0 {
 		// Its output is not said: with the variables resolved, it can
@@ -267,16 +286,20 @@ func (c *Compose) outboundAllow(ctx context.Context) (value string, fromConfig b
 			(strings.Contains(said, "not set") || strings.Contains(said, "missing a value") || strings.Contains(said, "required")) {
 			hint = "a variable the Compose files need is unset (" + c.byHand("config") + " in " + c.Directory + " names it)"
 		}
-		return "", true, fmt.Errorf("docker compose config failed (exit %d; %s), with the source's %s not running: its %s cannot be read", r.Code, hint, service, outboundEnv)
+		return got, fmt.Errorf("docker compose config failed (exit %d; %s), with the source's %s not running: its %s cannot be read", r.Code, hint, service, outboundEnv)
 	}
 	var m composeConfig
 	if json.Unmarshal(bytes.TrimSpace(r.Answer), &m) != nil {
-		return "", true, fmt.Errorf("docker compose config did not give the %s service's environment: its %s cannot be read", service, outboundEnv)
+		return got, fmt.Errorf("docker compose config did not give the %s service's environment: its %s cannot be read", service, outboundEnv)
 	}
-	if v := m.Services[service].Environment[outboundEnv]; v != nil {
-		value = *v
+	env := m.Services[service].Environment
+	if v := env[outboundEnv]; v != nil {
+		got.outboundAllow = strings.TrimSpace(*v)
 	}
-	return strings.TrimSpace(value), true, nil
+	if v := env[extraCAEnv]; v != nil {
+		got.extraCA = strings.TrimSpace(*v)
+	}
+	return got, nil
 }
 
 // kekPath is the source's Root KEK file on this host: KEKFile, else .env's
@@ -304,16 +327,19 @@ func (c *Compose) kekPath() (string, error) {
 // public URL (VARLATCH_PUBLIC_URL), the Caddy overlay among the project's
 // files (public ingress), the dashboard's published address
 // (BIND_ADDRESS:VARLATCH_WEB_PORT, 127.0.0.1:8787 by default); and the
-// outbound allow list as varlatchd has it (outboundAllow).
+// outbound allow list and the extra certificate authorities' file as
+// varlatchd has them (sourceEnv).
 func (c *Compose) Ingress(ctx context.Context) (IngressInfo, error) {
 	env, err := c.envFile()
 	if err != nil {
 		return IngressInfo{}, err
 	}
 	info := IngressInfo{PublicURL: env["VARLATCH_PUBLIC_URL"]}
-	if info.OutboundAllow, info.OutboundAllowFromConfig, err = c.outboundAllow(ctx); err != nil {
+	own, err := c.sourceEnv(ctx)
+	if err != nil {
 		return IngressInfo{}, err
 	}
+	info.OutboundAllow, info.OutboundAllowFromConfig, info.ExtraCACerts = own.outboundAllow, own.fromConfig, own.extraCA
 	p, err := c.project(ctx)
 	if err != nil {
 		return IngressInfo{}, err

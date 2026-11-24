@@ -44,12 +44,12 @@ are exempt.
 ```sh
 pnpm install && pnpm build
 pnpm test
-pnpm dev:up       # the whole stack from this checkout, with synthetic data
+cd go && go vet ./... && go test ./...
 ```
 
-`pnpm dev:up` needs Docker. It prints a one-time link that adds a passkey for
-the seeded admin, and the settings the CLI needs. The
-[Develop Varlatch section of the README](README.md#develop-varlatch) has the details.
+The [Develop Varlatch section of the README](README.md#develop-varlatch) has
+the details, and how to run `varlatchd` from the checkout. `pnpm dev:up` (Docker
+needed) runs the stack of 0.23.0.
 
 Maintainers open pull requests as drafts while the work is in progress: CI
 does not run on drafts. When it is done, push, then mark it ready with `pnpm ready`. That

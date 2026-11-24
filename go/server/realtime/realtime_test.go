@@ -321,6 +321,134 @@ func TestMembershipCheckedAtDispatch(t *testing.T) {
 	}
 }
 
+// signIn gives a session a sign-in's evidence, from a passkey of the
+// person's with the given trust.
+func (w *world) signIn(session, person, trust string, verified bool) {
+	w.t.Helper()
+	key := "pk_" + session
+	exec(w.t, w.store, `INSERT INTO passkeys (id, public_key, user_id, credential_id, counter, device_type, backed_up) VALUES (?, 'k', ?, ?, 0, 'singleDevice', 0)`, key, "usr_"+person, "c_"+key)
+	if trust == "trusted" {
+		exec(w.t, w.store, `INSERT INTO passkey_provenance (passkey_id, trust, trusted_via, trusted_at, setup_grant_kind) VALUES (?, 'trusted', 'setup-grant', 1, 'bootstrap')`, key)
+	}
+	exec(w.t, w.store, `INSERT INTO auth_session_evidence (session_id, ceremony, user_verified, passkey_id) VALUES (?, 'sign-in', ?, ?)`, session, verified, key)
+}
+
+// An Organization frozen for an incident signals nobody: its members'
+// streams close when the freeze begins, what was queued with them, and a
+// stream opened during it carries the person's other Organizations only.
+// Its first signal after the lift is the lift's.
+func TestAFrozenOrganizationSignalsNobody(t *testing.T) {
+	w := newWorld(t, Options{})
+	alice := w.subscribe("alice", w.session("alice"))
+	bob := w.subscribe("bob", w.session("bob"))
+	carol := w.subscribe("carol", w.session("carol"))
+	cursor := position(t, w.store)
+	w.event("project.created", "org_a", "idn_alice", nil, "")
+	cursor = w.publish(cursor) // queued, taken by nobody
+	exec(t, w.store, `INSERT INTO organization_freezes (id, organization_id, frozen_by, frozen_at, reason) VALUES ('frz_1', 'org_a', 'idn_alice', 1, 'test')`)
+	w.event("organization.frozen", "org_a", "idn_alice", nil, "")
+	cursor = w.publish(cursor)
+	for name, st := range map[string]*Stream{"alice": alice, "carol": carol} {
+		if r := ended(st); r != ReasonScopeChanged {
+			t.Errorf("%s's stream: %q", name, r)
+		}
+		if got := received(st); len(got) != 0 {
+			t.Errorf("%s's queue was kept: %v", name, got)
+		}
+		_, final := st.Ending()
+		for _, m := range final {
+			if m.Event != Identity {
+				t.Errorf("%s's last events: %v", name, final)
+			}
+		}
+	}
+	if ended(bob) != "" {
+		t.Error("another Organization's member's stream closed")
+	}
+	carol = w.subscribe("carol", w.session("carol"))
+	w.event("grant.created", "org_a", "idn_alice", nil, "")
+	w.event("grant.created", "org_b", "idn_bob", nil, "")
+	cursor = w.publish(cursor)
+	if got := received(carol); len(got) != 1 || !strings.Contains(got[0], `"org_b"`) {
+		t.Errorf("during the freeze carol received %v", got)
+	}
+	exec(t, w.store, `UPDATE organization_freezes SET lifted_at = 2, lifted_by = 'idn_alice', lift_method = 'approval' WHERE id = 'frz_1'`)
+	w.event("organization.unfrozen", "org_a", "idn_alice", nil, "")
+	w.publish(cursor)
+	if got := received(carol); len(got) != 1 || !strings.Contains(got[0], `"org_a"`) {
+		t.Errorf("after the lift carol received %v", got)
+	}
+}
+
+// An Organization that enforces passkey-verification signals only people
+// whose sign-in it accepts, as that is when a signal is sent: the streams
+// it refuses close when the control starts to be enforced, and a passkey
+// confirmed or no longer trusted counts from the next signal. At report it
+// holds nothing back.
+func TestPasskeyVerificationHoldsSignalsBack(t *testing.T) {
+	w := newWorld(t, Options{})
+	type person struct{ name, session string }
+	none, unverified, untrusted, good := person{"alice", w.session("alice")}, person{"alice", w.session("alice")}, person{"carol", w.session("carol")}, person{"carol", w.session("carol")}
+	w.signIn(unverified.session, "alice", "trusted", false)
+	w.signIn(untrusted.session, "carol", "unconfirmed", true)
+	w.signIn(good.session, "carol", "trusted", true)
+	control := func(mode string) {
+		exec(t, w.store, `INSERT INTO security_controls (organization_id, control, mode, version, changed_by) VALUES ('org_a', 'passkey-verification', ?, 1, 'idn_alice')
+			ON CONFLICT (organization_id, control) DO UPDATE SET mode = excluded.mode, version = version + 1`, mode)
+		w.event("security_control.changed", "org_a", "idn_alice", nil, "")
+	}
+	cursor := position(t, w.store)
+	streams := map[person]*Stream{}
+	for _, p := range []person{none, unverified, untrusted, good} {
+		streams[p] = w.subscribe(p.name, p.session)
+	}
+	control("report")
+	cursor = w.publish(cursor)
+	for p, st := range streams {
+		if got := received(st); len(got) == 0 || ended(st) != "" {
+			t.Errorf("at report %v received %v, ended %q", p, got, ended(st))
+		}
+	}
+	w.event("project.created", "org_a", "idn_bob", nil, "")
+	cursor = w.publish(cursor) // queued, taken by nobody
+	control("enforce")
+	cursor = w.publish(cursor)
+	for _, p := range []person{none, unverified, untrusted} {
+		if r := ended(streams[p]); r != ReasonScopeChanged {
+			t.Errorf("%v's stream: %q", p, r)
+		}
+		if got := received(streams[p]); len(got) != 0 {
+			t.Errorf("%v's queue was kept: %v", p, got)
+		}
+	}
+	if got := received(streams[good]); len(got) != 2 || ended(streams[good]) != "" {
+		t.Errorf("the accepted sign-in received %v, ended %q", got, ended(streams[good]))
+	}
+	// Reopened, a refused sign-in keeps its other Organizations only, and
+	// regains this one once its passkey is trusted.
+	again := w.subscribe(untrusted.name, untrusted.session)
+	w.event("grant.created", "org_a", "idn_bob", nil, "")
+	w.event("grant.created", "org_b", "idn_bob", nil, "")
+	cursor = w.publish(cursor)
+	if got := received(again); len(got) != 1 || !strings.Contains(got[0], `"org_b"`) {
+		t.Errorf("the refused sign-in received %v", got)
+	}
+	exec(t, w.store, `INSERT INTO passkey_provenance (passkey_id, trust, trusted_via, trusted_at, setup_grant_kind) VALUES (?, 'trusted', 'setup-grant', 1, 'bootstrap')`, "pk_"+untrusted.session)
+	w.event("grant.created", "org_a", "idn_bob", nil, "")
+	cursor = w.publish(cursor)
+	if got := received(again); len(got) != 1 || !strings.Contains(got[0], `"org_a"`) {
+		t.Errorf("once its passkey is trusted it received %v", got)
+	}
+	// A removed passkey no longer counts.
+	_ = received(streams[good])
+	exec(t, w.store, `DELETE FROM passkeys WHERE id = ?`, "pk_"+good.session)
+	w.event("grant.created", "org_a", "idn_bob", nil, "")
+	w.publish(cursor)
+	if got := received(streams[good]); len(got) != 0 {
+		t.Errorf("with its passkey removed the sign-in received %v", got)
+	}
+}
+
 // G11: a session's end, a revoked credential of the session and a removal
 // close streams; other streams stay open.
 func TestRevocationAndRemovalCloseStreams(t *testing.T) {

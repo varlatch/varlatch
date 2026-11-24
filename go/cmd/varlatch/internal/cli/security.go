@@ -789,7 +789,7 @@ var outboundRefusalLabels = map[string]string{
 }
 
 // outboundHostNote is @varlatch/protocol's OUTBOUND_HOST_NOTE.
-const outboundHostNote = "Private destinations are allowed by the host operator, with VARLATCH_OUTBOUND_ALLOW on the host, not in Varlatch. " +
+const outboundHostNote = "Private destinations are allowed by the host operator, with outbound_allow in varlatchd.conf on the host, not in Varlatch. " +
 	"Nothing waiting is lost: once the host operator allows a destination and restarts varlatchd, what waited for it is delivered."
 
 // wordOf is `WORDS[key]` for a fixed table: "undefined" for a key it lacks.
@@ -1329,7 +1329,7 @@ func (r *Run) securityStatusLines(s jsjson.Object, now float64) []string {
 		lines = append(lines, "", "Audit export")
 		if !shown {
 			if !truthy(at(status, "enabled")) {
-				lines = append(lines, "  Stopped by the host operator on this installation (VARLATCH_AUDIT_EXPORT=off).")
+				lines = append(lines, "  Stopped by the host operator on this installation (audit_export = off in varlatchd.conf).")
 			}
 			last := ""
 			if truthy(e) {
@@ -1411,7 +1411,7 @@ func (r *Run) auditExportLines(organization string, status any) []string {
 	safe := func(v any) string { return Printable(sval(v)) }
 	var lines []string
 	if !truthy(at(status, "enabled")) {
-		lines = append(lines, "Audit export is stopped by the host operator on this installation (VARLATCH_AUDIT_EXPORT=off): nothing is delivered.")
+		lines = append(lines, "Audit export is stopped by the host operator on this installation (audit_export = off in varlatchd.conf): nothing is delivered.")
 	}
 	e := at(status, "export")
 	if !truthy(e) {

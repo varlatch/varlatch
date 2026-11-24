@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "description": "The CLI features the Go CLI does not have yet (internal docs/design/go-cli.md, decision 3), for --cli go:<path>: a check that needs one reports client-lacks, from the runner (lib/client-lacks.mjs). The pull request that builds a feature removes its entry; a lacking check that passes fails the run as stale.",
+  "description": "The CLI features the Go CLI does not have (internal docs/design/go-cli.md, decision 3), for --cli go:<path>: a check that needs one reports client-lacks, from the runner (lib/client-lacks.mjs). The pull request that builds a feature removes its entry; a lacking check that passes fails the run as stale.",
   "lacksFeatures": {
     "doctor": {
-      "reason": "varlatch doctor: not ported to the Go CLI yet",
+      "reason": "varlatch doctor of a Compose installation: the Go CLI's doctor is a Go installation's (suite go-doctor); a Compose installation keeps the TypeScript CLI's",
       "slice": "step 6"
     }
   }

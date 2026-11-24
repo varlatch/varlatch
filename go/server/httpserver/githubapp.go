@@ -113,7 +113,7 @@ func (o *operations) assertGitHubAppsAllowed() (*url.URL, error) {
 	base := o.s.deviceBase()
 	if base == nil {
 		return nil, domainerr.New("VALIDATION_FAILED",
-			"Registering a GitHub App needs this Installation's public URL (VARLATCH_PUBLIC_URL) over HTTPS, or a loopback address in local development")
+			"Registering a GitHub App needs this Installation's public URL (public_url in varlatchd.conf) over HTTPS, or a loopback address in local development")
 	}
 	return base, nil
 }

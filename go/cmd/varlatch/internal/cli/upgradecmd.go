@@ -18,6 +18,7 @@ import (
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/upgrade"
 	"github.com/varlatch/varlatch/go/lib/backup"
 	"github.com/varlatch/varlatch/go/lib/jsjson"
+	"github.com/varlatch/varlatch/go/lib/keyenv"
 	"github.com/varlatch/varlatch/go/lib/release"
 	journal "github.com/varlatch/varlatch/go/lib/upgradejournal"
 )
@@ -34,7 +35,8 @@ const upgradeUsage = `Usage:
                 release.json, checks that SHA256SUMS is signed by the release workflow of varlatch/varlatch for that
                 version, takes an encrypted snapshot kept 30 days, updates a copy of the database, swaps the binaries
                 and the database, restarts varlatchd and keeps the new release only when its health checks pass;
-                anything else ends with the previous release serving. While a migration's rollback window is open, a
+                otherwise it goes back to the previous release, and when that cannot be completed, says what is left
+                and where the snapshot is. While a migration's rollback window is open, a
                 release that ends it is upgraded to only once confirmed (--end-rollback-window without a prompt).
                 --check looks for a newer release and records what it found for the dashboard's notice. --rollback
                 returns to the release the last upgrade came from: keeping every change when that release opens the
@@ -346,7 +348,11 @@ func (r *Run) upgradeCheck(ctx context.Context, u *upgrade.Upgrader, version str
 		})
 	}
 	if plan.UpdateAvailable {
-		return r.println("varlatchd " + plan.Latest + " is available (this host runs " + plan.Current + "): " + plan.ReleaseURL + ". Upgrade with sudo varlatch upgrade.")
+		how, what := "Upgrade with sudo varlatch upgrade.", "this host runs "
+		if r.Getenv(keyenv.ImageMarker) != "" {
+			how, what = "Upgrade by deploying its image, by the digest the release names.", "this image is "
+		}
+		return r.println("varlatchd " + plan.Latest + " is available (" + what + plan.Current + "): " + plan.ReleaseURL + ". " + how)
 	}
 	return r.println("varlatchd " + plan.Current + " is up to date.")
 }

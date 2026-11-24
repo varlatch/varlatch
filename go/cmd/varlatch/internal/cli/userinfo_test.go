@@ -310,7 +310,7 @@ func TestFailureExplanationsSurvive(t *testing.T) {
 	}{
 		{"", []string{"server", "https://alice:fake@example.com"}, "varlatch server:[redacted]@example.com: unexpected argument\nUsage: varlatch server [--json]"},
 		{"", []string{"server", "--https://alice:fake@example.com"}, "varlatch server:[redacted]@example.com: unknown option\nUsage: varlatch server [--json]"},
-		{"", []string{"https://alice:fake@example.com"}, "varlatch:[redacted]@example.com: unknown command\n\nvarlatch — "},
+		{"", []string{"https://alice:fake@example.com"}, "varlatch:[redacted]@example.com: unknown command\n\nvarlatch: self-host-first"},
 		{"", []string{"--approval", "https://alice:fake@x", "status"}, "varlatch:[redacted]@x: not an approval id\n"},
 		// A server is shown as its display form (server-display).
 		{"", []string{"server", "use", "https://alice:fake@[bad"}, "varlatch server use: not a URL: [unrecognised server URL]\n"},

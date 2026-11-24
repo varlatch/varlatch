@@ -1,11 +1,19 @@
-# Canonical Varlatch deployment (Docker Compose)
+# Docker Compose (0.23.0 and earlier)
+
+<a id="canonical-varlatch-deployment-docker-compose"></a>
+
+> Varlatch 0.50 and later do not use Docker Compose. Install them with
+> [Run an installation](../../docs/run-an-installation.md), and move an
+> installation that runs on Compose with
+> [Migrating to 0.50](../../docs/operations/migrate-to-0.50.md). This page
+> is for running the TypeScript releases, up to 0.23.0, until then. Links to
+> other pages here lead to 0.50's version; the
+> [0.23.0 documentation](https://github.com/varlatch/varlatch/tree/v0.23.0/docs)
+> has those of the Compose installation.
 
 This directory is Varlatch's deployment contract. Coolify deployments
 use this same Compose file through Coolify's Compose support: same topology,
 different UI clicks.
-
-New to Varlatch? [Run an installation](https://github.com/varlatch/varlatch/blob/main/docs/run-an-installation.md)
-is the shorter read. This page covers every deployment option.
 
 **What it runs:** `postgres`; `varlatchd`, the Secret Plane, after the
 one-shot `varlatch-migrate`; `convex-backend`, the Application Plane, whose
@@ -201,7 +209,7 @@ varlatch admin backup verify --in ./backups/ARCHIVE-ID.vltbak \
   --bek-file /secure/backup-key --kek-file /secure/root-kek-copy --record
 ```
 
-See [the backup and recovery runbook](https://github.com/varlatch/varlatch/blob/main/docs/operations/backup.md)
+See [the backup and recovery runbook](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/operations/backup.md)
 for key custody, S3 destinations, scheduling, fresh-host restore, interrupted
 restore recovery, and scratch-space requirements. Keep `convex-supervisor.cjs`
 with the Compose file and preserve the `varlatch-state` volume.
@@ -220,7 +228,7 @@ attestations, and releases after 0.15.0 sign `SHA256SUMS` and the images:
 [Verifying a release](../../docs/operations/verify-release.md).
 
 The canonical path is the CLI, run on the host in this directory. Install it
-as described in [Install the operator CLI](../../docs/operations/backup.md#install-the-operator-cli),
+as described in [Install the operator CLI](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/operations/backup.md#install-the-operator-cli),
 and replace it with the new release's file after each upgrade:
 
 ```sh
@@ -323,7 +331,7 @@ applies the change. `varlatch doctor` warns when the file exists but
 when a later setup run changes that list.
 
 For the published v0.7.0 release, use the 0.8.0 or newer CLI and plan an offline
-maintenance window: see the [first-upgrade bridge](../../docs/operations/backup.md#first-upgrade-from-the-published-v070-release).
+maintenance window: see the [first-upgrade bridge](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/operations/backup.md#first-upgrade-from-the-published-v070-release).
 Disable unattended Coolify upgrades; every schema-changing deployment needs
 this archive/verification step first.
 
@@ -466,7 +474,7 @@ are tailnet only. Its device is checked on every request; only the
 dashboard's origin may read from the endpoint, and only values. Add a
 tailnet access rule for port 8688 for the devices that may use it: setup
 prints one to start from. See
-[Tailnet browser endpoint](../../docs/self-hosting/configuration.md#tailnet-browser-endpoint).
+[Tailnet browser endpoint](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/self-hosting/configuration.md#tailnet-browser-endpoint).
 
 The overlay needs Docker Compose 2.24 or newer (it uses `!reset` to drop
 varlatchd's own port mapping; the sidecar publishes 8686 instead). Earlier

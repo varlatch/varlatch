@@ -74,7 +74,7 @@ func TestAdminOutboundCheck(t *testing.T) {
 		report.Destinations[0].Verdict != "allowed" || report.Destinations[0].Entries[0] != "10.0.0.9/32" || strings.Join(report.Allow, ",") != "10.0.0.9/32,192.168.1.1" {
 		t.Errorf("--allow --json: %d %q", code, out)
 	}
-	if code, _, errOut := run("check", "--allow", "10.0.0.0/33"); code != ExitFailure || errOut != "VARLATCH_OUTBOUND_ALLOW: 10.0.0.0/33 is not a valid CIDR range\n" {
+	if code, _, errOut := run("check", "--allow", "10.0.0.0/33"); code != ExitFailure || errOut != "outbound_allow: 10.0.0.0/33 is not a valid CIDR range\n" {
 		t.Errorf("an invalid --allow: %d %q", code, errOut)
 	}
 	for _, args := range [][]string{{}, {"list"}, {"check", "--bogus"}, {"check", "--org"}} {
