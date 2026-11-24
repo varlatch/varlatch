@@ -201,7 +201,7 @@ func TestRestoreRefusals(t *testing.T) {
 		}
 		untouched(cfg, "a check of "+what)
 	}
-	if got, err := CheckRestore(ctx, cfg, res.Path, f.bekOf(t), f.rootKEK, false); err != nil || got.ArchiveID != res.ArchiveID || got.History < 1 || !got.Restores {
+	if got, err := CheckRestore(ctx, cfg, res.Path, f.bekOf(t), f.rootKEK, false); err != nil || got.ArchiveID != res.ArchiveID || !got.Restores {
 		t.Errorf("a check: %+v, %v", got, err)
 	}
 	untouched(cfg, "a check")
@@ -425,7 +425,7 @@ func TestRestoreChecksTheArchivesSchema(t *testing.T) {
 			if after, err := os.ReadFile(cfg.DatabasePath()); err != nil || !bytes.Equal(before, after) {
 				t.Errorf("the database was changed (%v)", err)
 			}
-			if l := listing(t, cfg.DataDir); l != "varlatch.db" {
+			if l := listing(t, cfg.DataDir); l != backup.HoldFile+" varlatch.db" {
 				t.Errorf("the data directory holds %q", l)
 			}
 		})

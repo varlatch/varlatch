@@ -11,9 +11,11 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -156,13 +158,46 @@ func TestServeDuringAnUpgrade(t *testing.T) {
 
 	// What an upgrade and a rollback run themselves between their stop and
 	// their start is not held up: these open what they are given, or restore
-	// the database whole.
+	// the database whole. A restore is theirs when it inherited their lock;
+	// anyone else's would be replaced by the recovery, and is refused.
 	writeUpgrade(t, in.dir, upgradeTo(0, upgradejournal.InProgress, upgradejournal.Prepared, nil))
 	if code, out, errOut := runAdmin(t, "schema", "status", "--json", "--config", in.conf); code != ExitOK || !strings.Contains(out, `"schemaVersion"`) {
 		t.Fatalf("schema status: %d %q %q", code, out, errOut)
 	}
-	if code, _, errOut := runAdmin(t, "backup", "restore", "--in", filepath.Join(in.dir, "none.vltbak"), "--config", in.conf); code == ExitOK || strings.Contains(errOut, "upgrade") {
-		t.Fatalf("backup restore: %d %q; want its own refusal", code, errOut)
+	restore := []string{"backup", "restore", "--in", filepath.Join(in.dir, "none.vltbak"), "--config", in.conf}
+	if code, _, errOut := runAdmin(t, restore...); code == ExitOK || !strings.Contains(errOut, "is not over") || !strings.Contains(errOut, "sudo varlatch upgrade") || !strings.Contains(errOut, "sudo mv ") {
+		t.Fatalf("a restore beside an upgrade: %d %q", code, errOut)
+	}
+	lock, err := os.OpenFile(filepath.Join(in.dir, "upgrade.lock"), os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	bound := func(f *os.File) string {
+		t.Helper()
+		raw, _ := json.Marshal(restore)
+		cmd := exec.Command(os.Args[0], "-test.run=^TestAdminChild$")
+		cmd.Env = append(os.Environ(), "VL_TEST_ADMIN_CHILD="+string(raw))
+		cmd.ExtraFiles = []*os.File{f}
+		out, _ := cmd.CombinedOutput()
+		return string(out)
+	}
+	if out := bound(lock); !strings.Contains(out, "is not over") {
+		t.Fatalf("with the lock's file, which nobody holds: %s", out)
+	}
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+	if out := bound(lock); strings.Contains(out, "is not over") || !strings.Contains(out, "varlatchd admin backup restore: ") {
+		t.Fatalf("with the upgrade's lock: %s; want its own refusal", out)
+	}
+	another, err := os.Create(filepath.Join(in.dir, "another"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer another.Close()
+	if out := bound(another); !strings.Contains(out, "is not over") {
+		t.Fatalf("with another file: %s", out)
 	}
 
 	for name, j := range map[string]*upgradejournal.Journal{
