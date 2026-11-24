@@ -467,6 +467,12 @@ type MetaAdmission interface {
 	AdmitsMeta() bool
 }
 
+// UpgradeAdmission is an Admission that says why an upgrade holds the
+// server, "" when none does: /readyz answers with it.
+type UpgradeAdmission interface {
+	UpgradeHold() string
+}
+
 // BackupStatus is the backup status (server/backups), as JSON.
 type BackupStatus interface {
 	StatusJSON() ([]byte, error)
@@ -571,9 +577,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			if !ok && !metaOnly {
 				if p == "/readyz" {
-					writeJS(rec, http.StatusServiceUnavailable, jsvalue.Object{
+					answer := jsvalue.Object{
 						{Key: "ready", Value: false}, {Key: "checks", Value: jsvalue.Object{{Key: "maintenance", Value: false}}},
-					})
+					}
+					if u, ok := s.opts.Maintenance.(UpgradeAdmission); ok {
+						if hold := u.UpgradeHold(); hold != "" {
+							answer = append(answer, jsvalue.Member{Key: "upgrade", Value: hold})
+						}
+					}
+					writeJS(rec, http.StatusServiceUnavailable, answer)
 					return
 				}
 				rec.Header().Set("Retry-After", "5")

@@ -150,6 +150,9 @@ func (u *Upgrader) PlanRollback(ctx context.Context) (RollbackPlan, error) {
 	if err := u.Trusted(); err != nil {
 		return RollbackPlan{}, err
 	}
+	if err := u.theUnits(ctx); err != nil {
+		return RollbackPlan{}, err
+	}
 	migration, err := rollbackHost(last, u.now())
 	if err != nil {
 		return RollbackPlan{}, err
@@ -315,7 +318,7 @@ var ErrDeclined = errors.New("more changes were made since the list was shown, a
 // plan's: whether to go on. Its error is an *Error unless a crash point
 // stopped it.
 func (u *Upgrader) Rollback(ctx context.Context, plan RollbackPlan, grown func(*Changes) (bool, error)) (*journal.Journal, error) {
-	unlock, err := u.hold()
+	unlock, err := u.hold(ctx)
 	if err != nil {
 		return nil, &Error{Message: err.Error() + "; nothing was changed"}
 	}
@@ -334,6 +337,9 @@ func (u *Upgrader) Rollback(ctx context.Context, plan RollbackPlan, grown func(*
 	}
 	// Again, now that it begins: the prompt may have waited.
 	if _, err := rollbackHost(last, u.now()); err != nil {
+		return refuse(err)
+	}
+	if err := u.able(ctx, last.DataDir); err != nil {
 		return refuse(err)
 	}
 	if err := u.bothKept(last); err != nil {

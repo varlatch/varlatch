@@ -391,7 +391,7 @@ func newCLIHost(t *testing.T, varlatchd []byte) *cliHost {
 			t.Fatal(err)
 		}
 	}
-	h.svc.conf = filepath.Join(dir, "etc", "service.conf")
+	h.svc.conf = filepath.Join(filepath.Dir(h.conf), "service.conf")
 	if err := os.WriteFile(h.svc.conf, []byte(strings.ReplaceAll(conf, filepath.Join(dir, "keys"), own)), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -460,6 +460,11 @@ func (s *cliService) Start(context.Context) error {
 	go func() { _ = cmd.Wait(); close(done) }()
 	s.cmd, s.done = cmd, done
 	return nil
+}
+
+// Config: the host's, the service's own being its copy with other keys.
+func (s *cliService) Config(context.Context) (string, error) {
+	return filepath.Join(filepath.Dir(s.conf), "varlatchd.conf"), nil
 }
 
 func (s *cliService) Stop(context.Context) error {

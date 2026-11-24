@@ -40,9 +40,11 @@ type Admission struct {
 	// unreadable: the gate file exists but cannot be read; nothing is
 	// admitted until an operator repairs it.
 	unreadable bool
-	// upgrading: an upgrade is checking this varlatchd (HoldForUpgrade).
-	upgrading bool
-	busy      int
+	// upgrading: an upgrade is checking this varlatchd (HoldForUpgrade);
+	// upgradeNote is why it is still held.
+	upgrading   bool
+	upgradeNote string
+	busy        int
 }
 
 // Open reads the gate in dir, the data directory.
@@ -83,7 +85,32 @@ func (a *Admission) Isolated() bool {
 func (a *Admission) HoldForUpgrade() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.upgrading = true
+	a.upgrading, a.upgradeNote = true, UpgradeHeld
+}
+
+// Why an upgrade holds this varlatchd: it is not over; or its journal, which
+// says when it is, is gone, or cannot be read.
+const (
+	UpgradeHeld              = "held"
+	UpgradeJournalMissing    = "journal-missing"
+	UpgradeJournalUnreadable = "journal-unreadable"
+)
+
+// NoteUpgrade says why the upgrade's hold stands.
+func (a *Admission) NoteUpgrade(note string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.upgradeNote = note
+}
+
+// UpgradeHold is why an upgrade holds this varlatchd, "" when none does.
+func (a *Admission) UpgradeHold() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if !a.upgrading {
+		return ""
+	}
+	return a.upgradeNote
 }
 
 // EndUpgrade ends HoldForUpgrade's hold. A gate stays as it is.

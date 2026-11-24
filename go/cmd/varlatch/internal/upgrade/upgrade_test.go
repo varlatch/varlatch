@@ -170,7 +170,7 @@ func newHostOf(t *testing.T, uid int) *host {
 				t.Fatal(err)
 			}
 		}
-		h.svc.conf = filepath.Join(dir, "etc", "service.conf")
+		h.svc.conf = filepath.Join(filepath.Dir(h.conf), "service.conf")
 		if err := os.WriteFile(h.svc.conf, []byte(strings.ReplaceAll(conf, filepath.Join(dir, "keys"), own)), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -228,6 +228,11 @@ func (f *fakeService) Start(context.Context) error {
 	go func() { _ = cmd.Wait(); close(done) }()
 	f.cmd, f.done = cmd, done
 	return nil
+}
+
+// Config: the host's, the service's own being its copy with other keys.
+func (f *fakeService) Config(context.Context) (string, error) {
+	return filepath.Join(filepath.Dir(f.conf), "varlatchd.conf"), nil
 }
 
 func (f *fakeService) Stop(context.Context) error {
@@ -471,6 +476,61 @@ func TestAKilledUndoIsUndoneAgain(t *testing.T) {
 			}
 			previousServes(t, h, j)
 		})
+	}
+}
+
+// With the real varlatchd: the database in place is known as the original's
+// upgraded copy, and another installation's, or one with less in it, is not.
+func TestTheUpgradedCopyIsKnown(t *testing.T) {
+	h := newHost(t)
+	inst := h.inspect(t)
+	j, err := h.upgrader(func(p string) bool { return p == "swapped" }).Run(context.Background(), inst, h.release(t, "to", safe))
+	if !errors.Is(err, errKilled) {
+		t.Fatal(err)
+	}
+	u := h.upgrader(nil)
+	if err := u.upgradedCopy(context.Background(), j); err != nil {
+		t.Fatal(err)
+	}
+	// The original has more: the copy is of before.
+	original := filepath.Join(j.Work, originalDir, databaseFile)
+	live := filepath.Join(h.data, databaseFile)
+	swap := func(a, b string) {
+		t.Helper()
+		for _, m := range [][2]string{{a, a + ".aside"}, {b, a}, {a + ".aside", b}} {
+			if err := os.Rename(m[0], m[1]); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	swap(original, live)
+	if err := u.upgradedCopy(context.Background(), j); err != nil {
+		t.Fatalf("the same history: %v", err)
+	}
+	swap(original, live)
+	if _, err := u.admin(context.Background(), filepath.Join(h.bin, "varlatchd"), "admin", "bootstrap", "--cli-credential"); err == nil {
+		t.Fatal("an offline command that writes ran while the upgrade holds")
+	}
+	// Another installation's, made where there was none.
+	other := newHost(t)
+	if err := other.svc.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(other.data, databaseFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(live, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := u.upgradedCopy(context.Background(), j); err == nil || !strings.Contains(err.Error(), "is not the original's upgraded copy") {
+		t.Fatalf("another installation's: %v", err)
+	}
+	// To a release that cannot say.
+	old := *j
+	old.To = "0.50.0-rc.3"
+	if err := u.upgradedCopy(context.Background(), &old); err == nil || !strings.Contains(err.Error(), "cannot say") {
+		t.Fatalf("%v", err)
 	}
 }
 
