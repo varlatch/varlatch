@@ -63,6 +63,7 @@ func TestCombinedInputs(t *testing.T) {
 		{"VL_RH_GIT_NAME", "", "VL_RH_GIT_NAME"},
 		{"VL_RH_GIT_NAME", "rh.example", "two names"},
 		{"VL_RH_KILL", "barrier", "leave VL_RH_KILL"},
+		{"VL_RH_ONLY", "setup", "leave VL_RH_ONLY unset"},
 		{"VL_RH_SYNC", "fakes", "VL_RH_SYNC"},
 	} {
 		if err := try(t, map[string]string{c.name: c.value}, 0); err == nil || !strings.Contains(err.Error(), c.want) {

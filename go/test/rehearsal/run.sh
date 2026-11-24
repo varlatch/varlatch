@@ -24,6 +24,13 @@
 # installation is kept whole, the Root KEK's copy in its Compose
 # directory's secrets/ included: remove it by hand (shred -u) when done.
 #
+# VL_RH_KILL=barrier|transfer (own proxy or public ingress) adds the kill
+# case: two fresh sources, a migration of each killed there, then --abort on
+# the first and --resume on the second (VL_RH_ONLY=kill runs it alone).
+# VL_RH_ONLY=setup only sets the source up. Each of the two variables is
+# honoured or refused before anything starts, never left aside: the cases of
+# VL_RH_INGRESS=coolify, tailnet and combined take neither.
+#
 # VL_RH_PROFILE=box (the experiments server; internal
 # docs/design/go-step8-rehearsals.md): run by the owner as root on the
 # host (sudo -i first), the test binary directly on the host, with real

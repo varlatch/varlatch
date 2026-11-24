@@ -46,7 +46,10 @@ func TestRehearsal(t *testing.T) {
 		t.Run("combined", func(t *testing.T) { combinedCase(t, rel, s3) })
 		return
 	case "public":
-		t.Run("public", func(t *testing.T) { publicCase(t, rel, s3) })
+		// VL_RH_ONLY=kill runs the kill case alone, as with the own proxy.
+		if os.Getenv("VL_RH_ONLY") != "kill" {
+			t.Run("public", func(t *testing.T) { publicCase(t, rel, s3) })
+		}
 	case "tailnet":
 		t.Run("tailnet", func(t *testing.T) { tailnetCase(t, rel, s3) })
 		return
