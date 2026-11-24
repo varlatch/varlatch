@@ -45,6 +45,10 @@ func TestMain(m *testing.M) {
 		return
 	case "envdigest":
 		os.Exit(envDigest(os.Args[1:]))
+	case "envscan":
+		os.Exit(envScan(os.Args[1:]))
+	case "docker":
+		os.Exit(dockerShim(os.Args[1:]))
 	}
 	os.Exit(m.Run())
 }
@@ -302,7 +306,9 @@ func run(dir string, env []string, stdin []byte, name string, args ...string) ra
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	began := time.Now()
 	err := cmd.Run()
-	return ran{code: exitCode(err), stdout: out.String(), stderr: errb.String(), took: time.Since(began)}
+	r := ran{code: exitCode(err), stdout: out.String(), stderr: errb.String(), took: time.Since(began)}
+	measureSteps(dir, name, args, r.stderr, r.took)
+	return r
 }
 
 func exitCode(err error) int {
@@ -528,7 +534,11 @@ func prepareInstallation(t *testing.T, rel release, s3 *s3Server, name string, k
 	}
 	if keys != nil {
 		in.isolated = true
-		extras = append([]installExtra{isolationExtra(filepath.Join(base, "operator", "backup-destinations.json"))}, extras...)
+		own := []installExtra{isolationExtra(filepath.Join(base, "operator", "backup-destinations.json"))}
+		if prof.memory {
+			own = append(own, memoryExtra())
+		}
+		extras = append(own, extras...)
 	}
 	for _, x := range extras {
 		for k, v := range x.env {

@@ -56,6 +56,17 @@ fixes.
 
 ### Dashboard
 
+- **Live updates say nothing about an Organization you may not read.** The
+  Go server's stream kept sending change signals (which domains changed and
+  when, never what) to members of an Organization frozen for an incident,
+  and to people whose sign-in `passkey-verification` refuses. 0.23.0 sent
+  them none. A stream that loses an Organization this way closes
+  (`scope-changed`), and the dashboard reconnects and refreshes.
+- **The Installation pages give a Go installation's commands and settings.**
+  Release, Archives, Tailnet and Outbound gave a Compose installation's
+  (`--dir`, `.env` variables, the Tailscale sidecar), which the Go CLI
+  refuses. They name `varlatchd.conf`'s settings now, and the commands for a
+  service or for the container image.
 - **An address without a page shows a not-found page** of the dashboard,
   with its navigation and a way back, where the router's developer error
   page ("Unexpected Application Error!") showed. A page that fails shows a
@@ -68,6 +79,22 @@ fixes.
 
 ### CLI
 
+- **`varlatch --help` shows a Go installation's host commands.** It had a
+  Compose installation's (`setup --dir`, `adopt`, `admin backup create`, the
+  Compose `upgrade`), which the Go CLI refuses, and neither `migrate` nor
+  `tailnet repin`; `varlatch tailnet --help` has `repin` now, and `varlatch
+  help migrate` prints its help. `varlatch agents guide self-hosting` gives
+  commands the Go CLI has.
+- **`varlatch setup` with a tailnet asks for the address people open**
+  (`--public-url`), without which no passkey could be enrolled, and copies
+  the node's auth key to `/etc/varlatch/tailnet-auth-key` for the service,
+  wherever the file you give is kept. `--tailnet-https-port` turns the
+  tailnet browser endpoint on.
+- **`varlatch migrate` warns of `NODE_EXTRA_CA_CERTS`.** The old server trusts
+  the certificate authorities in that file; the new one does not read the
+  variable. The preflight names the file (it does not read it) and says where
+  the new server takes one: the system's trust store, or `SSL_CERT_FILE`. See
+  [What you need](docs/operations/migrate-to-0.50.md#what-you-need).
 - **`varlatch migrate` finds a Coolify installation's Compose project.** A
   directory Coolify deploys from can hold the repository's
   `docker-compose.yml` beside the file that runs, and plain `docker compose`
@@ -173,6 +200,37 @@ fixes.
 
 ### Server
 
+- **The check of a backup's remote copy checks that it is that archive.**
+  `admin backup run --verify-remote`, and with it `varlatch migrate --finish
+  --delete-old-data`, accepted any archive sealed with the same keys at the
+  new one's place in the bucket, such as an older one. It now fails the check,
+  and `--finish --delete-old-data` deletes nothing.
+- **No warning that can never clear.** With a bucket key that only uploads, no
+  remote copy can be checked from the host: until a first check was made, the
+  backup status has no warning of it, and `varlatch doctor` says that none
+  was made.
+- **A restored installation is held until you resume it.** An archive brings
+  back what was changed since it was made: a deletion cancelled since, a
+  webhook removed since, an old value. After every restore (`varlatch setup
+  --restore`, `varlatch admin backup restore`, in the image too) `varlatchd`
+  serves, but its background work does not run (sync, webhooks, audit
+  export, organization deletion) and no local backup is removed, until
+  `varlatch admin restore resume` (audited as
+  `installation.restore_resumed`). `varlatch admin restore status`,
+  `varlatch doctor`, `/readyz` (`"held":true`) and the log say so. `varlatch
+  upgrade` and a migration's rollback are refused until then. It holds
+  background work only: people and credentials in the archive can still
+  read and write, so keep clients away until you put right what changed.
+  Deadlines go on meanwhile, as on a stopped server: at the resume, due
+  deletions run, an export being drained past its deadline is given up, and
+  webhooks may repeat events.
+- **Messages name a Go installation's settings.** The outbound policy's
+  refusals, the audit export and the GitHub App registration told the host
+  operator about environment variables of 0.23.0; they name `outbound_allow`,
+  `audit_export` and `public_url` in `varlatchd.conf`, and so does the CLI.
+- **`varlatch doctor` reads the release check** that `varlatch upgrade
+  --check` records (`release.latest`): it fails, as an advisory, on a newer
+  release, and says how to upgrade a service or an image.
 - **The container image works with a read-only root filesystem.** SQLite
   had nowhere to put its temporary files there, so a larger write failed
   with a server error while smaller ones went on: enrolling the first

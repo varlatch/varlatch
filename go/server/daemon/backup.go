@@ -321,6 +321,7 @@ func restoreOffline(cfg *config.Config, rest []string, stdout, stderr io.Writer)
 			fmt.Fprintf(stdout, "  %s = %s\n", k, res.Settings[k])
 		}
 	}
-	fmt.Fprintln(stdout, "Next: start varlatchd, then take and check a fresh archive (`varlatchd admin backup run`).")
+	fmt.Fprintln(stdout, "The installation is held: its background work (sync, webhooks, audit export, organization deletion) does not run. It is as the archive has it: what was revoked or removed since works again, and what people and clients ask for is done.")
+	fmt.Fprintln(stdout, "Next: start varlatchd, put right what changed since the archive, end the hold (`varlatchd admin restore resume`), then take and check a fresh archive (`varlatchd admin backup run`).")
 	return ExitOK
 }

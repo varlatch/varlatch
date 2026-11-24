@@ -250,11 +250,13 @@ describe("varlatch security report: refused destinations", () => {
     const lines = r.stdout.trimEnd().split("\n");
     const at = lines.indexOf("Refused destinations for acme (2)");
     expect(at).toBeGreaterThan(0);
+    // A Go installation's setting (go/README.md, host-settings).
+    const setting = process.env.VARLATCH_TEST_CLI ? "outbound_allow in varlatchd.conf" : "VARLATCH_OUTBOUND_ALLOW";
     expect(lines.slice(at + 1)).toEqual([
       '  Coolify "Production Coolify" (pc_coolify)  https://coolify.lan:8443  private network address, first recorded within the last 30 days: 3 days ago',
       "  webhook (wh_http)  http://hooks.example:80  plain http, no refusal recorded in the last 30 days",
       "",
-      "Private destinations are allowed by the host operator, with VARLATCH_OUTBOUND_ALLOW on the host, not in Varlatch. " +
+      `Private destinations are allowed by the host operator, with ${setting} on the host, not in Varlatch. ` +
         "Nothing waiting is lost: once the host operator allows a destination and restarts varlatchd, what waited for it is delivered.",
     ]);
     // The credential review comes first, unchanged.

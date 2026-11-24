@@ -53,33 +53,31 @@ const (
 )
 
 // Refusal is why an environment cannot be run with ("" when it can): the
-// first variable that holds one of keys (as hex in either case, or base64
-// with or without padding, standard or URL-safe), or is one of Variables.
-// It names the variable and never says its value.
+// first variable that holds one of keys (as hex in any case, or base64 in
+// the standard alphabet, the URL-safe one or a mix, padded or not), or is
+// one of Variables. It names the variable and never says its value.
 //
 // The encodings are those a key file may hold: envelope.ParseRootKEK (hex,
 // or base64 in either alphabet) and backup.ParseKey (hex or standard
 // base64). A new encoding either parser accepts belongs here too.
 func Refusal(environ []string, keys ...Key) string {
-	type form struct{ what, text string }
+	type form struct{ what, hex, b64 string }
 	var forms []form
 	for _, k := range keys {
-		if len(k.Bytes) == 0 {
-			continue
-		}
-		h := hex.EncodeToString(k.Bytes)
-		for _, text := range []string{h, strings.ToUpper(h), base64.StdEncoding.EncodeToString(k.Bytes), base64.RawStdEncoding.EncodeToString(k.Bytes),
-			base64.URLEncoding.EncodeToString(k.Bytes), base64.RawURLEncoding.EncodeToString(k.Bytes)} {
-			forms = append(forms, form{k.What, text})
+		if len(k.Bytes) > 0 {
+			// The unpadded base64 is the start of the padded.
+			forms = append(forms, form{k.What, hex.EncodeToString(k.Bytes), base64.RawStdEncoding.EncodeToString(k.Bytes)})
 		}
 	}
+	standard := strings.NewReplacer("-", "+", "_", "/")
 	for _, kv := range environ {
 		name, value, _ := strings.Cut(kv, "=")
 		if slices.Contains(Variables, strings.ToUpper(name)) {
 			return fmt.Sprintf("the environment variable %s is a key or passphrase variable name; keys reach varlatchd only as files (root_kek_file, backup_key_file): remove it from the environment and start again", name)
 		}
+		lower, std := strings.ToLower(value), standard.Replace(value)
 		for _, f := range forms {
-			if strings.Contains(value, f.text) {
+			if strings.Contains(lower, f.hex) || strings.Contains(std, f.b64) {
 				return fmt.Sprintf("the environment variable %s holds %s; keys reach varlatchd only as files (root_kek_file, backup_key_file): remove it from the environment and start again", name, f.what)
 			}
 		}

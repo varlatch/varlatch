@@ -35,6 +35,18 @@ func TestRehearsal(t *testing.T) {
 	// Cleanups run last-registered first: the guard's check (and every
 	// other cleanup's record) lands in the report before it is written.
 	t.Cleanup(func() { writeReport(t) })
+	if prof.restore != "" {
+		// The TypeScript CLI opens the archive (decrypted) in TMPDIR: the
+		// run's own directory, never the host's /tmp.
+		tmp := filepath.Join(workDir, "tmp")
+		if err := os.MkdirAll(tmp, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Setenv("TMPDIR", tmp); err != nil {
+			t.Fatal(err)
+		}
+	}
+	startMemory(t)
 	guardOthers(t)
 	s3 := startS3(t)
 	secret(s3.secret)

@@ -246,12 +246,17 @@ func route(cfg *config.Config, args []string, stdout, stderr io.Writer) int {
 	}
 	if maintenance.Open(cfg.DataDir, nil).Isolated() {
 		switch {
-		case writes(args[0]):
+		case writes(args[0]), args[0] == "restore":
 			fmt.Fprintf(stderr, "%s: %s\n", what, MaintenanceRefusal)
 			return ExitFailure
 		case args[0] == "backup":
 			fmt.Fprintf(stderr, "%s %s: %s\n", what, args[1], backups.ErrMaintenance.Error())
 			return ExitFailure
+		}
+	}
+	if args[0] == "restore" {
+		if _, err := os.Lstat(cfg.DatabasePath()); errors.Is(err, os.ErrNotExist) {
+			return clearStaleHold(cfg.DataDir, stdout, stderr)
 		}
 	}
 	env, status := openOffline(cfg, what, stderr)
@@ -284,12 +289,12 @@ func daemonConn(cfg *config.Config, owner int, what string, stderr io.Writer) (*
 
 // fileOnly reports whether a host command reads and writes only the data
 // directory's files, never the database: the maintenance commands, backup
-// status, the migration's commands but the barrier (whose frozen copy is
+// and restore status, the migration's commands but the barrier (whose frozen copy is
 // the database's), and the tailnet node's handoff commands
 // (tailnetnode.go), which run on a migration's empty data directory too.
 func fileOnly(args []string) bool {
 	return args[0] == "maintenance" || args[0] == "migrate" && !(len(args) > 1 && args[1] == "barrier") ||
-		args[0] == "backup" && len(args) > 1 && args[1] == "status" ||
+		(args[0] == "backup" || args[0] == "restore") && len(args) > 1 && args[1] == "status" ||
 		args[0] == "tailnet" && isNodeCmd(args[1:])
 }
 

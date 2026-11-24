@@ -453,7 +453,7 @@ func TestUpload(t *testing.T) {
 		t.Errorf("%+v", res)
 	}
 	st, _ := s.Status()
-	if d := st.Archives[0].Delivery; d == nil || d.UploadedAt != res.Delivery.UploadedAt || len(st.Warnings) != 1 || !strings.HasPrefix(st.Warnings[0], "No remote copy has passed") {
+	if d := st.Archives[0].Delivery; d == nil || d.UploadedAt != res.Delivery.UploadedAt || len(st.Warnings) != 0 || !st.RemoteUnchecked() {
 		t.Errorf("%+v %q", d, st.Warnings)
 	}
 
@@ -853,7 +853,8 @@ func TestRunLeavesTheACMEStoreOut(t *testing.T) {
 
 // The uploaded copy downloaded back and checked (varlatch migrate
 // --finish's final archive): passed and recorded as the delivery's remote
-// verification; a damaged remote copy fails integrity; refused with no
+// verification; a damaged remote copy, or an older archive at the new one's
+// key, fails integrity; refused with no
 // destination, and for an archive never uploaded.
 func TestVerifyRemote(t *testing.T) {
 	f := newFixture(t)
@@ -903,7 +904,30 @@ func TestVerifyRemote(t *testing.T) {
 	if !found {
 		t.Error("the remote verification was not recorded")
 	}
-	key := "/b/varlatch/" + up.ArchiveID + ".vltbak"
+	// An older archive, whole and sealed under the same keys, in the new
+	// one's place: not that archive.
+	f.add(time.Minute)
+	newer, err := s.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, newerKey := "/b/varlatch/"+up.ArchiveID+".vltbak", "/b/varlatch/"+newer.ArchiveID+".vltbak"
+	fake.mu.Lock()
+	own := fake.objects[newerKey]
+	fake.objects[newerKey] = fake.objects[key]
+	fake.mu.Unlock()
+	if v, err := s.VerifyRemote(context.Background(), newer.ArchiveID); err != nil || v.Integrity || v.Compatibility || v.KeyMatch {
+		t.Errorf("an older archive at the new one's key: %+v %v", v, err)
+	}
+	if st, _ := s.Status(); !slices.Contains(st.Warnings, "Remote copy of "+newer.ArchiveID+" failed retrieval and verification") {
+		t.Errorf("the status after it: %q", st.Warnings)
+	}
+	fake.mu.Lock()
+	fake.objects[newerKey] = own
+	fake.mu.Unlock()
+	if v, err := s.VerifyRemote(context.Background(), newer.ArchiveID); err != nil || !v.Integrity || !v.Compatibility || !v.KeyMatch {
+		t.Errorf("its own copy again: %+v %v", v, err)
+	}
 	fake.mu.Lock()
 	b := fake.objects[key]
 	b[len(b)/2] ^= 0xff
@@ -917,5 +941,36 @@ func TestVerifyRemote(t *testing.T) {
 				t.Errorf("the download is left: %s", e.Name())
 			}
 		}
+	}
+}
+
+// While a restore's hold stands, a backup is made and nothing is removed
+// from this host; once resumed, backup_keep holds again.
+func TestHeldKeepsEveryArchive(t *testing.T) {
+	f := newFixture(t)
+	if err := backup.WriteHold(f.dir, backup.Hold{ArchiveID: "archive-1", RestoredAt: "t"}); err != nil {
+		t.Fatal(err)
+	}
+	admission := maintenance.Open(f.dir, nil)
+	svc := f.service(func(o *Options) { o.Admission = admission })
+	run := func() []string {
+		t.Helper()
+		f.now = f.now.Add(time.Hour)
+		res, err := svc.Run(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res.Removed
+	}
+	for range 4 { // backup_keep is 2
+		if removed := run(); removed == nil || len(removed) != 0 {
+			t.Fatalf("removed %v while held", removed)
+		}
+	}
+	if _, err := admission.Resume(func(*backup.Hold) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if removed := run(); len(removed) != 3 {
+		t.Errorf("removed %v once resumed, want 3", removed)
 	}
 }

@@ -3609,7 +3609,7 @@ type AuditExportRetentionMode string
 
 // AuditExportStatus defines model for AuditExportStatus.
 type AuditExportStatus struct {
-	// Enabled False when the host operator turned audit export off (VARLATCH_AUDIT_EXPORT=off).
+	// Enabled False when the host operator turned audit export off (audit_export = off).
 	Enabled bool                           `json:"enabled"`
 	Export  nullable.Nullable[AuditExport] `json:"export"`
 }
@@ -4415,7 +4415,7 @@ type InstallationListeners struct {
 
 // InstallationOutbound defines model for InstallationOutbound.
 type InstallationOutbound struct {
-	// Allow VARLATCH_OUTBOUND_ALLOW as parsed at startup, one entry each; empty when it is not set.
+	// Allow outbound_allow as parsed at startup, one entry each; empty when it is not set.
 	Allow []string `json:"allow"`
 
 	// Checked How many configured destinations the check looked at, in every Organization.
@@ -4427,7 +4427,7 @@ type InstallationOutbound struct {
 	// Refused Every refused destination, by Organization.
 	Refused []InstallationRefusedDestination `json:"refused"`
 
-	// Suggested The VARLATCH_OUTBOUND_ALLOW value that would allow the refused names (the current entries plus new ones); null when none would help.
+	// Suggested The outbound_allow value that would allow the refused names (the current entries plus new ones); null when none would help.
 	Suggested nullable.Nullable[string] `json:"suggested"`
 
 	// Unresolved Destinations whose names did not resolve; not refusals, checked again when they connect.

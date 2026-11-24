@@ -1327,7 +1327,14 @@ jobs:
           case "$EVENT" in schedule | workflow_dispatch) suites="$suites sync deletion webhooks" ;; esac
           # shellcheck disable=SC2086 # one argument per suite
           G6_ROLLBACK_SAFE=$safe sh go/release/g6.sh "$old" "$new" "$RUNNER_TEMP/g6" $suites
-          if [ -z "$previous" ]; then
+          if [ -n "$previous" ]; then
+            # The previous release has this release's schema until a step is
+            # added: this commit's varlatchd on a database a schema step (the
+            # fixture's) upgraded, cheaply (no conformance runs): opened,
+            # archived, restored and upgraded again.
+            (cd go && go build -tags conformance,g6fixture -o "$RUNNER_TEMP/varlatchd-g6fixture" ./cmd/varlatchd)
+            G6_ROLLBACK_SAFE=true G6_CONFORMANCE=off sh go/release/g6.sh "$RUNNER_TEMP/varlatchd" "$RUNNER_TEMP/varlatchd-g6fixture" "$RUNNER_TEMP/g6-fixture"
+          else
             # The not-rollback-safe path, cheaply (no conformance runs): the
             # same fixture step declared not rollback-safe (g6unsafe:
             # compatibleFrom 2) passes declared so, since the previous
@@ -1791,6 +1798,31 @@ jobs:
             ~/go/pkg/mod
           key: go-${{ runner.os }}-conformance-${{ hashFiles('go/go.sum') }}-${{ github.sha }}
 
+  # The migration against the last TypeScript release as published, its
+  # images by digest (go/test/rehearsal/published.sh): a migration, a day of
+  # changes on Go, the rollback, and the migration again, with their parity
+  # checks. release.yml's go-g5 runs it for the release being cut; at night, so
+  # that a change that breaks it is seen before a release is.
+  go-g5-published:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: 12.3.4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 26
+          cache: pnpm
+      # The harness's S3 client (packages/backup's) and the TypeScript CLI.
+      - run: pnpm install --frozen-lockfile --ignore-scripts --filter @varlatch/backup
+      - name: The migration and its way back on the published release
+        run: go/test/rehearsal/published.sh whole "$RUNNER_TEMP/g5-published"
+
   # The required check (the main ruleset's merge queue): every Go job
   # succeeded or was skipped because none of its paths changed.
   # The backup converter's conversions (go-step7 decision 18, slice 7.7b),
@@ -1858,11 +1890,11 @@ jobs:
     name: go-ok
     # On a draft it runs too, and fails: every other job is skipped then, and
     # a skipped required check would read as passed.
-    # go-container runs only at night and by hand (skipped on a pull request
-    # and in the merge queue, which go-ok accepts): listed so that a failed
-    # nightly run's go-ok is red too, not green beside a red job.
+    # go-container and go-g5-published run only at night and by hand (skipped
+    # on a pull request and in the merge queue, which go-ok accepts): listed so
+    # that a failed nightly run's go-ok is red too, not green beside a red job.
     if: always()
-    needs: [changes, go, go-g5, go-race, go-platforms, go-binary, go-image, go-container, openapi, windows, go-cli-platforms, go-binary-go-cli]
+    needs: [changes, go, go-g5, go-g5-published, go-race, go-platforms, go-binary, go-image, go-container, openapi, windows, go-cli-platforms, go-binary-go-cli]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

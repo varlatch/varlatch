@@ -99,16 +99,27 @@ type Release struct {
 // Installed is the release the host runs.
 type Installed struct {
 	// Version is varlatchd's release, Schema its schema version, DataDir
-	// its data directory.
-	Version string
-	Schema  int64
-	DataDir string
+	// its data directory. Database is the database's schema version: newer
+	// than Schema once a rollback-safe release wrote it and this one is
+	// back, Schema otherwise.
+	Version          string
+	Schema, Database int64
+	DataDir          string
 }
 
 // RollbackSafe is whether the installed release's varlatchd may open a
 // database the release upgraded: its manifest lets that schema version in.
 func RollbackSafe(m release.Manifest, installed Installed) bool {
 	return m.CompatibleFrom <= installed.Schema
+}
+
+// SchemaRefusal refuses a release whose schema is below the database's:
+// its varlatchd could not be given the database. nil for any other.
+func SchemaRefusal(inst Installed, version string, m release.Manifest) error {
+	if m.SchemaVersion >= inst.Database {
+		return nil
+	}
+	return &Error{Message: fmt.Sprintf("the database's schema is version %d (a release later than %s wrote it), and %s's is %d: upgrade to a release of schema %d or later; nothing was changed", inst.Database, inst.Version, version, m.SchemaVersion, inst.Database)}
 }
 
 // Error is an upgrade that did not happen, or did not end as asked:
@@ -229,10 +240,10 @@ func (u *Upgrader) Inspect(ctx context.Context) (Installed, error) {
 	if st.Database == nil {
 		return Installed{}, fmt.Errorf("there is no database in %s yet: set the installation up (varlatch setup) before an upgrade", st.DataDir)
 	}
-	if !st.Opens || st.Database.SchemaVersion != st.Binary.SchemaVersion {
+	if !st.Opens || st.Database.SchemaVersion < st.Binary.SchemaVersion {
 		return Installed{}, fmt.Errorf("the database's schema (version %d) is not the installed varlatchd's (%d): check the installation (varlatch doctor) before an upgrade", st.Database.SchemaVersion, st.Binary.SchemaVersion)
 	}
-	return Installed{Version: version, Schema: st.Binary.SchemaVersion, DataDir: st.DataDir}, nil
+	return Installed{Version: version, Schema: st.Binary.SchemaVersion, Database: st.Database.SchemaVersion, DataDir: st.DataDir}, nil
 }
 
 // write records j at its step.
@@ -276,6 +287,9 @@ func (u *Upgrader) Run(ctx context.Context, inst Installed, rel Release) (*journ
 	m := rel.Manifest
 	if m.Version != rel.Version {
 		return nil, &Error{Message: fmt.Sprintf("the release's manifest is for %s, not %s; nothing was changed", m.Version, rel.Version)}
+	}
+	if err := SchemaRefusal(inst, rel.Version, m); err != nil {
+		return nil, err
 	}
 	// <data>/upgrades is checked before anything reads or removes there:
 	// prune must never follow a link out of the data directory.
@@ -709,6 +723,16 @@ func (u *Upgrader) Recover(ctx context.Context) (*journal.Journal, error) {
 			return j, err
 		}
 		return j, &Error{Message: err.Error(), Journal: j}
+	}
+	return j, nil
+}
+
+// Pending is the upgrade left pending, nil when there is none: what
+// Recover would finish or undo.
+func (u *Upgrader) Pending() (*journal.Journal, error) {
+	j, err := journal.Read(u.configDir())
+	if err != nil || !j.Pending() {
+		return nil, err
 	}
 	return j, nil
 }

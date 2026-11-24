@@ -84,24 +84,11 @@ describe("releaseSummary", () => {
 });
 
 describe("the commands to copy", () => {
-  it("upgrades a Compose release set with the backup keys, and names a repository other than the default", () => {
-    expect(upgradeLines(release().latest!)).toEqual([
-      "varlatch upgrade --dir /srv/varlatch \\",
-      "  --bek-file /secure/operator/backup-key \\",
-      "  --kek-file /secure/operator/root-kek-copy",
-    ]);
-    expect(upgradeLines(release({ repo: "acme/varlatch-fork" }).latest!)).toEqual([
-      "varlatch upgrade --dir /srv/varlatch \\",
-      "  --repo acme/varlatch-fork \\",
-      "  --bek-file /secure/operator/backup-key \\",
-      "  --kek-file /secure/operator/root-kek-copy",
-    ]);
-    expect(checkLines("varlatch/varlatch")).toEqual(["varlatch upgrade --check --dir /srv/varlatch"]);
-    expect(checkLines("acme/varlatch-fork")).toEqual(["varlatch upgrade --check --dir /srv/varlatch --repo acme/varlatch-fork"]);
-  });
-
-  it("offers no varlatch upgrade where the checked directory is no release set", () => {
-    expect(upgradeLines(release({ releaseSet: false }).latest!)).toBeNull();
+  it("upgrades a service with varlatch upgrade, and an image by deploying the release's", () => {
+    expect(upgradeLines("host")).toEqual(["sudo varlatch upgrade"]);
+    expect(upgradeLines("container")).toBeNull();
+    expect(checkLines("host")).toEqual(["sudo varlatch upgrade --check"]);
+    expect(checkLines("container")).toEqual(["docker exec <container> varlatch upgrade --check"]);
   });
 });
 
@@ -129,11 +116,11 @@ async function show(r: InstallationRelease) {
 }
 
 describe("Release tab", () => {
-  it("names the checked repository, on the tab and in the command", async () => {
+  it("names the checked repository", async () => {
     await show(release({ repo: "acme/varlatch-fork" }));
     expect(one("release-repo")).toBe("acme/varlatch-fork");
-    expect(one("release-upgrade-command")).toContain("--repo acme/varlatch-fork");
-    expect(one("release-check-command")).toContain("--repo acme/varlatch-fork");
+    expect(one("release-upgrade-command")).toContain("sudo varlatch upgrade");
+    expect(one("release-check-command")).toContain("sudo varlatch upgrade --check");
     expect(one("release-running")).toBe("0.18.1");
   });
 
@@ -145,10 +132,12 @@ describe("Release tab", () => {
     expect(one("release-summary")).toContain("Not checked");
   });
 
-  it("points a deployment without a release set to its own instructions", async () => {
-    await show(release({ releaseSet: false }));
+  it("points an installation in a container to deploying the new image", async () => {
+    await show(release());
+    await act(async () => all("deployment-container")[0]!.props.onClick());
     expect(all("release-upgrade-command")).toHaveLength(0);
-    expect(one("release-upgrade-elsewhere")).toContain("does not apply there");
+    expect(one("release-upgrade-image")).toContain("pinned by the digest");
+    expect(one("release-check-command")).toContain("docker exec <container> varlatch upgrade --check");
   });
 
   it("shows a failed attempt next to the last success", async () => {

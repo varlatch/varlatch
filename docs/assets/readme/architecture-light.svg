@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1704 976" width="1704" height="976" role="img" aria-labelledby="t" font-family="-apple-system, 'Segoe UI', 'Liberation Sans', Helvetica, Arial, sans-serif">
+<title id="t">Varlatch architecture</title>
+<rect x="32" y="32" width="1640" height="174" rx="28" fill="#ffffff" stroke="#d0d7de" stroke-width="2"/>
+<text x="78" y="92" font-size="24" letter-spacing="2.4" fill="#57606a">UNTRUSTED CLIENTS</text>
+<rect x="78" y="122" width="142" height="44" rx="22" fill="#f6f8fa" stroke="#d0d7de" stroke-width="2"/><text x="149" y="153" font-size="26" text-anchor="middle" fill="#1f2328">Browser</text>
+<rect x="232" y="122" width="99" height="44" rx="22" fill="#f6f8fa" stroke="#d0d7de" stroke-width="2"/><text x="281.5" y="153" font-size="26" text-anchor="middle" fill="#1f2328">CLI</text>
+<rect x="343" y="122" width="81" height="44" rx="22" fill="#f6f8fa" stroke="#d0d7de" stroke-width="2"/><text x="383.5" y="153" font-size="26" text-anchor="middle" fill="#1f2328">CI</text>
+<rect x="436" y="122" width="162" height="44" rx="22" fill="#f6f8fa" stroke="#d0d7de" stroke-width="2"/><text x="517" y="153" font-size="26" text-anchor="middle" fill="#1f2328">Workloads</text>
+<rect x="610" y="122" width="167" height="44" rx="22" fill="#f6f8fa" stroke="#d0d7de" stroke-width="2"/><text x="693.5" y="153" font-size="26" text-anchor="middle" fill="#1f2328">AI agents</text>
+<path d="M852 206V322" stroke="#8c959f" stroke-width="4" fill="none"/><path d="M838 318h28l-14 18z" fill="#8c959f"/><text x="880" y="280.0" font-size="26" fill="#57606a">authenticate end to end, over the public address or your tailnet</text>
+<rect x="34" y="336" width="1636" height="272" rx="28" fill="#effaf2" stroke="#1a7f37" stroke-width="4"/>
+<text x="80" y="396" font-size="24" letter-spacing="2.4" fill="#1a7f37">SECRET PLANE, ONE PROGRAM</text>
+<text x="80" y="444" font-size="40" font-weight="700" fill="#1f2328"><tspan font-family="ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace" font-size="36">varlatchd</tspan>, the security authority</text>
+<text x="80" y="490" font-size="28" fill="#57606a">The public API (/v1) and the dashboard. Everything that feeds an authorization decision lives here.</text>
+<rect x="80" y="524" width="155" height="44" rx="22" fill="#f6f8fa" stroke="#d0d7de" stroke-width="2"/><text x="157.5" y="555" font-size="26" text-anchor="middle" fill="#1f2328">passkeys</text>
+<rect x="247" y="524" width="149" height="44" rx="22" fill="#f6f8fa" stroke="#d0d7de" stroke-width="2"/><text x="321.5" y="555" font-size="26" text-anchor="middle" fill="#1f2328">identities</text>
+<rect x="408" y="524" width="201" height="44" rx="22" fill="#f6f8fa" stroke="#d0d7de" stroke-width="2"/><text x="508.5" y="555" font-size="26" text-anchor="middle" fill="#1f2328">organizations</text>
+<rect x="621" y="524" width="119" height="44" rx="22" fill="#f6f8fa" stroke="#d0d7de" stroke-width="2"/><text x="680.5" y="555" font-size="26" text-anchor="middle" fill="#1f2328">grants</text>
+<rect x="752" y="524" width="152" height="44" rx="22" fill="#f6f8fa" stroke="#d0d7de" stroke-width="2"/><text x="828" y="555" font-size="26" text-anchor="middle" fill="#1f2328">contracts</text>
+<rect x="916" y="524" width="200" height="44" rx="22" fill="#f6f8fa" stroke="#d0d7de" stroke-width="2"/><text x="1016" y="555" font-size="26" text-anchor="middle" fill="#1f2328">secret values</text>
+<rect x="1128" y="524" width="117" height="44" rx="22" fill="#f6f8fa" stroke="#d0d7de" stroke-width="2"/><text x="1186.5" y="555" font-size="26" text-anchor="middle" fill="#1f2328">crypto</text>
+<rect x="1257" y="524" width="103" height="44" rx="22" fill="#f6f8fa" stroke="#d0d7de" stroke-width="2"/><text x="1308.5" y="555" font-size="26" text-anchor="middle" fill="#1f2328">audit</text>
+<path d="M438 608V724" stroke="#8c959f" stroke-width="4" fill="none"/><path d="M424 720h28l-14 18z" fill="#8c959f"/><text x="466" y="682.0" font-size="26" fill="#57606a">one writer</text>
+<path d="M1266 608V724" stroke="#8c959f" stroke-width="4" fill="none"/><path d="M1252 720h28l-14 18z" fill="#8c959f"/><text x="1294" y="682.0" font-size="26" fill="#57606a">reads</text>
+<rect x="32" y="738" width="812" height="206" rx="28" fill="#ffffff" stroke="#d0d7de" stroke-width="2"/>
+<text x="78" y="798" font-size="24" letter-spacing="2.4" fill="#57606a">DATA DIRECTORY</text>
+<text x="78" y="846" font-size="40" font-weight="700" fill="#1f2328">SQLite, one file</text>
+<text x="78" y="894" font-size="28" fill="#57606a">Secret values and their keys: ciphertext only.</text>
+<rect x="860" y="738" width="812" height="206" rx="28" fill="#ffffff" stroke="#d0d7de" stroke-width="2"/>
+<text x="906" y="798" font-size="24" letter-spacing="2.4" fill="#57606a">KEPT APART</text>
+<text x="906" y="846" font-size="40" font-weight="700" fill="#1f2328">Root KEK, backup key</text>
+<text x="906" y="894" font-size="28" fill="#57606a">Files. Never in the database or a backup.</text>
+</svg>

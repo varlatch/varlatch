@@ -559,13 +559,15 @@ func runMigrateDiscard(cfg *config.Config, a migrateArgs, stdout io.Writer, fail
 	removed := []string{}
 	for _, e := range entries {
 		n := e.Name()
-		if !e.Type().IsRegular() {
+		if !e.Type().IsRegular() && n != backup.HoldFile {
 			continue
 		}
 		db := n == config.DatabaseFile || n == config.DatabaseFile+"-wal" || n == config.DatabaseFile+"-shm" || n == config.DatabaseFile+"-journal"
 		if h.Phase == "rolled-back" && strings.HasPrefix(n, frozen) {
 			db = true
 		}
+		// A restore's hold is the database's: none is left without one.
+		db = db || n == backup.HoldFile
 		if !db && !migrate.IsLeftover(n) {
 			continue
 		}

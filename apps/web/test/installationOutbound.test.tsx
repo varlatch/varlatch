@@ -94,7 +94,7 @@ describe("Outbound tab", () => {
   it("shows the allow list as parsed, says it is set on the host, and shows doctor's warnings", async () => {
     await show(OUTBOUND);
     const allow = one("outbound-allow");
-    expect(allow).toContain("Set on the host as VARLATCH_OUTBOUND_ALLOW");
+    expect(allow).toContain("Set on the host as outbound_allow in varlatchd.conf");
     expect(allow).toContain("cannot be changed here");
     expect(one("outbound-allow-entries")).toBe("sink.example:9999127.0.0.1/32");
     expect(one("outbound-warning")).toContain("127.0.0.1/32 opens a host-only range");
@@ -115,7 +115,7 @@ describe("Outbound tab", () => {
 
   it("gives the suggested line to add on the host", async () => {
     await show(OUTBOUND);
-    expect(one("outbound-suggested-line")).toContain("VARLATCH_OUTBOUND_ALLOW=sink.example:9999,127.0.0.1/32,hooks.lan,coolify.lan:8443");
+    expect(one("outbound-suggested-line")).toContain("outbound_allow = sink.example:9999,127.0.0.1/32,hooks.lan,coolify.lan:8443");
     expect(one("outbound-suggested")).toContain("restart varlatchd");
   });
 

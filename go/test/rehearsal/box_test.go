@@ -67,6 +67,7 @@ type profileConfig struct {
 	// (VL_RH_RESTORE_BEK, VL_RH_RESTORE_KEK), all files the operator copied
 	// to this host; the harness never fetches one.
 	restore, restoreBEK, restoreKEK string
+	memory                          bool   // VL_RH_MEMORY=1: the copy stays in memory (memory_test.go)
 	bundleOut                       string // VL_RH_ONLY=bundle: where the synthetic archive and its keys go
 }
 
@@ -205,6 +206,19 @@ func readProfile(euid int) (profileConfig, error) {
 	}
 	if prof.kill != "" && prof.kill != "transfer" && prof.kill != "barrier" {
 		return prof, fmt.Errorf("VL_RH_KILL is transfer or barrier, not %q", prof.kill)
+	}
+	if v := os.Getenv("VL_RH_MEMORY"); v != "" {
+		switch {
+		case v != "1":
+			return prof, fmt.Errorf("VL_RH_MEMORY is 1 or unset, not %q", v)
+		case prof.restore == "":
+			return prof, errors.New("VL_RH_MEMORY=1 is a restored copy's (VL_RH_SOURCE=restore:<archive>)")
+		case prof.sync != "":
+			return prof, errors.New("VL_RH_MEMORY=1 runs the restored copy's cases: leave VL_RH_SYNC unset")
+		case os.Getenv("VL_RH_KEEP") == "1":
+			return prof, errors.New("VL_RH_MEMORY=1 leaves nothing behind: leave VL_RH_KEEP unset")
+		}
+		prof.memory = true
 	}
 	// Each is honoured or refused, never left aside: what it asks for is
 	// what runs.
@@ -463,12 +477,22 @@ func (in *installation) installUnit(t *testing.T) {
 	// The case's environment for the target (service.env: its trust
 	// roots), as the workstation's fake systemctl gives it.
 	unit := unitFile(runID+", "+in.name, filepath.Join(in.state, "service.env"), filepath.Join(binDir, "varlatchd"), in.conf)
+	if prof.memory {
+		// Its log in the run's directory, not in the journal.
+		log := in.targetLog()
+		unit = strings.Replace(unit, "\nRestart=no\n", "\nRestart=no\nLimitCORE=0\nStandardOutput=append:"+log+"\nStandardError=append:"+log+"\n", 1)
+	}
 	path := filepath.Join("/etc/systemd/system", in.unitName()+".service")
 	if err := os.WriteFile(path, []byte(unit), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	must(t, run("", nil, nil, "systemctl", "daemon-reload"), "systemctl daemon-reload")
 }
+
+// targetLog is the file the target logs to: the stand-in systemctl's on a
+// workstation, the unit's own in memory. On the box it is otherwise in the
+// journal.
+func (in *installation) targetLog() string { return filepath.Join(in.state, "service.log") }
 
 // unitFile is the run's unit. How it starts and how long it may take to
 // stop are the shipped unit's (go/install/varlatchd.service): without them

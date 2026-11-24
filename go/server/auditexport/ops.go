@@ -112,7 +112,7 @@ func requirePerson(p *auth.Principal) error {
 
 func (s *Service) requireSwitchOn() error {
 	if !s.Enabled {
-		return &domainerr.Error{Code: "PERMISSION_DENIED", Message: "The host operator turned audit export off on this installation (VARLATCH_AUDIT_EXPORT=off)",
+		return &domainerr.Error{Code: "PERMISSION_DENIED", Message: "The host operator turned audit export off on this installation (audit_export = off in varlatchd.conf)",
 			Details: jsvalue.Object{{Key: "reason", Value: "audit-export-off"}}}
 	}
 	return nil

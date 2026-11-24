@@ -14,20 +14,21 @@
  *   <wrapper> serve --config <conf>
  *             `docker run` in the foreground, the container named
  *             vl-conformance-<installation directory's name>: host network,
- *             the installation directory mounted at its own path (its data
- *             directory, Root KEK file and configuration), as this user, with
- *             only SSL_CERT_FILE, VARLATCH_CONFORMANCE_OUTBOUND_HOSTS and
+ *             read-only root filesystem (no tmpfs), the installation
+ *             directory mounted at its own path (its data directory, Root
+ *             KEK file and configuration), as this user, with only
+ *             SSL_CERT_FILE, VARLATCH_CONFORMANCE_OUTBOUND_HOSTS and
  *             VARLATCH_CONFORMANCE_CLI_RELEASE from the environment. The
  *             supervisor's SIGTERM reaches varlatchd
  *             through docker's signal proxy
  *   <wrapper> admin ... --config <conf>
  *             `docker exec` in that container while it runs; otherwise a
- *             container of its own, removed when it ends
+ *             read-only container of its own, removed when it ends
  *   <wrapper> admin conformance-probe ...   (up's check, no installation)
- *             a container of its own, removed when it ends
+ *             a read-only container of its own, removed when it ends
  *   <wrapper> admin conformance-sign-release <dir> <version>
  *             (serve-cli's release, go-binary's prepareCliRelease) a
- *             container of its own with <dir> alone mounted at its own path
+ *             read-only container of its own with <dir> alone mounted at its own path
  *             (not the installation's Root KEK, data or configuration): it
  *             reads and signs the files in <dir> and writes the signature
  *             and the trusted root into it
@@ -90,13 +91,13 @@ if [ "\${1:-}" = serve ]; then
   # This installation's container, by its exact name: one that ended and
   # is not yet removed would hold the name.
   docker rm -fv "$name" >/dev/null 2>&1 || true
-  exec docker run --rm --name "$name" --network host --user "$user" $mount \\
+  exec docker run --rm --read-only --name "$name" --network host --user "$user" $mount \\
     $env --entrypoint ${VARLATCHD} "$image" "$@"
 fi
 if [ -n "$conf" ] && [ "$(docker inspect -f '{{.State.Running}}' "$name" 2>/dev/null)" = true ]; then
   exec docker exec "$name" ${VARLATCHD} "$@"
 fi
-exec docker run --rm --name "$name-admin-$$" --network host --user "$user" $mount \\
+exec docker run --rm --read-only --name "$name-admin-$$" --network host --user "$user" $mount \\
   $env --entrypoint ${VARLATCHD} "$image" "$@"
 `;
 }

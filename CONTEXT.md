@@ -11,16 +11,16 @@ The security authority of Varlatch: authentication, identities, credentials, org
 _Avoid_: vault, crypto service, control plane
 
 **Application Plane**:
-The non-authoritative part of Varlatch: the reactive dashboard backend and the Mirrors it serves. Anything that feeds an authorization decision, including Contracts, tiers, and the Organization/Project/Environment skeleton, is authoritative in the Secret Plane and only mirrored here. Nothing in the Application Plane can independently grant, change, or forge access to secrets; corrupting it may break the UI, never authorization. Everything it holds can be rebuilt; non-authoritative never means disposable (see Installation Archive).
+The non-authoritative part of Varlatch: the dashboard's code in a person's browser, and the Change Signals it receives. Anything that feeds an authorization decision, including Contracts, tiers, and the Organization/Project/Environment skeleton, is authoritative in the Secret Plane and only displayed here. Nothing in the Application Plane can independently grant, change, or forge access to secrets; corrupting it may break the UI, never authorization. It holds no authoritative state: the browser keeps conveniences only (the theme, the sidebar, the last organization, recent pages). (Up to 0.23.0 it was a separate backend, Convex, that held Mirrors.)
 _Avoid_: control plane (implies authority it must not have), backend, app server
 
 **varlatchd**:
-The daemon that implements the Secret Plane. The sole credential authority (alongside explicitly trusted external identity providers), the only component that can decrypt secret material, and the component that participates directly in a tailnet for tailnet-bound retrieval. Every principal authenticates to it end-to-end; it never accepts another component's word about who a caller is.
+The daemon that implements the Secret Plane, and all an Installation runs: one program with its own SQLite database, the dashboard's files embedded in it. The sole credential authority (alongside explicitly trusted external identity providers), the only component that can decrypt secret material, and the component that participates directly in a tailnet for tailnet-bound retrieval. Every principal authenticates to it end-to-end; it never accepts another component's word about who a caller is.
 _Avoid_: latchd, broker (a Broker is a different component)
 
-**Mirror**:
-A one-way, read-only copy of Secret Plane state published into the Application Plane for reactive display. Authority flows only Secret Plane → Application Plane; a stale or corrupted Mirror produces incorrect UI, never incorrect authorization.
-_Avoid_: sync, replica (both suggest bidirectionality)
+**Change Signal**:
+What the dashboard's live updates carry: that something changed in an Organization (or about an Identity), in which domains, when, and the last audit event's ID; never the data. It goes to that Organization's members only, one way, Secret Plane → Application Plane. The dashboard then reads what it may from `/v1`; a lost signal makes the UI late, never authorization wrong.
+_Avoid_: sync, mirror (a Mirror was 0.23.0's copy of Secret Plane state in Convex), event (reserved for Security Audit Events)
 
 **Installation**:
 One deployed instance of Varlatch. An Installation may contain many Organizations.
@@ -40,7 +40,7 @@ _Avoid_: superadmin, root user
 An Identity with application-level administrative authority inside one Organization. Confers nothing outside that Organization, and cannot reset another user's global authentication root.
 
 **Infrastructure Operator**:
-A threat-model authority, not an application role: whoever controls the deployment itself: host, containers, exec/terminal access, volumes, environment, Secret Plane database credentials, running image/process, or KEK. Application policy cannot constrain an Infrastructure Operator; Varlatch makes their interventions explicit and audited, never claims to prevent them.
+A threat-model authority, not an application role: whoever controls the deployment itself: host, root or exec/terminal access, the data directory, the environment, the running binary, image or process, or the KEK. Application policy cannot constrain an Infrastructure Operator; Varlatch makes their interventions explicit and audited, never claims to prevent them.
 _Avoid_: hidden super admin, root role
 
 **Identity**:
@@ -202,11 +202,11 @@ The small set of operator-chosen inputs an Installation is built from: its publi
 _Avoid_: env, settings (ambiguous with Installation settings in the dashboard)
 
 **Installation Health**:
-Whether the whole Installation is operating as intended: release and Application Plane consistency, Mirror lag, realtime reachability, configuration consistency, backups, and custody. Distinct from Secret Plane readiness; degraded Installation Health never withholds secret retrieval.
+Whether the whole Installation is operating as intended: its configuration, file modes, the disk and the clock, the certificate, the tailnet, backups, and custody. Distinct from Secret Plane readiness; degraded Installation Health never withholds secret retrieval.
 _Avoid_: readiness (reserved for Secret Plane serviceability)
 
 **Installation Archive**:
-A sealed, point-in-time copy of every durable source users expect to recover (today, the Secret Plane); everything else is rebuilt on restore. Recovery also takes its separately held encryption key and Root KEK, the release artifacts, and the Installation Configuration: an archive never contains the Root KEK and never suffices alone.
+A sealed, point-in-time copy of every durable source users expect to recover: the Secret Plane's database. Recovery also takes its separately held encryption key and Root KEK, the release artifacts, and the Installation Configuration: an archive never contains the Root KEK and never suffices alone.
 _Avoid_: backup (the activity, not the artifact), snapshot, dump
 
 **Custody Attestation**:
@@ -226,7 +226,7 @@ _Avoid_: audit (reserved for Security Audit Events)
 ### Outbound sync
 
 **Sync Target**:
-A configured, standing disclosure of one Environment's mapped Values to one external platform destination (a repository's CI secrets, a Coolify application, a hosting project), pushed by varlatchd itself. Its *disclosure set*, the items it may ever push including future items for a wildcard mapping, is fixed by an audited write-time gate; pushes converge the destination to the current Effective Configuration, best-effort and audited before material leaves. Surfaced in the UI as an *integration*, always opt-in: no Sync Target exists until an authorized user creates one. Explicitly not a Mirror: a Mirror projects state into Varlatch's own Application Plane and never carries Secret Material; a Sync Target deliberately sends Secret Material outside Varlatch's authority.
+A configured, standing disclosure of one Environment's mapped Values to one external platform destination (a repository's CI secrets, a Coolify application, a hosting project), pushed by varlatchd itself. Its *disclosure set*, the items it may ever push including future items for a wildcard mapping, is fixed by an audited write-time gate; pushes converge the destination to the current Effective Configuration, best-effort and audited before material leaves. Surfaced in the UI as an *integration*, always opt-in: no Sync Target exists until an authorized user creates one. It deliberately sends Secret Material outside Varlatch's authority.
 _Avoid_: mirror, export, plugin (implies installable third-party code); "integration" is the UI label, not the model term
 
 **Platform Adapter**:
@@ -244,7 +244,7 @@ _Avoid_: API key (ambiguous with Varlatch credentials)
 ### Network and agent concepts
 
 **Tailnet Context**:
-Trusted request-scoped information (node, tags, user, pinned tailnet) derived only from a connection through Varlatch's dedicated Tailscale ingress and verified via the supported Tailscale identity mechanism. Never constructed from headers, forwarded IPs, or CGNAT-range source addresses on the ordinary listener.
+Trusted request-scoped information (node, tags, user, pinned tailnet) derived only from a connection through Varlatch's own tailnet node and verified via the supported Tailscale identity mechanism. Never constructed from headers, forwarded IPs, or CGNAT-range source addresses on the ordinary listener.
 _Avoid_: tailscale headers, source-IP identity
 
 **Tailnet Selector**:
@@ -281,7 +281,7 @@ An AI coding agent acting as a distinct, less-trusted Identity, never as the hum
 
 **Agent Run**:
 One ephemeral execution of an Agent: a spawned child process correlated by a run identifier, holding Placeholders, proxy configuration, and a per-run proxy token, but no reusable Varlatch credential (unless the explicit metadata-credential mode adds an Agent Metadata Credential). It gets its own empty configuration directory (`VARLATCH_CONFIG_DIR`, removed at exit) and `VARLATCH_AGENT_RUN`, so a CLI it starts never reads the operator's credential store. Capabilities are scoped to a run and die with it (revoke-on-exit best-effort, TTL as fail-safe).
-_Avoid_: session (overloaded with Better Auth sessions)
+_Avoid_: session (overloaded with browser sessions)
 
 **Agent Metadata Credential**:
 A short-lived (≤1h), read-only bearer a Broker mints for an Agent Identity so one Agent Run can read configuration metadata directly. Explicit opt-in, never the default; identity only (authority stays with the Agent's Grants), and refused for every non-read operation regardless of Grants.

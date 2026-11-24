@@ -73,6 +73,10 @@ type remote struct {
 	mu      sync.Mutex
 	objects map[string][]byte
 	gets    []string
+	// serve, when set, is what every download answers with, whatever its
+	// key; missing answers that there is nothing.
+	serve   []byte
+	missing bool
 }
 
 func (s *remote) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
@@ -85,7 +89,10 @@ func (s *remote) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		rw.Header().Set("ETag", `"etag"`)
 	case http.MethodGet:
 		b, ok := s.objects[r.URL.Path]
-		if !ok {
+		if ok && s.serve != nil {
+			b = s.serve
+		}
+		if !ok || s.missing {
 			rw.WriteHeader(404)
 			_, _ = io.WriteString(rw, `<?xml version="1.0"?><Error><Code>NoSuchKey</Code><Message>no</Message></Error>`)
 			return
@@ -631,6 +638,45 @@ func TestG5FinishAfterARollback(t *testing.T) {
 		t.Errorf("removed after the refusal: %v", vols)
 	}
 	bucket := w.withRemote()
+	// The uploaded copy gone, then an older archive (whole, under the same
+	// keys) in the new one's place: both refused, with nothing discarded.
+	set := func(missing bool, serve []byte) {
+		bucket.mu.Lock()
+		defer bucket.mu.Unlock()
+		bucket.missing, bucket.serve = missing, serve
+	}
+	uploaded := func() (bs [][]byte) {
+		bucket.mu.Lock()
+		defer bucket.mu.Unlock()
+		for _, b := range bucket.objects {
+			bs = append(bs, b)
+		}
+		return bs
+	}
+	set(true, nil)
+	refused := func(what string) {
+		t.Helper()
+		if code := w.finish("", "--delete-old-data"); code != 1 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "remote copy") {
+			t.Fatalf("--delete-old-data with %s: %d\n%s", what, code, w.outputs[len(w.outputs)-1])
+		}
+		if _, err := os.Stat(filepath.Join(w.data, "varlatch.db")); err != nil {
+			t.Fatalf("Go's copy after %s: %v", what, err)
+		}
+		if vols, _ := w.removed(); len(vols) != 0 {
+			t.Errorf("removed after %s: %v", what, vols)
+		}
+	}
+	refused("the uploaded copy gone")
+	older := uploaded()
+	if len(older) != 1 {
+		t.Fatalf("uploads: %d", len(older))
+	}
+	set(false, older[0])
+	refused("an older archive in its place")
+	set(false, nil)
+	bucket.mu.Lock()
+	bucket.gets, bucket.objects = nil, map[string][]byte{}
+	bucket.mu.Unlock()
 	if code := w.finish("finish go discarded", "--delete-old-data"); code != -1 {
 		t.Fatalf("not killed: %d\n%s", code, w.outputs[len(w.outputs)-1])
 	}

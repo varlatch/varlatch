@@ -56,6 +56,8 @@ type statusJSON struct {
 		RootKEK      bool `json:"rootKek"`
 		Installation bool `json:"installation"`
 	} `json:"ready"`
+	// Held is whether a restore's hold stands (backup.Hold).
+	Held bool `json:"held,omitempty"`
 }
 
 // statusOnline is `admin status` in this process: the running varlatchd
@@ -94,11 +96,15 @@ func runStatus(ctx context.Context, env *hostEnv, rest []string, stdout, stderr 
 	if env.ready != nil {
 		st.Ready.Schema, st.Ready.RootKEK, st.Ready.Installation = env.ready(ctx)
 	}
+	st.Held = env.admission != nil && env.admission.Held()
 	if asJSON {
 		return printJSON(stdout, stderr, "varlatchd admin status", st)
 	}
 	fmt.Fprintf(stdout, "varlatchd %s (schema version %d) is running; serving: %v; schema ready: %v, Root KEK: %v, installation: %v.\n",
 		st.Version, st.SchemaVersion, st.Serving, st.Ready.Schema, st.Ready.RootKEK, st.Ready.Installation)
+	if st.Held {
+		fmt.Fprintln(stdout, "It was restored from an archive and is held: varlatchd admin restore resume ends that.")
+	}
 	return ExitOK
 }
 

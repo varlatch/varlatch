@@ -238,6 +238,8 @@ if [ "$(systemctl is-active varlatchd.service)" = active ] && [ "$(curl -s -o /d
 else
   fail "g13: the restored installation is not ready"
 fi
+if curl -s http://127.0.0.1:8686/readyz | grep -q '"held":true' && grep -q 'sudo varlatch admin restore resume' "$work/g13.out"; then pass "g13: the restored installation is held, and setup says so"; else fail "g13: the restored installation is not held"; fi
+if /usr/local/bin/varlatch admin restore resume >/dev/null && ! curl -s http://127.0.0.1:8686/readyz | grep -q held; then pass "g13: varlatch admin restore resume ends the hold"; else fail "g13: the hold was not ended"; fi
 status_after=$(/usr/local/bin/varlatchd admin bootstrap-status --config /etc/varlatch/varlatchd.conf 2>&1 || true)
 if [ -n "$admin_before" ] && printf '%s' "$status_after" | grep -q "$admin_before,\"enabled\":true,\"hasPasskey\":true"; then
   pass "g13: the administrator and their passkey are restored"

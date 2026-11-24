@@ -89,6 +89,11 @@ func restoredInstallation(t *testing.T, rel release, s3 *s3Server, name string) 
 	if ok, detail := in.isolatedBeforeStart(); !record2(t, restoreItem, name+": before the copy starts: isolated", ok, detail) {
 		t.FailNow()
 	}
+	if prof.memory {
+		if err := in.memoryVolumes(); !record2(t, memoryItem, name+": its volumes are made in memory", err == nil, fmt.Sprint(err)) {
+			t.FailNow()
+		}
+	}
 	ts := filepath.Join(in.fakebin, "varlatch-ts")
 	r := run(in.dir, nil, nil, ts, "admin", "backup", "restore", "--in", prof.restore, "--bek-file", in.bek,
 		"--kek-file", filepath.Join(in.dir, "secrets", "varlatch-kek"), "--dir", in.dir)
@@ -247,6 +252,9 @@ func restoreCase(t *testing.T, rel release, s3 *s3Server) {
 	if !record2(t, item, "a day of changes on Go through the CLI", err == nil, fmt.Sprintf("%d values set (%v)", changes, err)) {
 		return
 	}
+	// And objects of the run's, in writes past what SQLite keeps in memory.
+	w := in.hostWriter(t, item, "the migration")
+	w.writes()
 	changed, err := rd.read()
 	record(t, item, "the CLI reads the changes on Go", err == nil && changed.parts["values"] != before.parts["values"] && changed.parts["value names"] != before.parts["value names"],
 		rd.describe(changed, err))
@@ -266,6 +274,7 @@ func restoreCase(t *testing.T, rel release, s3 *s3Server) {
 	reverseParity(t, in)
 	back, err := rd.read()
 	record(t, item, "the CLI reads after the rollback: the day's changes are on 0.23.0", err == nil && sameReads(changed, back), rd.compare(changed, back, err))
+	w.kept("0.23.0, after the rollback")
 	// Go's copy discarded, then the migration again.
 	f := in.migrateFinish(rel)
 	record(t, item, "--finish --delete-old-data after the rollback: Go's copy discarded", f.code == 0, f.String()+" "+lastLines(f.stdout, 3))
@@ -288,6 +297,7 @@ func restoreCase(t *testing.T, rel release, s3 *s3Server) {
 	vols := run("", nil, nil, "docker", "volume", "ls", "-q", "--filter", "label=com.docker.compose.project="+in.project)
 	measure("item 14: the source's volumes after finish", fmt.Sprint(len(strings.Fields(vols.stdout))))
 	convertArchive(t, in, rel)
+	in.memoryLogs(t, rd)
 }
 
 // filesUnder is each regular file under dir, by its path there, and its
@@ -384,10 +394,10 @@ func (in *installation) goRunsIsolated(rd *reader) (bool, string) {
 		}
 	}
 	var log string
-	if prof.box {
+	if prof.box && !prof.memory {
 		log = run("", nil, nil, "journalctl", "-u", in.unitName()+".service", "--no-pager", "-o", "cat").stdout
 	} else {
-		b, _ := os.ReadFile(filepath.Join(in.state, "service.log"))
+		b, _ := os.ReadFile(in.targetLog())
 		log = string(b)
 	}
 	if !strings.Contains(log, "sync targets disabled by sync = off") {
@@ -569,6 +579,8 @@ type reader struct {
 	home, repo, key   string
 	token             string
 	org, project, env string
+	// names are the last read's: each Environment's value names.
+	names map[string][]string
 }
 
 // reads are one round of the reader's reads: per read, an HMAC of what
@@ -799,6 +811,10 @@ func (rd *reader) read() (reads, error) {
 		}
 		fmt.Fprintf(&listings, "%s\n%s\n", env, out)
 		r.names += len(names)
+		if rd.names == nil {
+			rd.names = map[string][]string{}
+		}
+		rd.names[env] = names
 		namesFile := filepath.Join(rd.in.state, "digest-names")
 		if err := os.WriteFile(namesFile, []byte(strings.Join(names, "\n")), 0o600); err != nil {
 			return r, err
@@ -883,6 +899,100 @@ func envDigest(args []string) int {
 	}
 	fmt.Printf("%d %s\n", found, hex.EncodeToString(m.Sum(nil)))
 	return 0
+}
+
+// envScan is this binary as envscan <names-file> <file>..., the command
+// varlatch run gives the Environment's values to: it prints how many of the
+// values it looked for in the files (those of 12 characters or more: a
+// shorter one is found by chance), and how many it found, never a value.
+func envScan(args []string) int {
+	if len(args) < 1 {
+		return 64
+	}
+	tried, found, err := scanFor(args[0], args[1:])
+	if err != nil {
+		return 1
+	}
+	fmt.Printf("%d %d\n", tried, found)
+	return 0
+}
+
+func scanFor(names string, paths []string) (tried, found int, err error) {
+	b, err := os.ReadFile(names)
+	if err != nil {
+		return 0, 0, err
+	}
+	var files [][]byte
+	for _, p := range paths {
+		f, err := os.ReadFile(p)
+		if err != nil {
+			return 0, 0, err
+		}
+		files = append(files, f)
+	}
+	for _, name := range strings.Split(string(b), "\n") {
+		v := os.Getenv(name)
+		if len(v) < 12 {
+			continue
+		}
+		tried++
+		if slices.ContainsFunc(files, func(f []byte) bool { return bytes.Contains(f, []byte(v)) }) {
+			found++
+		}
+	}
+	return tried, found, nil
+}
+
+// memoryLogs: what was logged to a file or to the journal holds no value of
+// the copy's (VL_RH_MEMORY=1: the run's log and report are on disk, the
+// target's log is not).
+func (in *installation) memoryLogs(t *testing.T, rd *reader) {
+	if !prof.memory {
+		return
+	}
+	var files []string
+	if _, err := os.Stat(in.targetLog()); err == nil {
+		files = append(files, in.targetLog())
+	}
+	if prof.box {
+		r := run("", nil, nil, "journalctl", "-u", in.unitName()+".service", "--no-pager", "-o", "cat", "_TRANSPORT=stdout")
+		record(t, memoryItem, in.name+": the journal holds nothing the target logged", r.code <= 1 && strings.Trim(r.stdout, "\n") == "" || strings.HasPrefix(r.stdout, "-- No entries"),
+			fmt.Sprintf("%d bytes", len(r.stdout)))
+		all := run("", nil, nil, "journalctl", "-u", in.unitName()+".service", "--no-pager", "-o", "cat").stdout
+		path := filepath.Join(in.state, "journal.txt")
+		if err := os.WriteFile(path, []byte(all), 0o600); err == nil {
+			files = append(files, path)
+		}
+	}
+	entries, _ := os.ReadDir(reportDir)
+	for _, e := range entries {
+		if e.Type().IsRegular() {
+			files = append(files, filepath.Join(reportDir, e.Name()))
+		}
+	}
+	self, _ := os.Executable()
+	link := filepath.Join(rd.repo, "envscan")
+	if err := os.Symlink(self, link); err != nil && !errors.Is(err, fs.ErrExist) {
+		record(t, memoryItem, in.name+": no value in a log", false, err.Error())
+		return
+	}
+	tried, found := 0, 0
+	for _, env := range slices.Sorted(maps.Keys(rd.names)) {
+		path := filepath.Join(in.state, "scan-names")
+		if err := os.WriteFile(path, []byte(strings.Join(rd.names[env], "\n")), 0o600); err != nil {
+			record(t, memoryItem, in.name+": no value in a log", false, err.Error())
+			return
+		}
+		v := rd.cli(append([]string{"run", "-e", env, "--", link, path}, files...)...)
+		var a, b int
+		if _, err := fmt.Sscanf(strings.TrimSpace(lastLine(v.stdout)), "%d %d", &a, &b); v.code != 0 || err != nil {
+			record(t, memoryItem, in.name+": no value in a log", false, fmt.Sprintf("varlatch run: exit %d: %s", v.code, redact(lastLines(v.stderr, 2))))
+			return
+		}
+		tried, found = tried+a, found+b
+	}
+	record(t, memoryItem, in.name+": no value of the copy's is in the target's log or the run's", tried > 0 && found == 0,
+		fmt.Sprintf("%d values of 12 characters or more looked for in %d files, %d found", tried, len(files), found))
 }
 
 // --- the converter on the archive ---

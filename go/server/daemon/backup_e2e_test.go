@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -234,6 +235,9 @@ func TestBackupRestoreEndToEnd(t *testing.T) {
 	if code != ExitOK || !strings.HasPrefix(out, "Restore completed for inst_") || !strings.Contains(out, archiveID) {
 		t.Fatalf("restore: %d %q %q", code, out, errOut)
 	}
+	if !strings.Contains(out, "The installation is held") || !strings.Contains(out, "varlatchd admin restore resume") {
+		t.Errorf("the restore does not say it holds: %q", out)
+	}
 	tr := start(t, target)
 	s, _, body, err := disclose(client, "http://"+tr.addr, fixture)
 	if err != nil || s != 200 || !strings.Contains(body, "hunter2-hunter2") {
@@ -252,6 +256,180 @@ func TestBackupRestoreEndToEnd(t *testing.T) {
 	var restored string
 	if err := conn.QueryRow("SELECT json_extract(metadata, '$.archiveId') FROM audit_events WHERE event_type = 'installation.restored' ORDER BY event_order DESC LIMIT 1").Scan(&restored); err != nil || restored != archiveID {
 		t.Errorf("installation.restored names %q (%v), want %s", restored, err, archiveID)
+	}
+}
+
+// A completed restore holds the installation (backup.Hold): it serves, and
+// an organization deletion that is due in the archive (cancelled since, say)
+// does not run, across a restart, until `admin restore resume`, in the
+// running varlatchd or on a stopped one's data directory; each resume is
+// audited.
+func TestRestoreHoldsWork(t *testing.T) {
+	if testing.Short() {
+		t.Skip("restores and restarts")
+	}
+	in, bek, _ := backupInstall(t, t.TempDir(), 0)
+	path := filepath.Join(in.data, config.DatabaseFile)
+	exec1 := func(q string) {
+		t.Helper()
+		conn, err := sql.Open("sqlite", "file:"+path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.Close()
+		if _, err := conn.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	one := func(q string) (v string) {
+		t.Helper()
+		conn, err := sql.Open("sqlite", "file:"+path+"?mode=ro")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.Close()
+		if err := conn.QueryRow(q).Scan(&v); err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	exec1(`INSERT INTO organization_deletions (id, organization_id, requested_by, scheduled_at, run_after, approval_required)
+		SELECT 'odl_aaaaaaaaaaaaaaaaaaaaaaaaaa', o.id, (SELECT id FROM identities LIMIT 1), 1000000, 2000000, 0 FROM organizations o WHERE o.slug = 'acme'`)
+	const deleted = `SELECT completed_at IS NOT NULL FROM organization_deletions WHERE id = 'odl_aaaaaaaaaaaaaaaaaaaaaaaaaa'`
+	const resumed = `SELECT count(*) FROM audit_events WHERE event_type = 'installation.restore_resumed'`
+	admin := func(want int, args ...string) string {
+		t.Helper()
+		code, out, errOut := runAdmin(t, append(args, "--config", in.conf)...)
+		if code != want {
+			t.Fatalf("%v: %d %q %q", args, code, out, errOut)
+		}
+		return out + errOut
+	}
+	m := archiveCreated.FindStringSubmatch(admin(ExitOK, "backup", "run"))
+	if m == nil {
+		t.Fatal("no archive")
+	}
+	if out := admin(ExitOK, "restore", "status"); out != "{\"held\":false}\n" {
+		t.Errorf("status before a restore: %q", out)
+	}
+	if out := admin(ExitFailure, "restore", "resume"); !strings.Contains(out, "not held") {
+		t.Errorf("resume before a restore: %q", out)
+	}
+	admin(ExitOK, "backup", "restore", "--in", m[1], "--backup-key-file", bek)
+	readyz := func(r *running) string {
+		t.Helper()
+		res, err := http.Get("http://" + r.addr + "/readyz")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		b, _ := io.ReadAll(res.Body)
+		if res.StatusCode != 200 {
+			t.Errorf("/readyz %d", res.StatusCode)
+		}
+		return string(b)
+	}
+	var r *running
+	for range 2 {
+		r = start(t, in)
+		r.stopOnCleanup(t)
+		// The deletion worker's first pass is at the start; it has long
+		// been once this is over (the control below deletes within it).
+		time.Sleep(1500 * time.Millisecond)
+		if v := one(deleted); v != "0" {
+			t.Fatal("the organization was deleted while held")
+		}
+		if b := readyz(r); !strings.HasSuffix(strings.TrimSpace(b), `,"held":true}`) {
+			t.Errorf("/readyz while held: %s", b)
+		}
+		if out := admin(ExitOK, "restore", "status"); !strings.HasPrefix(out, `{"held":true,"archiveId":"`) {
+			t.Errorf("status while held: %q", out)
+		}
+		if out := admin(ExitOK, "status"); !strings.Contains(out, "is held: varlatchd admin restore resume") {
+			t.Errorf("admin status while held: %q", out)
+		}
+		// A backup is made while held.
+		admin(ExitOK, "backup", "run")
+		if !strings.Contains(r.stderr.String(), "was restored from an archive and is held") {
+			t.Error("the log does not say it is held")
+		}
+		r.stop(t)
+	}
+	// Online.
+	r = start(t, in)
+	r.stopOnCleanup(t)
+	admin(ExitOK, "restore", "resume")
+	if b := readyz(r); strings.Contains(b, "held") {
+		t.Errorf("/readyz once resumed: %s", b)
+	}
+	if v := one(resumed); v != "1" {
+		t.Errorf("%s installation.restore_resumed events", v)
+	}
+	if v := one(`SELECT json_extract(metadata, '$.archiveId') IS NOT NULL AND actor_identity_id IS NULL FROM audit_events WHERE event_type = 'installation.restore_resumed'`); v != "1" {
+		t.Error("the event does not name its archive")
+	}
+	r.stop(t)
+	// Restored again, resumed with varlatchd stopped: the deletion that was
+	// due then runs at the start (the control).
+	admin(ExitOK, "backup", "restore", "--in", m[1], "--backup-key-file", bek)
+	gate := filepath.Join(in.data, backup.GateFile)
+	if err := os.WriteFile(gate, []byte(`{"id":"g","kind":"restore","phase":"paused","expiresAt":null,"archiveId":null}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out := admin(ExitFailure, "restore", "resume"); !strings.Contains(out, MaintenanceRefusal) {
+		t.Errorf("resume behind a restore's gate: %q", out)
+	}
+	if err := os.Remove(gate); err != nil {
+		t.Fatal(err)
+	}
+	admin(ExitOK, "restore", "resume")
+	r = start(t, in)
+	r.stopOnCleanup(t)
+	for deadline := time.Now().Add(1500 * time.Millisecond); one(deleted) != "1"; time.Sleep(50 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the due deletion did not run at the start of a resumed installation, so the checks above show nothing")
+		}
+	}
+	r.stop(t)
+}
+
+// A restore's hold in a data directory without a database: an import is
+// refused, naming it and how to clear it, and `restore resume` removes it
+// without making a database; a dangling link is cleared the same way.
+func TestStaleHold(t *testing.T) {
+	in := newInstall(t, "")
+	path := filepath.Join(in.data, backup.HoldFile)
+	for _, c := range []struct {
+		make func() error
+		what string
+	}{
+		{func() error { return backup.WriteHold(in.data, backup.Hold{ArchiveID: "a", RestoredAt: "t"}) }, "the hold's file"},
+		{func() error { return os.Symlink(filepath.Join(in.dir, "missing"), path) }, "a symbolic link"},
+	} {
+		if err := c.make(); err != nil {
+			t.Fatal(err)
+		}
+		if err := importableDataDir(in.data); err == nil || !strings.Contains(err.Error(), backup.HoldFile) || !strings.Contains(err.Error(), "varlatchd admin restore resume") {
+			t.Errorf("an import beside a hold: %v", err)
+		}
+		if code, out, _ := runAdmin(t, "restore", "status", "--config", in.conf); code != ExitOK || !strings.HasPrefix(out, `{"held":true`) {
+			t.Errorf("status: %d %q", code, out)
+		}
+		if code, out, errOut := runAdmin(t, "restore", "resume", "--config", in.conf); code != ExitOK || !strings.Contains(out, "Removed the stale "+backup.HoldFile+" ("+c.what+")") {
+			t.Errorf("resume: %d %q %q", code, out, errOut)
+		}
+		if _, err := os.Lstat(filepath.Join(in.data, config.DatabaseFile)); !os.IsNotExist(err) {
+			t.Fatalf("a database was made: %v", err)
+		}
+		if err := importableDataDir(in.data); err != nil {
+			t.Errorf("an import afterwards: %v", err)
+		}
+	}
+	if code, _, errOut := runAdmin(t, "restore", "resume", "--config", in.conf); code != ExitFailure || !strings.Contains(errOut, "not held") {
+		t.Errorf("nothing to clear: %d %q", code, errOut)
+	}
+	if _, err := os.Lstat(filepath.Join(in.data, config.DatabaseFile)); !os.IsNotExist(err) {
+		t.Fatalf("a database was made: %v", err)
 	}
 }
 

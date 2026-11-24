@@ -15,7 +15,9 @@ import (
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/migrate"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/selfupdate"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/upgrade"
+	"github.com/varlatch/varlatch/go/lib/backup"
 	"github.com/varlatch/varlatch/go/lib/jsjson"
+	"github.com/varlatch/varlatch/go/lib/keyenv"
 	"github.com/varlatch/varlatch/go/lib/release"
 	journal "github.com/varlatch/varlatch/go/lib/upgradejournal"
 )
@@ -31,7 +33,8 @@ const upgradeUsage = `Usage:
                 release.json, checks that SHA256SUMS is signed by the release workflow of varlatch/varlatch for that
                 version, takes an encrypted snapshot kept 30 days, updates a copy of the database, swaps the binaries
                 and the database, restarts varlatchd and keeps the new release only when its health checks pass;
-                anything else ends with the previous release serving. While a migration's rollback window is open, a
+                otherwise it goes back to the previous release, and when that cannot be completed, says what is left
+                and where the snapshot is. While a migration's rollback window is open, a
                 release that ends it is upgraded to only once confirmed (--end-rollback-window without a prompt).
                 --check looks for a newer release and records what it found for the dashboard's notice. A Compose
                 installation's upgrade is varlatch-ts upgrade)`
@@ -113,6 +116,18 @@ func (r *Run) upgrade() error {
 		return r.upgradeCheck(ctx, u, version, parsed.Has("--prerelease"), parsed.Has("--json"))
 	}
 
+	// Held after a restore while an upgrade is pending: undoing it would put
+	// the database it set aside in the restored one's place.
+	if j, err := u.Pending(); err != nil {
+		return Fail("varlatch upgrade: "+err.Error()+". Nothing was changed.", ExitFailure)
+	} else if j != nil {
+		if h, err := backup.ReadHold(j.DataDir); err != nil || h != nil {
+			file := filepath.Join(filepath.Dir(config), journal.File)
+			return Fail("varlatch upgrade: this installation was restored from an archive and is held, and an upgrade from "+j.From+" to "+j.To+" is still pending: finishing or undoing it would replace the restored database. "+
+				"First move "+file+" away, which closes that upgrade (its files stay in "+j.Work+"); then put right what changed since the archive and run varlatch admin restore resume; then varlatch upgrade. Nothing was changed.", ExitFailure)
+		}
+	}
+
 	// An upgrade left pending is finished or undone first, and nothing else.
 	if j, err := u.Recover(ctx); err != nil {
 		return upgradeFailure(err)
@@ -126,6 +141,12 @@ func (r *Run) upgrade() error {
 	if err != nil {
 		return Fail("varlatch upgrade: "+err.Error()+". Nothing was changed.", ExitFailure)
 	}
+	// A restored installation is upgraded once it is resumed: a release
+	// from before the hold does not know its file, so an upgrade undone to
+	// one would serve unheld.
+	if h, err := backup.ReadHold(inst.DataDir); err != nil || h != nil {
+		return Fail("varlatch upgrade: this installation was restored from an archive and is held: put right what changed since, run varlatch admin restore resume, then upgrade. Nothing was changed.", ExitFailure)
+	}
 	src := selfUpdateSource(r)
 	plan, err := selfupdate.Choose(ctx, src, selfupdate.Options{
 		Version: version, Prerelease: parsed.Has("--prerelease"), Current: inst.Version, GOOS: "linux", GOARCH: runtime.GOARCH,
@@ -138,6 +159,10 @@ func (r *Run) upgrade() error {
 	}
 	rel, err := upgrade.Fetch(ctx, src, plan.Latest, runtime.GOARCH)
 	if err != nil {
+		return upgradeFailure(err)
+	}
+	// Before anything is asked or recorded (the migration's window below).
+	if err := upgrade.SchemaRefusal(inst, rel.Version, rel.Manifest); err != nil {
 		return upgradeFailure(err)
 	}
 	safe := upgrade.RollbackSafe(rel.Manifest, inst)
@@ -286,7 +311,11 @@ func (r *Run) upgradeCheck(ctx context.Context, u *upgrade.Upgrader, version str
 		})
 	}
 	if plan.UpdateAvailable {
-		return r.println("varlatchd " + plan.Latest + " is available (this host runs " + plan.Current + "): " + plan.ReleaseURL + ". Upgrade with sudo varlatch upgrade.")
+		how, what := "Upgrade with sudo varlatch upgrade.", "this host runs "
+		if r.Getenv(keyenv.ImageMarker) != "" {
+			how, what = "Upgrade by deploying its image, by the digest the release names.", "this image is "
+		}
+		return r.println("varlatchd " + plan.Latest + " is available (" + what + plan.Current + "): " + plan.ReleaseURL + ". " + how)
 	}
 	return r.println("varlatchd " + plan.Current + " is up to date.")
 }

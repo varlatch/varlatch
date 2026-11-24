@@ -47,7 +47,9 @@ import (
 //     the archive's and its canary opens with the Root KEK, and the
 //     installation.restored audit event is the first new one, with every
 //     live audit export's new stream after it (ADR-0056 Decision 5);
-//  6. the gate is removed.
+//  6. the installation is held (backup.Hold): what an archive brings back
+//     does nothing on its own until the host operator resumes it;
+//  7. the gate is removed.
 //
 // A restore that fails or is killed leaves the gate open; running it
 // again with the same archive completes it.
@@ -75,7 +77,7 @@ func Restore(ctx context.Context, cfg *config.Config, archive string, bek backup
 	if m.FormatVersion != backup.FormatGo {
 		return RestoreResult{}, fmt.Errorf("this is the TypeScript server's archive (format %d): the migration to varlatchd (ADR-0059 step 7) converts it; a restore takes a varlatchd archive", m.FormatVersion)
 	}
-	if !Compatible(m) {
+	if !Compatible(ctx, m, opened.Path(backup.ComponentDatabase)) {
 		r, _ := m.GoRelease()
 		return RestoreResult{}, fmt.Errorf("this release (%s, database schema %d) cannot restore an archive of %s with database schema %d", buildinfo.Version, db.SchemaVersion, r.Version, r.DatabaseSchema)
 	}
@@ -126,6 +128,9 @@ func Restore(ctx context.Context, cfg *config.Config, archive string, bek backup
 
 	if err := reconcile(audit.WithClock(ctx, now), cfg, m, opened.ManifestJSON, rootKEK, now()); err != nil {
 		return RestoreResult{}, err
+	}
+	if err := backup.WriteHold(cfg.DataDir, backup.Hold{ArchiveID: m.ArchiveID, RestoredAt: iso(now())}); err != nil {
+		return RestoreResult{}, fmt.Errorf("the restored installation could not be held: %w", err)
 	}
 	if err := os.Remove(filepath.Join(cfg.DataDir, backup.GateFile)); err != nil {
 		return RestoreResult{}, err

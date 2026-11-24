@@ -6378,7 +6378,8 @@
         }
       ],
       "differences": [
-        "user-agent"
+        "user-agent",
+        "host-settings"
       ],
       "expect": {
         "status": 0,

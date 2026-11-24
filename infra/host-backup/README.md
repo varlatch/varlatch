@@ -1,5 +1,11 @@
 # Scheduled backups with systemd (reference tooling)
 
+> For 0.23.0 and earlier, on Docker Compose. From 0.50, the server backs
+> itself up on a schedule of its own:
+> [Backup and recovery](../../docs/operations/backup.md). The commands this
+> job uses are in
+> [0.23.0's runbook](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/operations/backup.md).
+
 A root systemd timer that runs `varlatch admin backup` nightly on
 the host that runs the Compose installation: capture, delivery to an
 S3-compatible destination, local verification, pruning, and a published

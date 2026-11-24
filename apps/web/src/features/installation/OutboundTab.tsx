@@ -75,7 +75,7 @@ export function OutboundReport({ outbound }: { outbound: InstallationOutbound })
     <div className="space-y-6">
       <SectionCard
         title="Allow list"
-        description="Private destinations Organizations may reach. Set on the host as VARLATCH_OUTBOUND_ALLOW, read when varlatchd starts; it cannot be changed here."
+        description="Private destinations Organizations may reach. Set on the host as outbound_allow in varlatchd.conf, read when varlatchd starts; it cannot be changed here."
         data-testid="outbound-allow"
       >
         <div className="px-5 py-4">
@@ -168,11 +168,11 @@ export function OutboundReport({ outbound }: { outbound: InstallationOutbound })
       {outbound.suggested && (
         <SectionCard
           title="Allow them on the host"
-          description="Add this line to the installation's .env, then restart varlatchd. Every Organization on this installation can then reach these destinations."
+          description="Set this line in varlatchd.conf, then restart varlatchd. Every Organization on this installation can then reach these destinations."
           data-testid="outbound-suggested"
         >
           <div className="space-y-3 px-5 py-4 text-[13px]">
-            <CodeBlock lines={[`VARLATCH_OUTBOUND_ALLOW=${outbound.suggested}`]} data-testid="outbound-suggested-line" />
+            <CodeBlock lines={[`outbound_allow = ${outbound.suggested}`]} data-testid="outbound-suggested-line" />
             <p className="text-muted">
               Check a value before restarting with <Mono>varlatch admin outbound check --allow &lt;value&gt;</Mono>.
             </p>

@@ -343,6 +343,11 @@ func serve(opts Options, h *hooks) int {
 	} else if g != nil {
 		log.Warn("installation maintenance is active; varlatchd answers 503 MAINTENANCE until it ends", "kind", g.Kind, "lease", g.ID)
 	}
+	// A restore's hold (backup.Hold): the workers that deliver or destroy
+	// (below, admission.EnterWork) wait until the host operator resumes.
+	if admission.Held() {
+		log.Warn("the installation was restored from an archive and is held: its background work (sync, webhooks, audit export, organization deletion) does not run until varlatchd admin restore resume", "file", filepath.Join(cfg.DataDir, backup.HoldFile))
+	}
 	// Public HTTPS (step 6's decision 4), when listen_https is set: the
 	// certificate manager first, so the listeners report can show it.
 	var public *publictls.Manager
@@ -494,7 +499,7 @@ func serve(opts Options, h *hooks) int {
 	go func() {
 		defer close(webhookDone)
 		hooks := &webhooks.Service{Writer: writer, Approvals: approvals, RootKEK: rootKEK, Policy: policy, Log: log}
-		hooks.RunLoop(ctx, webhooks.Interval, admission.Enter)
+		hooks.RunLoop(ctx, webhooks.Interval, admission.EnterWork)
 	}()
 	defer func() { cancel(); <-webhookDone }()
 	// The converge engine (ADR-0031, ADR-0050; feature-parity decision 7),
@@ -507,7 +512,7 @@ func serve(opts Options, h *hooks) int {
 		go func() {
 			defer close(syncDone)
 			engine := &syncs.Service{Writer: writer, Approvals: approvals, RootKEK: rootKEK, Policy: policy, Adapters: cfg.SyncAdapters, Log: log}
-			engine.RunLoop(ctx, syncs.SyncInterval, admission.Enter)
+			engine.RunLoop(ctx, syncs.SyncInterval, admission.EnterWork)
 		}()
 		defer func() { cancel(); <-syncDone }()
 	} else {
@@ -523,7 +528,7 @@ func serve(opts Options, h *hooks) int {
 		go func() {
 			defer close(exportDone)
 			worker := &auditexport.Service{Writer: writer, Approvals: approvals, RootKEK: rootKEK, Policy: policy, Now: time.Now, Enabled: true, Log: log}
-			worker.RunLoop(ctx, auditexport.Interval, admission.Enter)
+			worker.RunLoop(ctx, auditexport.Interval, admission.EnterWork)
 		}()
 		defer func() { cancel(); <-exportDone }()
 	}
@@ -538,7 +543,7 @@ func serve(opts Options, h *hooks) int {
 		defer close(deletionDone)
 		drains := &auditexport.Service{Writer: writer, Approvals: approvals, RootKEK: rootKEK, Policy: policy, Now: time.Now, Log: log}
 		deletions := &orgdeletion.Service{Writer: writer, Approvals: approvals, Drains: drains, Now: time.Now, Log: log}
-		deletions.RunLoop(ctx, orgdeletion.Interval, admission.Enter)
+		deletions.RunLoop(ctx, orgdeletion.Interval, admission.EnterWork)
 	}()
 	defer func() { cancel(); <-deletionDone }()
 	// The GitHub App registration sweep (ADR-0054 amendment D): a pass at
@@ -548,7 +553,7 @@ func serve(opts Options, h *hooks) int {
 	go func() {
 		defer close(sweepDone)
 		apps := &githubapps.Service{Writer: writer, Approvals: approvals, RootKEK: rootKEK, Policy: policy, Now: time.Now, Log: log}
-		apps.RunSweepLoop(ctx, githubapps.SweepInterval, admission.Enter)
+		apps.RunSweepLoop(ctx, githubapps.SweepInterval, admission.EnterWork)
 	}()
 	defer func() { cancel(); <-sweepDone }()
 	// A passkey's relying party is the public URL's host, and browsers
@@ -574,6 +579,7 @@ func serve(opts Options, h *hooks) int {
 		Writer:          writer,
 		RootKEK:         rootKEK,
 		Maintenance:     admission,
+		Held:            admission.Held,
 		Backups:         env.backups,
 		Log:             log,
 	}

@@ -111,6 +111,10 @@ type IngressInfo struct {
 	// OutboundAllowFromConfig: varlatchd was not running, so OutboundAllow
 	// is docker compose config's value, not the container's.
 	OutboundAllowFromConfig bool
+	// ExtraCACerts is the source's NODE_EXTRA_CA_CERTS, "" for none: the
+	// file, in varlatchd's container, of certificate authorities it trusts
+	// beside Node.js's own. It is named in a warning and never read.
+	ExtraCACerts string
 }
 
 // SourceInfo is what a migration starts from.

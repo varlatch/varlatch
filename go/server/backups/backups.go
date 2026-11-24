@@ -161,7 +161,11 @@ func (s *Service) Status() (backup.Status, error) {
 	if err != nil {
 		return backup.Status{}, err
 	}
-	return backup.ReadStatusFor(s.dir, s.o.Now(), life)
+	st, err := backup.ReadStatusFor(s.dir, s.o.Now(), life)
+	if err != nil {
+		return backup.Status{}, err
+	}
+	return st.WithoutRemoteCheck(), nil
 }
 
 // lifecycle is the live database's (backup.Lifecycle): its installation
@@ -342,7 +346,7 @@ func (s *Service) Run(ctx context.Context) (Result, error) {
 	// The snapshot is not needed any more: free its room before the check.
 	_ = os.Remove(snapshot)
 
-	verification, err := s.verify(ctx, staged, bek, work, keys)
+	verification, err := s.verify(ctx, id, staged, bek, work, keys)
 	if testHooks.verified != nil {
 		testHooks.verified()
 	}
@@ -391,7 +395,12 @@ func (s *Service) Run(ctx context.Context) (Result, error) {
 			res.Delivery = delivery
 		}
 	}
-	res.Removed = s.retain(backups)
+	// Held after a restore, nothing is removed from this host: the archive
+	// it came from, and those after it, may still be needed.
+	res.Removed = []string{}
+	if s.o.Admission == nil || !s.o.Admission.Held() {
+		res.Removed = s.retain(backups)
+	}
 	if res.UploadError != "" {
 		return res, errors.New(res.UploadError)
 	}
@@ -626,16 +635,53 @@ func (s *Service) manifest(ctx context.Context, id, createdAt string, meta metad
 }
 
 // Compatible is whether this release restores an archive: a Go archive
-// of this API major whose schema this release opens. The TypeScript
-// server's archives are converted by step 7, not restored.
-func Compatible(m backup.Manifest) bool {
+// of this API major, whose database is of the schema its manifest names, one
+// this release opens as it does at startup (daemon's readiness): its own, or
+// a newer one whose compatible_from lets it (a rollback-safe release wrote
+// it, and this one serves it after the rollback). database is the archive's
+// database, as opened. The TypeScript server's archives are converted by
+// step 7, not restored.
+func Compatible(ctx context.Context, m backup.Manifest, database string) bool {
 	r, err := m.GoRelease()
-	return err == nil && r.APIMajor == APIMajor && r.DatabaseSchema == db.SchemaVersion
+	if err != nil || r.APIMajor != APIMajor {
+		return false
+	}
+	version, compatibleFrom, err := schemaOf(ctx, database)
+	if err != nil || version != int64(r.DatabaseSchema) {
+		return false
+	}
+	return version == db.SchemaVersion || version > db.SchemaVersion && compatibleFrom <= db.SchemaVersion
 }
 
-// verify opens the archive again (its integrity), and checks this release
-// restores it and the Root KEK opens its canaries.
-func (s *Service) verify(ctx context.Context, archive string, bek backup.BEK, scratch string, keys *backup.KeyCache) (backup.Verification, error) {
+// schemaOf reads a database file's schema_version, the record startup reads
+// (its table, its one row), and that it is one varlatchd writes.
+func schemaOf(ctx context.Context, path string) (version, compatibleFrom int64, err error) {
+	conn, err := sql.Open("sqlite", fileURI(path)+"?mode=ro&immutable=1")
+	if err != nil {
+		return 0, 0, err
+	}
+	defer conn.Close()
+	var tables int
+	if err := conn.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name = 'schema_version'").Scan(&tables); err != nil {
+		return 0, 0, err
+	}
+	if tables != 1 {
+		return 0, 0, db.ErrNotVarlatch
+	}
+	if err := conn.QueryRowContext(ctx, "SELECT version, compatible_from FROM schema_version WHERE singleton = 1").Scan(&version, &compatibleFrom); err != nil {
+		return 0, 0, err
+	}
+	if version < 1 || compatibleFrom < 1 || compatibleFrom > version {
+		return 0, 0, fmt.Errorf("the recorded version %d (compatible from %d) is not a varlatch schema version", version, compatibleFrom)
+	}
+	return version, compatibleFrom, nil
+}
+
+// verify opens the archive again (its integrity: it opens, and is the
+// archive id and not another one sealed under the same key, such as an
+// older copy at its key in the bucket), and checks this release restores it
+// and the Root KEK opens its canaries.
+func (s *Service) verify(ctx context.Context, id, archive string, bek backup.BEK, scratch string, keys *backup.KeyCache) (backup.Verification, error) {
 	v := backup.Verification{TargetRelease: buildinfo.Version}
 	// Every check of an unpaced Open, paced like the sealing, with the key
 	// the sealing derived.
@@ -645,9 +691,12 @@ func (s *Service) verify(ctx context.Context, archive string, bek backup.BEK, sc
 	}
 	if err != nil {
 		s.o.Log.Warn("backup: the archive does not open", "archive", archive, "error", err)
+	} else if o.Manifest.ArchiveID != id {
+		s.o.Log.Warn("backup: the archive is another one", "archive", archive, "archiveId", id, "found", o.Manifest.ArchiveID)
+		_ = o.Close()
 	} else {
 		v.Integrity = true
-		v.Compatibility = Compatible(o.Manifest)
+		v.Compatibility = Compatible(ctx, o.Manifest, o.Path(backup.ComponentDatabase))
 		candidates := map[int][]byte{}
 		for _, version := range o.Manifest.RequiredKeyVersions {
 			candidates[version] = s.o.RootKEK
@@ -703,7 +752,7 @@ func (s *Service) HasDestination() bool {
 
 // VerifyRemote downloads the archive id's uploaded copy from the
 // configured destination, opens it and checks it as the run checked the
-// local one (integrity, this release restores it, the Root KEK opens its
+// local one (integrity: it opens and is the archive id; this release restores it, the Root KEK opens its
 // canaries), and records the result as its delivery's remote
 // verification. The download is removed after. An archive with no
 // recorded upload is refused.
@@ -753,7 +802,7 @@ func (s *Service) VerifyRemote(ctx context.Context, id string) (backup.Verificat
 	if _, err := client.Download(ctx, key, downloaded); err != nil {
 		return backup.Verification{}, err
 	}
-	v, err := s.verify(ctx, downloaded, bek, work, &backup.KeyCache{})
+	v, err := s.verify(ctx, id, downloaded, bek, work, &backup.KeyCache{})
 	if err != nil {
 		return v, err
 	}
