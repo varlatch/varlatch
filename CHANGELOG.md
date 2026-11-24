@@ -418,7 +418,7 @@ Changes since 0.50.0-rc.3, by pull request. Most changes were reviewed on
 branches of their own and merged together, by #463 and #332; where a change
 had a pull request of its own, it is named too.
 
-<!-- SLOT #332 (batch 2: A1, A2 and A3, B, B7, docs/upgrade-rollback; text from go/6.6c-rollback 2a4662be, not pushed; head 2a4662be; recheck against the merged PR, then remove both markers; or drop) -->
+<!-- SLOT #332 (merged 886c4c3b; reread 2026-11-24 against its head 97a3e9b5) -->
 - **`varlatch upgrade --rollback` (#332)** returns to the release the last
   upgrade came from (0.50.0-rc.4 or later), with that release's kept
   binaries. When the release you leave declared itself rollback-safe for that
@@ -486,7 +486,7 @@ had a pull request of its own, it is named too.
   removal and a restore. The tests that need root run in CI as root. No
   change to what is shipped.
 <!-- END SLOT #332 -->
-<!-- SLOT #463 (batch 1, armed; text from release/rc4-batch-1; head 64bd6dd4; recheck against the merged PR, then remove both markers; or drop) -->
+<!-- SLOT #463 (merged 14eb86e2; reread 2026-11-24 against its head 64bd6dd4) -->
 - **A restored installation is held until you resume it (#454, in #463).** An
   archive brings back what was changed since it was made: a deletion
   cancelled since, a webhook removed since, an old value. After every restore
