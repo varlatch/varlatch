@@ -170,6 +170,7 @@ has_not() { [ "$(value "$1")" = absent ]; }
 put() { printf 'value-of-%s' "$1" | client values set "$1" --stdin -e development >/dev/null 2>&1; }
 # Of the journal's own members: a rollback's has the upgrade's in it.
 journal_says() { grep -q "^  \"state\": *\"$1\"" /etc/varlatch/upgrade.json 2>/dev/null; }
+not_in_progress() { ! journal_says in-progress; }
 journal_step() { sed -n 's/^  "step": *"\([^"]*\)".*/\1/p' /etc/varlatch/upgrade.json 2>/dev/null; }
 # varlatchd runs as varlatch: a file of root's in its directory is one it may
 # not be able to open.
@@ -375,7 +376,7 @@ export VARLATCH_TEST_UPGRADE_KILL="install:$CANDIDATE:varlatch"
 upgrade from-new-first "$tool" "$CANDIDATE" --yes --accept-not-rollback-safe
 unset VARLATCH_TEST_UPGRADE_KILL
 check "from-new-first: killed there" [ "$status" = 137 ]
-check "from-new-first: nothing is in progress" sh -c '! grep -q "\"state\": *\"in-progress\"" "$1"' sh /etc/varlatch/upgrade.json
+check "from-new-first: nothing is in progress" not_in_progress
 check "from-new-first: $CANDIDATE's varlatch beside $FROM's varlatchd" [ "$("$VARLATCH" --version), $("$VARLATCHD" --version)" = "varlatch $CANDIDATE, varlatchd $FROM" ]
 restarted
 check "from-new-first: $FROM answers" ready
