@@ -102,6 +102,10 @@ replay or a suite named here does not exist.
 | `secret.use` is distinct from `secret.reveal`, never in the Member bundle, arrives only via explicit Grants, and is tailnet-constrained | **SHIPPED GUARANTEE** | `server/authz.TestEvaluateVectors`, `server/authz.TestActionsMatchTypeScript`; replay `capabilities` |
 | Capability issuance never expands authority: exercise re-evaluates the Agent's `secret.use` (incl. Tailnet Requirements against the exercise request) against current state; Grant revocation, Capability revocation, and expiry all deny the very next exercise; rotation resolves at exercise (Model B) | **SHIPPED GUARANTEE** | `server/capabilities.TestTypeScriptFixture` (replay `capabilities`); suite `broker` |
 | Capabilities are unforgeable handles: exercise needs the ID, the hash-at-rest capability secret, and the bound Broker's bearer, all agreeing; mismatches are existence-hidden | **SHIPPED GUARANTEE** | replay `capabilities` (a wrong secret, another Broker, a person, another environment) |
+| A Capability issued for another Broker (Go server) widens nothing: issuing needs an explicit `capability.issue` Grant in scope (no built-in role holds it; it counts for service, workload, ci and broker identities only), the named identity must be a live Broker of the same Organization, only that Broker can exercise it, the Agent's `secret.use` is still evaluated at exercise, and so is the issuer's `capability.issue`; callers without the right are told `Not found`. Issuer and Broker are both in the audit events | **SHIPPED GUARANTEE** | `server/capabilities.TestIssueForAnotherBroker`, `server/capabilities.TestIssuingForAnotherWidensNothing`, `server/capabilities.TestWhoMayNotIssueForAnother`, `server/capabilities.TestTheIssuersRightIsEvaluatedAtExercise`, `server/capabilities.TestListAndRevokeWhatWasIssued` |
+| An exercise-only credential (Go server) exercises Capabilities issued for its Broker, of its run when its binding names one, and is refused every other `/v1` operation, reads included: one check at authentication lets through one route pattern, so a route added later refuses it too | **SHIPPED GUARANTEE** | `server/capabilities.TestEveryOtherOperationRefusesAnExerciseOnlyCredential` (every operation), `server/capabilities.TestExerciseOnlyCredential`, `server/capabilities.TestRunIDClaim` |
+| A token exchanged under a binding with `singleExchange` (always on for exercise-only bindings) is exchanged once, across restarts and concurrent requests; a single-use Capability is exercised once, likewise | **SHIPPED GUARANTEE** | `server/capabilities.TestATokenIsExchangedOnce`, `server/capabilities.TestATokenIsExchangedOnceUnderConcurrency`, `server/capabilities.TestSingleUse`, `server/capabilities.TestSingleUseUnderConcurrency`, `server/capabilities.TestARevocationHoldsThroughARefusedSingleUse` |
+| These limits fail closed on a server that does not know them (an earlier release after a rollback, the TypeScript server after a reverse migration): it accepts neither the credential, nor an exchange under the binding, nor the Capability | **SHIPPED GUARANTEE** | `server/capabilities.TestLimitsFailClosedOnAnOlderServer`; `server/migration/check.TestTheReverseChecksWithLimits` |
 | Reference expansion at exercise is strict and capability-bound: referenced Secrets must be named in the Capability, non-sensitive pull-ins require the Agent's `config.value.read` and are audited before use, and any unresolvable reference denies the exercise rather than sending literal `${NAME}` upstream | **SHIPPED GUARANTEE** | replay `capabilities`; `server/values.TestExpandReferences`; suite `broker` |
 | Destination constraints are canonical host+port; wildcards never match the apex; every hop is independently checked and successful exercise is audited (host+port + `item@versionId`) before decryption | **SHIPPED GUARANTEE** | `server/authz.TestDestinationVectors`; replay `capabilities`; suite `broker` |
 | In agent-safe runs the Agent Run's environment holds opaque placeholders and no reusable Varlatch credential; substitution happens only in broker-originated, TLS-verified requests to allowlisted destinations, at the Substitution Targets recorded on the Capability; redirects are relayed, never followed with substituted material; CONNECT to secret-using destinations is refused (no MITM) | **SHIPPED GUARANTEE** | `cmd/varlatch/internal/broker.TestBrokerScenarios`, `cmd/varlatch/internal/broker.TestWireVectors`, `cmd/varlatch/internal/broker.TestWrongCredentialReachesNothing`; suite `broker` (real TLS upstream, redirect and decoy targets) |
@@ -225,6 +229,42 @@ And the honest limits, stated with the same discipline:
   Agent. Start agent-safe runs from a clean environment.
 - **Plain `varlatch run` (without `--agent-safe`) still injects plaintext**
   into the child environment (§5); agent safety is opt-in per run.
+
+A setup where an orchestrator issues Capabilities for brokers on other
+machines (`capability.issue`, exercise-only OIDC bindings; the Go server)
+limits each party, and no further than this:
+
+- **A compromised broker machine** can exercise every live Capability it was
+  given the secret of (with `runIdClaim`, of its run), at any recorded
+  placement, for a destination it reports itself, and keep the values. It
+  can use up a single-use Capability. It cannot list, read, issue, revoke or
+  sign in as anything else with its credential, which lasts an hour at most;
+  revoking the Capability, the credential or the broker stops it at its next
+  request.
+- **A compromised orchestrator** can issue, in the Environments of its Grant,
+  Capabilities naming any item, any Agent of the Organization and any live
+  broker, and hand their secrets out. It cannot exercise one itself. What
+  they reach is bounded by the Agents' `secret.use` Grants: an Agent of its
+  own for what the orchestrator schedules keeps that small. Removing its
+  Grant, or retiring it, refuses every Capability it issued from the next
+  exercise on.
+- **An orchestrator that also signs the brokers' OIDC tokens is both at
+  once**: it can exchange a token for any broker whose binding trusts its
+  issuer, and exercise what it issues. Keep the issuer's signing key out of
+  reach of the credential that holds `capability.issue`, or the limit is the
+  Agents' Grants alone.
+- **A replayed token** exchanges nothing under a binding with
+  `singleExchange`, for as long as the token is valid. Whoever exchanges it
+  first gets the credential: a thief that wins leaves the rightful holder
+  refused (`token-already-exchanged` in the audit log). Restoring a backup
+  restores what it knew of exchanged tokens: those exchanged after it, and
+  still valid, can be exchanged once more. Bindings without the limit accept
+  a token until it expires, as before.
+- **A guessed Capability ID** is told `Capability not found`, as another
+  broker's, another run's or a wrong secret's is; the secret is 32 random
+  bytes. Each attempt is in the audit log.
+- **A granted exercise of a single-use Capability uses it up** even when the
+  broker never receives the answer. A refused one does not.
 
 ## 7. Reviewing a claim
 

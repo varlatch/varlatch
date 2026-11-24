@@ -52,7 +52,7 @@ A linked mechanism by which an Identity proves who it is: a passkey, an external
 _Avoid_: login method, auth provider (the provider is the external system, not the link)
 
 **Credential**:
-A revocable bearer artifact by which an Identity exercises an Authentication Method for a bounded time: it has a kind (`browser`, `cli`, OIDC-exchanged, agent-metadata), an expiry, and an individual server-side record that can be listed and revoked. A Credential proves *who is calling right now*; it is never the Identity itself, never carries authority beyond the Identity's Grants, and expiry is a feature, not an inconvenience.
+A revocable bearer artifact by which an Identity exercises an Authentication Method for a bounded time: it has a kind (`browser`, `cli`, OIDC-exchanged, agent-metadata), an expiry, and an individual server-side record that can be listed and revoked. A Credential proves *who is calling right now*; it is never the Identity itself, never carries authority beyond the Identity's Grants, and expiry is a feature, not an inconvenience. An *exercise-only* Credential, from an OIDC binding that says so, carries less: it exercises its Broker's Capabilities (of one run, when tied to one) and nothing else.
 _Avoid_: token (overloaded: proxy tokens and Placeholders are not Credentials), API key (implies non-expiring)
 
 ### Configuration and secrets
@@ -258,7 +258,7 @@ _Avoid_: IP allowlisting, VPN-gating, tailnet-bound retrieval (the flagship *use
 An explicitly enrolled mapping from a Tailscale node or tag to a Varlatch Identity, establishing the principal before ordinary authorization. Tag enrollment is a documented, audited delegation to whoever can assign that tag in the tailnet.
 
 **Capability**:
-A short-lived, constrained authorization artifact issued *and verified* by the Secret Plane, binding one Broker, one Agent, one Environment, explicit Config Items, canonical Destination Selectors, and an expiry. Represented as a server-side record redeemed with a high-entropy capability secret (hash-at-rest); it *narrows* potential future use and never expands the Agent's Grants: every exercise re-evaluates the Agent's `secret.use` against current state.
+A short-lived, constrained authorization artifact issued *and verified* by the Secret Plane, binding one Broker, one Agent, one Environment, explicit Config Items, canonical Destination Selectors, and an expiry. Represented as a server-side record redeemed with a high-entropy capability secret (hash-at-rest); it *narrows* potential future use and never expands the Agent's Grants: every exercise re-evaluates the Agent's `secret.use` against current state. Issued by its Broker, or, with `capability.issue`, by another machine identity for the Broker it names; only its Broker exercises it, and a single-use one once.
 _Avoid_: scoped token, macaroon, biscuit (all presume a self-certifying representation this is not)
 
 **Broker**:

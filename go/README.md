@@ -1539,6 +1539,29 @@ other machine identity step-up operations.
 
   Every failure answers 401 `INVALID_CREDENTIAL` alike; the
   `authentication.failed` event keeps the reason.
+- **Limits** (ADR-0060, `server/oidc/limits`; Go only, capability
+  `auth.oidc.limits`). A binding may say `exerciseOnly` (a Broker's only),
+  `runIdClaim` (with it) and `singleExchange` (always on with it). A token
+  that matches several bindings gets the limits of all; two different run
+  claims are ambiguous.
+  - They are one reserved claim (`varlatch:limits`) in the binding's
+    `claims`, written and read strictly: an older server requires a token
+    to carry it, which none does, so it exchanges nothing there. Callers
+    may not name a claim that starts with `varlatch:`.
+  - An exercise-only credential's `token_hash` is `exercise:` and the hash,
+    which an older server never looks up; its run is in
+    `exercise_credentials`, and without that row it authenticates nothing.
+    `auth.Service.Authenticate` refuses one; only `AuthenticateExercise`,
+    which the HTTP layer calls for the exercise's own route pattern,
+    accepts it. Every other operation answers 403 `PERMISSION_DENIED` and
+    records `authorization.denied` (`exercise_only_credential`).
+  - A single exchange is recorded in the credential's own write job
+    (`oidc_token_uses`, the SHA-256 of the issuer and the `jti`, or of the
+    token's signed part without one), so an exchange that is refused spends
+    nothing and two at once issue one. A use is kept until an hour after
+    the token stops being accepted and pruned by later exchanges; a token
+    valid for more than a day exchanges nothing under such a binding. A
+    replay is `token-already-exchanged`, recorded in the Organization.
 - **The verifier** (`verify.go`) checks the token as the TypeScript code
   does:
   - RS256 and ES256 only, with 60 seconds of skew on exp and nbf;
@@ -1848,6 +1871,27 @@ may use; it never adds to the Agent's Grants.
   the current one, unexpanded. An exercise a Requirement covers is
   `TAILNET_CONTEXT_REQUIRED` without a device: on the ordinary listener,
   always (see "The tailnet listeners").
+- **For another Broker, and single use** (ADR-0060; Go only, capabilities
+  `capabilities.delegate` and `capabilities.single-use`).
+  - `capability.issue` (`authz.CapabilityIssue`) on the environment lets a
+    service, workload, ci or broker identity issue for the Broker its body
+    names. It is not in `authz.Actions`: no built-in role holds it, and a
+    Grant of it to a person or an Agent has no effect. Without it the
+    answer is the one anyone but a Broker always got, and a denial that
+    named a Broker is recorded. The issuing job decides it again, then that
+    the Broker is one of the Organization's and not retired.
+  - Only the named Broker exercises. The snapshot also decides that the
+    issuer (`created_by`, when not the Broker) is live and still holds
+    `capability.issue` there, else `issuer-not-allowed`.
+  - The issuer lists what it issued and revokes it, the latter with or
+    without its Grant.
+  - A single-use Capability's `secret_hash` is `once:` and the hash, `used:`
+    once spent: in `capability.exercised`'s own job, so of several exercises
+    at once one is granted. A refusal after that event (an unresolved
+    reference) gives the use back, never touching `revoked_at`; any other
+    failure leaves it spent. An older server matches no secret against
+    either.
+  - `server/capabilities` `delegation_test.go` covers all of it over HTTP.
 - **Parity.** `capabilities-v0.22.0.json`
   (go-capabilities-fixture.test.ts) replays 154 requests: issuance in
   every form and refusal (every target rule, every zod issue, the
