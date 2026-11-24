@@ -243,6 +243,20 @@ var differences = map[string]transcript.Difference{
 			o.Stdout = cli.DoctorHelp + "\n"
 		}
 	},
+	// `varlatch --help` (and no command, and an unknown one) prints a Go
+	// installation's host commands; the TypeScript usage has a Compose
+	// installation's.
+	"host-usage": func(o *transcript.Outcome, _ transcript.Outcome) {
+		o.Stdout = strings.Replace(o.Stdout, cli.TypeScriptUsage, cli.Usage, 1)
+		o.Stderr = strings.Replace(o.Stderr, cli.TypeScriptUsage, cli.Usage, 1)
+	},
+	// `varlatch help tailnet` (and `tailnet --help`, `tailnet -h`) has `repin`
+	// too, which only the Go CLI has.
+	"tailnet-usage": func(o *transcript.Outcome, _ transcript.Outcome) {
+		if help, ok := cli.CommandHelp("tailnet"); ok && o.Stdout == help+"\n" {
+			o.Stdout = cli.TailnetHelp() + "\n"
+		}
+	},
 	// `varlatch help setup` (and `setup --help`, `setup -h`) prints a Go
 	// installation's setup; the TypeScript usage is a Compose
 	// installation's (slice 6.4a).

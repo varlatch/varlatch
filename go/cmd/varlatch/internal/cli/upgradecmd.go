@@ -32,7 +32,8 @@ const upgradeUsage = `Usage:
                 release.json, checks that SHA256SUMS is signed by the release workflow of varlatch/varlatch for that
                 version, takes an encrypted snapshot kept 30 days, updates a copy of the database, swaps the binaries
                 and the database, restarts varlatchd and keeps the new release only when its health checks pass;
-                anything else ends with the previous release serving. While a migration's rollback window is open, a
+                otherwise it goes back to the previous release, and when that cannot be completed, says what is left
+                and where the snapshot is. While a migration's rollback window is open, a
                 release that ends it is upgraded to only once confirmed (--end-rollback-window without a prompt).
                 --check looks for a newer release and records what it found for the dashboard's notice. A Compose
                 installation's upgrade is varlatch-ts upgrade)`
