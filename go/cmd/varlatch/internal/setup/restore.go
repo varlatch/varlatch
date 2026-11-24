@@ -144,6 +144,19 @@ func (r *run) restore(ctx context.Context) error {
 	if err := r.o.Say("Restoring " + r.j.Restore.Archive + " with your keys."); err != nil {
 		return err
 	}
+	// The restore works in the data directory as the unit's user: a varlatchd
+	// that does not would leave the database root's, and the unit could not
+	// open it.
+	facts, err := r.h.Admin(ctx, "config", "check")
+	if err != nil {
+		return err
+	}
+	var able struct {
+		ActsAsOwner bool `json:"actsAsOwner"`
+	}
+	if err := json.Unmarshal(facts, &able); err != nil || !able.ActsAsOwner {
+		return errors.New("setup: the varlatchd beside this varlatch is of an earlier release, whose restore would leave the database root's: install both from one release (install.sh --server), then run setup --restore again; nothing was restored")
+	}
 	out, err := r.h.Admin(ctx, "backup", "restore", "--in", r.j.Restore.Archive, "--backup-key-file", BackupKey)
 	if err != nil {
 		return err

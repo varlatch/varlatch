@@ -347,7 +347,7 @@ func (e *Engine) reverse(ctx context.Context, j *Journal) error {
 	}
 	crashPoint("rollback barrier held")
 
-	dir, err := e.scratchDir()
+	dir, err := e.scratchDir(ctx)
 	if err != nil {
 		return e.undoReverse(ctx, j, err)
 	}
@@ -910,6 +910,7 @@ func (e *Engine) finishRestore(ctx context.Context, j *Journal) error {
 // directory, or its stage directories.
 func (e *Engine) cleanReverseScratch() {
 	_ = cleanScratch(e.work())
+	_ = e.staged(context.Background())
 	if e.Options.Stage != nil && e.Options.StageBase != "" {
 		for _, re := range []*regexp.Regexp{leftoverStage} {
 			_ = removeMatchingExcept(e.Options.StageBase, re, true, e.Options.StageKeep)
