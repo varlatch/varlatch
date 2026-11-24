@@ -510,7 +510,7 @@ func TestTheReverseChecksWithLimits(t *testing.T) {
 		`INSERT INTO oidc_token_uses (token_key, used_at, expires_at) VALUES (printf('%064d', 1), 1, 2)`,
 		`INSERT INTO grants (id, organization_id, subject_identity_id, scope, actions, created_at)
 		 VALUES ('grt_issue', ` + org + `, ` + broker + `, '{"kind": "organization"}', '["capability.issue"]', 1000)`,
-		`UPDATE capabilities SET secret_hash = 'once:' || secret_hash, created_by = (SELECT id FROM identities WHERE kind = 'service' ORDER BY id LIMIT 1)
+		`UPDATE capabilities SET secret_hash = 'for:once:' || secret_hash, created_by = (SELECT id FROM identities WHERE kind = 'service' ORDER BY id LIMIT 1)
 		 WHERE id = (SELECT min(id) FROM capabilities)`,
 		`UPDATE capabilities SET secret_hash = 'used:' || secret_hash WHERE id = (SELECT max(id) FROM capabilities)`,
 	} {
@@ -521,7 +521,7 @@ func TestTheReverseChecksWithLimits(t *testing.T) {
 	if _, err := migrate.ExportReverse(context.Background(), &rev, migrate.Options{DataDir: filepath.Dir(path), Keep: keep, Release: "0.50.0-check"}); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"oib_limited", "varlatch:limits", "crd_limited", "exercise:", "grt_issue", "once:", "used:"} {
+	for _, want := range []string{"oib_limited", "varlatch:limits", "crd_limited", "exercise:", "grt_issue", "for:once:", "used:"} {
 		if !bytes.Contains(rev.Bytes(), []byte(want)) {
 			t.Errorf("the reverse bundle has no %s", want)
 		}
