@@ -168,7 +168,9 @@ value() { client run -e development -- sh -c 'printenv "$1" || echo absent' sh "
 has() { [ "$(value "$1")" = "value-of-$1" ]; }
 has_not() { [ "$(value "$1")" = absent ]; }
 put() { printf 'value-of-%s' "$1" | client values set "$1" --stdin -e development >/dev/null 2>&1; }
-journal_says() { grep -q "\"state\": *\"$1\"" /etc/varlatch/upgrade.json 2>/dev/null; }
+# Of the journal's own members: a rollback's has the upgrade's in it.
+journal_says() { grep -q "^  \"state\": *\"$1\"" /etc/varlatch/upgrade.json 2>/dev/null; }
+journal_step() { sed -n 's/^  "step": *"\([^"]*\)".*/\1/p' /etc/varlatch/upgrade.json 2>/dev/null; }
 # varlatchd runs as varlatch: a file of root's in its directory is one it may
 # not be able to open.
 data_is_varlatchs() { [ -z "$(find /var/lib/varlatch ! -user varlatch -print -quit)" ]; }
@@ -273,7 +275,7 @@ must "$FROM: the data is read back" has FIRST
 # (the step is in $at).
 past() {
   journal_says in-progress || return 1
-  at=$(sed -n 's/.*"step": *"\([^"]*\)".*/\1/p' /etc/varlatch/upgrade.json 2>/dev/null || true)
+  at=$(journal_step || true)
   seen=no
   for s in verified snapshot stopping stopped prepared swapped started checked; do
     if [ "$s" = "$1" ]; then seen=yes; fi
@@ -425,7 +427,7 @@ for point in $KILLS; do
   esac
   check "$name: the journal says in progress" journal_says in-progress
   restarted
-  step=$(sed -n 's/.*"step": *"\([^"]*\)".*/\1/p' /etc/varlatch/upgrade.json)
+  step=$(journal_step)
   case "$GATE $step" in
     '1 stopping' | '1 stopped' | '1 prepared' | '1 kept' | '1 installed' | '1 swapped' | '1 started' | '1 checked')
       check "$name: varlatchd serves nothing until the upgrade is over" not_answering
