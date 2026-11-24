@@ -195,6 +195,10 @@ func (r *Run) dispatch(hasCommand bool) error {
 		}
 		if topic != "" {
 			help, ok := commandHelp(topic)
+			if topic == "migrate" {
+				// Its own --help tells its converter's from the rest.
+				help, ok = migrateUsage, true
+			}
 			if !ok {
 				return UsageErrorWithUsage("varlatch: no help for "+shownArgument(topic)+": not a command", "\n\n"+Usage)
 			}

@@ -68,6 +68,12 @@ fixes.
 
 ### CLI
 
+- **`varlatch --help` shows a Go installation's host commands.** It had a
+  Compose installation's (`setup --dir`, `adopt`, `admin backup create`, the
+  Compose `upgrade`), which the Go CLI refuses, and neither `migrate` nor
+  `tailnet repin`; `varlatch tailnet --help` has `repin` now, and `varlatch
+  help migrate` prints its help. `varlatch agents guide self-hosting` gives
+  commands the Go CLI has.
 - **`varlatch migrate` finds a Coolify installation's Compose project.** A
   directory Coolify deploys from can hold the repository's
   `docker-compose.yml` beside the file that runs, and plain `docker compose`

@@ -1,18 +1,21 @@
 # Installing and operating a Varlatch server
 
-These commands run on the server's host, with the host's access. Installing
-and upgrading change a production system: give the human the command and
-wait, unless they asked you to run it.
+These commands run on the server's host, with the host's access, most of
+them as root. Installing, upgrading and migrating change a production
+system: give the human the command and wait, unless they asked you to run
+it.
 
 ## Installing
 
 ```text
-varlatch setup
+sudo varlatch setup
 ```
 
-It creates an installation in the current directory in one run: HTTPS or
-tailnet-only access, keys, the first passkey, recovery keys, and a health
-check. It is resumable.
+It sets up this host in one run: `varlatchd` as a systemd service, its
+configuration (`/etc/varlatch/varlatchd.conf`), the keys, the first
+administrator's passkey, the first backup, and a health check. It asks on a
+terminal, shows the keys once, and is resumable. The keys and the
+administrator's link are the human's: never ask to see them.
 
 ## Health
 
@@ -20,23 +23,33 @@ check. It is resumable.
 varlatch --assisted doctor --json
 ```
 
-It reads the installation's health on this host and changes nothing.
+It reads the installation's health on this host and changes nothing. Some
+checks need root.
 
 ## Upgrading
 
 ```text
 varlatch upgrade --check
-varlatch upgrade
+sudo varlatch upgrade
 ```
 
-`upgrade` takes a verified backup before it changes anything.
+`upgrade` takes an encrypted snapshot before it changes anything, and keeps
+the new release only when its health checks pass.
 
 ## Backups
 
 ```text
-varlatch admin backup create
-varlatch admin backup verify
-varlatch admin backup status
+sudo varlatch admin backup run
+sudo varlatch admin backup status
+sudo varlatch admin backup test-bucket
 ```
 
 Backups are encrypted and verified; restoring is a human decision.
+
+## From a Compose installation
+
+`varlatch migrate` moves a Compose installation of the last TypeScript
+release to this one, with a dry run first (`--dry-run`) and a way back
+(`--rollback`). It is the human's to start, with the migration guide
+(https://docs.varlatch.com). Commands that take `--dir <compose-directory>`
+are the TypeScript CLI's, for such an installation.
