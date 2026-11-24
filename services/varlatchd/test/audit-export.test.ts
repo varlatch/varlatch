@@ -72,7 +72,8 @@ import { registerSoftPasskey, type SoftAuthenticator } from "./helpers/soft-auth
  * deadline; status; the switch off.
  */
 
-const MINIO_IMAGE = "cgr.dev/chainguard/minio@sha256:6a1d0b45c8669726bba580ced0bfa4cb9fdeed1ed636dfabd81d1577beb6937b";
+// CI names the image it has by its ID (scripts/ci-pull-image.sh).
+const MINIO_IMAGE = process.env.VARLATCH_TEST_MINIO_IMAGE || "cgr.dev/chainguard/minio@sha256:6a1d0b45c8669726bba580ced0bfa4cb9fdeed1ed636dfabd81d1577beb6937b";
 const ROOT_USER = "vltaudittest";
 const ROOT_PASSWORD = randomBytes(18).toString("hex");
 const LOCKED = "audit-lock";
