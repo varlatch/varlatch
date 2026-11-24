@@ -281,6 +281,9 @@ export interface IdentityCredential {
    * or for kinds other than browser and cli, absent from older servers.
    */
   client?: string | null;
+  /** An exercise-only credential (ADR-0060), and the run it is tied to, if any. */
+  exerciseOnly?: boolean;
+  runId?: string;
 }
 
 /**
@@ -1005,6 +1008,10 @@ export class VarlatchClient {
       targets: Record<string, string[]>;
       ttlSeconds: number;
       runId?: string;
+      /** The Broker it is for, when not the caller (capability capabilities.delegate). */
+      brokerIdentityId?: string;
+      /** Exercised once (capability capabilities.single-use; an older server ignores it). */
+      singleUse?: boolean;
       /** Agent-safe strict preflight: the state the preflight retrieval saw. */
       precondition?: {
         projectId: string;
@@ -1261,7 +1268,16 @@ export class VarlatchClient {
   createOidcBinding(
     org: string,
     identityId: string,
-    input: { issuer: string; audience: string; subject: string; claims?: Record<string, string> },
+    input: {
+      issuer: string;
+      audience: string;
+      subject: string;
+      claims?: Record<string, string>;
+      /** Limits (capability auth.oidc.limits; an older server ignores them). */
+      exerciseOnly?: boolean;
+      runIdClaim?: string;
+      singleExchange?: boolean;
+    },
   ): Promise<OidcBinding> {
     return this.request(
       "POST",

@@ -210,6 +210,23 @@ describe("authorizationSummary", () => {
   });
 });
 
+describe("capabilities for another broker and exercise-only sign-ins (ADR-0060)", () => {
+  const issued = (over: Partial<AuditEventLike>) =>
+    sentence(event({ eventType: "capability.issued", resource: { agentIdentityId: "idn_agent", projectId: "prj_api", environmentId: "env_prod", ...over.resource }, metadata: { items: "API_KEY", ...over.metadata } }));
+  it("names the broker it is for and that it works once, only when they are said", () => {
+    expect(issued({})).toBe("let claude-code-agent use API_KEY in api / production");
+    expect(issued({ resource: { brokerIdentityId: "idn_admin" }, metadata: { singleUse: true } })).toBe("let claude-code-agent use API_KEY through Dev Admin once in api / production");
+  });
+  it("says what an exercise-only sign-in allows, and what its credential was denied", () => {
+    const created = { eventType: "oidc_binding.created", resource: { identityId: "idn_agent" } };
+    expect(sentence(event({ ...created, metadata: {} }))).toBe("let claude-code-agent sign in with OIDC");
+    expect(sentence(event({ ...created, metadata: { exerciseOnly: true } }))).toBe("let claude-code-agent use capabilities, and nothing else, with OIDC");
+    expect(sentence(event({ eventType: "authorization.denied", decision: "deny", metadata: { reason: "exercise_only_credential" } }))).toBe(
+      "was denied a request its exercise-only credential may not make",
+    );
+  });
+});
+
 describe("security control events (ADR-0054)", () => {
   it("says which control changed, how, and whether it was weakened with an approval", () => {
     const changed = (metadata: Record<string, unknown>) =>

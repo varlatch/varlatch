@@ -119,6 +119,7 @@ export const ACTION_LABELS: Record<string, string> = {
   "config.value.write": "Write values",
   "secret.reveal": "Reveal secrets",
   "secret.use": "Use secrets",
+  "capability.issue": "Issue capabilities for brokers",
   "contract.read": "View the contract",
   "contract.submit": "Push contract revisions",
   "contract.activate": "Activate contract revisions",
@@ -272,6 +273,9 @@ export function describeEvent(event: AuditEventLike, names: NameResolver = empty
 
     // ---- access decisions
     case "authorization.denied":
+      if (str(m.reason) === "exercise_only_credential") {
+        return { icon: "shield", title: "Access denied", segments: ["was denied a request its exercise-only credential may not make"] };
+      }
       return { icon: "shield", title: "Access denied", segments: ["was denied ", actionText(event.action), ...inPlace(r, names, "on")] };
     case "authentication.failed":
       return {
@@ -319,7 +323,16 @@ export function describeEvent(event: AuditEventLike, names: NameResolver = empty
       return {
         icon: "key",
         title: "Capability issued",
-        segments: ["let ", who(r.agentIdentityId, names, "an agent"), " use ", ...itemsPhrase(items, "secret"), ...inPlace(r, names)],
+        segments: [
+          "let ",
+          who(r.agentIdentityId, names, "an agent"),
+          " use ",
+          ...itemsPhrase(items, "secret"),
+          // Issued for another broker (ADR-0060).
+          ...(str(r.brokerIdentityId) ? [" through ", who(r.brokerIdentityId, names, "a broker")] : []),
+          ...(m.singleUse === true ? [" once"] : []),
+          ...inPlace(r, names),
+        ],
       };
     case "capability.exercised":
       return {
@@ -423,7 +436,7 @@ export function describeEvent(event: AuditEventLike, names: NameResolver = empty
     case "invitation.accepted":
       return { icon: "user-plus", title: "Invitation accepted", segments: ["joined through an invitation"] };
     case "oidc_binding.created":
-      return { icon: "key", title: "OIDC sign-in added", segments: ["let ", who(r.identityId, names), " sign in with OIDC", ...(str(m.issuer) ? [" from ", { kind: "mono" as const, text: str(m.issuer)! }] : [])] };
+      return { icon: "key", title: "OIDC sign-in added", segments: ["let ", who(r.identityId, names), m.exerciseOnly === true ? " use capabilities, and nothing else, with OIDC" : " sign in with OIDC", ...(str(m.issuer) ? [" from ", { kind: "mono" as const, text: str(m.issuer)! }] : [])] };
     case "oidc_binding.revoked":
       return { icon: "trash", title: "OIDC sign-in removed", segments: ["removed an OIDC sign-in from ", who(r.identityId, names)] };
 

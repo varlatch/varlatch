@@ -90,6 +90,7 @@ export const ALL_ACTIONS = [
   "contract.submit",
   "contract.activate",
   "secret.use",
+  "capability.issue",
   "secret.reveal",
   "identity.read",
   "identity.manage",

@@ -27,6 +27,7 @@ export const ACTION_INFO: Record<string, { label: string; group: ActionGroup; de
   "contract.submit": { label: "Push contract revisions", group: "Contract", description: "Store new contract revisions (not activate them)." },
   "contract.activate": { label: "Activate contracts", group: "Contract", description: "Make a stored revision the active contract." },
   "secret.use": { label: "Use secrets", group: "Secrets", description: "Retrieve secret material for running software (varlatch run, brokers)." },
+  "capability.issue": { label: "Issue capabilities for brokers", group: "Secrets", description: "Let a broker it names use named secrets for an agent, within that agent's own grants. Machines only; it reads no value itself." },
   "secret.reveal": { label: "Reveal secrets", group: "Secrets", description: "See secret plaintext in tools. Every reveal is audited." },
   "identity.read": { label: "See people and machines", group: "Access", description: "List identities and their credentials metadata." },
   "identity.manage": { label: "Manage people and machines", group: "Access", description: "Invite people, create and retire machines, manage credentials." },
