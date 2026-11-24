@@ -655,6 +655,12 @@ release that ends the window:
 > migrate --rollback` can no longer return this installation to the
 > TypeScript release (0.23.0). Its data stays; only the way back goes.
 
+An upgrade has its own way back, `sudo varlatch upgrade --rollback`, to the
+release it came from (0.50.0-rc.4 or later). It leaves this window as it is,
+and says so: open, or ended by the upgrade, which going back does not undo.
+It refuses while a migration or its rollback is under way, and for an upgrade
+made before the migration.
+
 ### Roll back
 
 From the Compose directory of the migration (or with `--from`), with the

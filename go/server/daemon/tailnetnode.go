@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/varlatch/varlatch/go/lib/preread"
 	"github.com/varlatch/varlatch/go/lib/tailcontrol"
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/tailnet"
@@ -303,7 +304,7 @@ func runTailnetEnroll(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer) i
 	if tailnet.SuffixedName(c.hostname, t.Hostname) {
 		return fail("%s reads as the control plane's suffix of the configured name %s: a handoff's temporary name is <name>-vl-<operation>-n", c.hostname, t.Hostname)
 	}
-	owner, _, err := checkClientDir(cfg.DataDir, os.Getuid())
+	_, _, err := checkClientDir(cfg.DataDir, os.Getuid())
 	if err != nil {
 		return fail("%v; nothing was written", err)
 	}
@@ -320,7 +321,6 @@ func runTailnetEnroll(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer) i
 		return fail("cannot lock the data directory %s: %v", cfg.DataDir, err)
 	}
 	defer unlock()
-	defer giveToOwner(cfg.DataDir, owner)
 	dir := filepath.Join(cfg.DataDir, tailnet.StateDir)
 	hold, err := tailnet.LoadHold(cfg.DataDir)
 	if err != nil {
@@ -344,7 +344,7 @@ func runTailnetEnroll(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer) i
 		if t.AuthKeyFile == "" {
 			return fail("no auth key (tailnet_auth_key_file): the node joins with it")
 		}
-		raw, err := os.ReadFile(t.AuthKeyFile)
+		raw, err := preread.ReadFile(t.AuthKeyFile)
 		if err != nil {
 			return fail("cannot read the auth key file: %v", err)
 		}
@@ -524,11 +524,10 @@ func runTailnetNode(ctx context.Context, env *hostEnv, rest []string, stdout, st
 		return fail("the tailnet listener is off (tailnet = off)")
 	}
 	if env.node == nil {
-		owner, _, err := checkClientDir(cfg.DataDir, os.Getuid())
+		_, _, err := checkClientDir(cfg.DataDir, os.Getuid())
 		if err != nil {
 			return fail("%v", err)
 		}
-		defer giveToOwner(cfg.DataDir, owner)
 	}
 	hold, err := tailnet.LoadHold(cfg.DataDir)
 	if err != nil {
@@ -647,20 +646,40 @@ const (
 	reachSweepAfter = reachMaxWait + reachSlack + 3*time.Minute
 )
 
+// reachTemp is os.MkdirTemp; tests have one that finds no place.
+var reachTemp = os.MkdirTemp
+
 // makeReachDir makes a reach probe's state directory: in the system's
 // temporary directory; in the data directory when that is not writable (a
 // read-only root filesystem, the image's) and TMPDIR names no other. Only
 // then: varlatch migrate sets TMPDIR for its probe, whose directory, left by
-// a kill, would be in the way of an import into the data directory.
+// a kill, would be in the way of an import into the data directory. And
+// never root's in another user's data directory (a command that stays root).
 func makeReachDir(cfg *config.Config) (string, error) {
-	dir, err := os.MkdirTemp("", reachDirPrefix)
-	if err == nil || os.Getenv("TMPDIR") != "" {
+	dir, err := reachTemp("", reachDirPrefix)
+	if err == nil || os.Getenv("TMPDIR") != "" || !ownDataDir(cfg) {
 		return dir, err
 	}
 	if in, err := os.MkdirTemp(cfg.DataDir, reachDirPrefix); err == nil {
 		return in, nil
 	}
 	return "", err
+}
+
+// ownDataDir is whether the data directory is this process's user's.
+func ownDataDir(cfg *config.Config) bool {
+	st, err := os.Stat(cfg.DataDir)
+	return err == nil && ownedByMe(st)
+}
+
+// reachParents are the directories a reach probe's state may be in, as far
+// as this process may remove it there.
+func reachParents(cfg *config.Config) []string {
+	parents := []string{os.TempDir()}
+	if ownDataDir(cfg) {
+		parents = append(parents, cfg.DataDir)
+	}
+	return parents
 }
 
 // sweepReachDirs removes the reach probes' state directories a killed
@@ -711,7 +730,7 @@ func runTailnetReaches(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer) 
 	if t.AuthKeyFile == "" {
 		return config("no auth key (tailnet_auth_key_file): the probe joins with the node's key, which must be reusable")
 	}
-	raw, err := os.ReadFile(t.AuthKeyFile)
+	raw, err := preread.ReadFile(t.AuthKeyFile)
 	if err != nil {
 		return config("cannot read the auth key file: %v", err)
 	}
@@ -719,7 +738,7 @@ func runTailnetReaches(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer) 
 	clear(raw)
 	// A probe stopped by a signal logs out and removes its state, as one
 	// that ends; what a killed one left (its node key) is swept here.
-	for _, d := range []string{os.TempDir(), cfg.DataDir} {
+	for _, d := range reachParents(cfg) {
 		sweepReachDirs(d, time.Now().Add(-reachSweepAfter))
 	}
 	dir, err := makeReachDir(cfg)

@@ -43,6 +43,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/custody"
 	"github.com/varlatch/varlatch/go/server/db"
+	"github.com/varlatch/varlatch/go/server/maintenance"
 	"github.com/varlatch/varlatch/go/server/tailnet/closed"
 )
 
@@ -120,6 +121,9 @@ type Live struct {
 	DatabaseCreatedAt string `json:"databaseCreatedAt,omitempty"`
 	// Maintenance: a maintenance gate holds the installation.
 	Maintenance bool `json:"maintenance"`
+	// UpgradeHold is why an upgrade holds varlatchd (server/maintenance), ""
+	// when none does.
+	UpgradeHold string `json:"upgradeHold,omitempty"`
 	// Storage is the engine's metrics (ADR-0059 Decision 2) and WALBound
 	// its bound.
 	Storage  storage.Metrics `json:"storage"`
@@ -361,6 +365,15 @@ func readiness(live *Live) Check {
 	switch {
 	case live == nil:
 		c.Status, c.Detail, c.Remedy = Unknown, notRunning, startIt
+	case live.UpgradeHold == maintenance.UpgradeJournalMissing:
+		c.Status, c.Detail = Fail, "an upgrade holds varlatchd, and its journal, which says when it is over, is gone: nothing but /healthz is served"
+		c.Remedy = "Once no varlatch upgrade runs: sudo systemctl restart varlatchd (it serves the database in place)"
+	case live.UpgradeHold == maintenance.UpgradeJournalUnreadable:
+		c.Status, c.Detail = Fail, "an upgrade holds varlatchd, and its journal, which says when it is over, cannot be read: nothing but /healthz is served"
+		c.Remedy = "Run sudo varlatch upgrade: it says what to do with the journal"
+	case live.UpgradeHold != "":
+		c.Status, c.Detail = Fail, "an upgrade that is not over holds varlatchd: nothing but /healthz is served"
+		c.Remedy = "When no varlatch upgrade runs: sudo varlatch upgrade finishes or undoes it"
 	case live.Maintenance:
 		c.Status, c.Detail = Fail, "a maintenance gate holds the installation: nothing but /healthz is served"
 		c.Remedy = "Wait for the backup or upgrade holding it, or end it: `varlatchd admin maintenance status`, then `end <lease id>`"

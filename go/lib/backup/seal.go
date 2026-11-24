@@ -39,6 +39,8 @@ import (
 	"sync/atomic"
 
 	"golang.org/x/crypto/scrypt"
+
+	"github.com/varlatch/varlatch/go/lib/preread"
 )
 
 const (
@@ -404,7 +406,7 @@ type OpenOptions struct {
 
 // OpenWith is Open with options.
 func OpenWith(path string, bek BEK, scratch string, o OpenOptions) (_ *Opened, err error) {
-	f, err := os.Open(path)
+	f, err := preread.Open(path)
 	if err != nil {
 		return nil, err
 	}

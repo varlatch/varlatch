@@ -1541,3 +1541,48 @@ func TestTheTargetKeepsTheSourcesOutboundAllowList(t *testing.T) {
 		})
 	}
 }
+
+// Options.StageAs settles the stage once it is needed: the target's owner
+// and its base, asked for once; none is this user's work directory.
+func TestStageAs(t *testing.T) {
+	ctx := context.Background()
+	asked := 0
+	base := t.TempDir()
+	e := &Engine{Options: Options{Work: t.TempDir(), StageAs: func(context.Context) (*Owner, string, error) {
+		asked++
+		return &Owner{UID: uint32(os.Getuid()), GID: uint32(os.Getgid())}, base, nil
+	}}}
+	for range 2 {
+		dir, err := e.scratchDir(ctx)
+		if err != nil || filepath.Dir(dir) != base {
+			t.Fatalf("%s, %v", dir, err)
+		}
+		bundle := filepath.Join(t.TempDir(), "b")
+		if err := os.WriteFile(bundle, []byte("bundle"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		staged, done, err := e.stage(ctx, bundle)
+		if err != nil || filepath.Dir(filepath.Dir(staged)) != base || filepath.Dir(staged) == dir {
+			t.Fatalf("%s, %v", staged, err)
+		}
+		done()
+		if _, err := os.Stat(filepath.Dir(staged)); !os.IsNotExist(err) {
+			t.Fatalf("the stage stays: %v", err)
+		}
+		if _, err := os.Stat(bundle); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if asked != 1 {
+		t.Errorf("asked %d times", asked)
+	}
+	none := &Engine{Options: Options{Work: t.TempDir(), StageAs: func(context.Context) (*Owner, string, error) { return nil, "", nil }}}
+	if dir, err := none.scratchDir(ctx); err != nil || filepath.Dir(dir) != none.Options.Work {
+		t.Errorf("%s, %v", dir, err)
+	}
+	refused := errors.New("no target")
+	bad := &Engine{Options: Options{Work: t.TempDir(), StageAs: func(context.Context) (*Owner, string, error) { return nil, "", refused }}}
+	if _, err := bad.scratchDir(ctx); !errors.Is(err, refused) {
+		t.Error(err)
+	}
+}

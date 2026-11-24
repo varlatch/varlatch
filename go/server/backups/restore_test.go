@@ -190,8 +190,26 @@ func TestRestoreRefusals(t *testing.T) {
 		t.Error("a changed archive was restored")
 	}
 	untouched(cfg, "a changed archive")
+	// CheckRestore refuses what Restore does, and leaves as little.
+	for what, c := range map[string]struct {
+		archive string
+		bek     backup.BEK
+		kek     []byte
+	}{"another Root KEK": {res.Path, f.bekOf(t), envelope.GenerateKey()}, "another BEK": {res.Path, other, f.rootKEK}, "the same keys": {res.Path, same, f.rootKEK}, "a changed archive": {bad, f.bekOf(t), f.rootKEK}} {
+		if _, err := CheckRestore(ctx, cfg, c.archive, c.bek, c.kek, true); err == nil {
+			t.Errorf("a check took %s", what)
+		}
+		untouched(cfg, "a check of "+what)
+	}
+	if got, err := CheckRestore(ctx, cfg, res.Path, f.bekOf(t), f.rootKEK, false); err != nil || got.ArchiveID != res.ArchiveID || !got.Restores {
+		t.Errorf("a check: %+v, %v", got, err)
+	}
+	untouched(cfg, "a check")
 	// Another installation's data directory.
 	g := newFixture(t)
+	if _, err := CheckRestore(ctx, g.cfg, res.Path, f.bekOf(t), f.rootKEK, true); err == nil || !strings.Contains(err.Error(), "another installation") {
+		t.Errorf("a check over another installation: %v", err)
+	}
 	if _, err := Restore(ctx, g.cfg, res.Path, f.bekOf(t), f.rootKEK, nil); err == nil || !strings.Contains(err.Error(), "another installation") || !strings.Contains(err.Error(), "move varlatch.db") {
 		t.Errorf("over another installation: %v", err)
 	}

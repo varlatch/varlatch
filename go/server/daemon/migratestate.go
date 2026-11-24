@@ -25,6 +25,7 @@ import (
 	"github.com/varlatch/varlatch/go/lib/backup"
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
 	"github.com/varlatch/varlatch/go/lib/envelope"
+	"github.com/varlatch/varlatch/go/lib/preread"
 	"github.com/varlatch/varlatch/go/lib/release"
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/migration/migrate"
@@ -390,7 +391,7 @@ func readTailnetState(cfg *config.Config) *tailnetState {
 	}
 	st := &tailnetState{Hostname: t.Hostname, Tags: t.Tags, HTTPSPort: t.HTTPSPort, ControlURL: t.ControlURL}
 	if t.AuthKeyFile != "" {
-		if b, err := os.ReadFile(t.AuthKeyFile); err == nil {
+		if b, err := preread.ReadFile(t.AuthKeyFile); err == nil {
 			st.AuthKey = len(bytes.TrimSpace(b)) > 0
 			clear(b)
 		}

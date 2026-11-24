@@ -14,10 +14,15 @@ import (
 
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/cli"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/selfupdate"
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/upgrade"
 	"github.com/varlatch/varlatch/go/lib/keyenv"
 )
 
 func main() {
+	// The data directory's work of an upgrade, as that directory's owner.
+	if len(os.Args) == 2 && os.Args[1] == upgrade.ChildCommand {
+		os.Exit(upgrade.Child(os.Stdin, os.Stdout, os.Stderr))
+	}
 	// What a self-update on Windows left beside this binary (the old one,
 	// renamed aside while it ran) goes now that it no longer runs.
 	selfupdate.CleanUp()

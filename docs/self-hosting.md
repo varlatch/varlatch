@@ -20,6 +20,7 @@ It describes Varlatch 0.50 and later, where an installation is one program,
 | `/etc/varlatch/setup.json`, `upgrade.json` | what setup was told, and the last upgrade | root |
 | `/var/lib/varlatch` | the data: the database `varlatch.db`, `backups/`, `upgrades/`, and, when used, `acme/`, `tailnet/` and `cli/` | `varlatch`, 0700 |
 | `/usr/local/lib/varlatch/releases` | the binaries of the releases you upgraded from and to | root |
+| `/usr/local/lib/varlatch/snapshots` | the encrypted snapshots from before upgrades ([how long](operations/upgrade.md#what-is-kept)) | root |
 
 The service runs as the `varlatch` user. systemd hands it the two keys when
 it starts (`LoadCredential` in the unit), so `varlatchd` never needs to read

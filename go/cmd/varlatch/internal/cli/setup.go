@@ -315,7 +315,7 @@ func (r *Run) setupDoctor() (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	report.Checks = append(report.Checks, doctorCLIChecks(report)...)
+	report.Checks = append(report.Checks, doctorCLIChecks(report, "")...)
 	if err := r.showDoctor(report); err != nil {
 		return false, err
 	}

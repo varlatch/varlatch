@@ -308,7 +308,7 @@ In short:
 3. Restore.
 4. The files have their owner back.
 5. You put right what changed since the archive, deletions first.
-6. No upgrade is pending; resume; open the ways in again.
+6. Resume; open the ways in again.
 
 Step by step:
 
@@ -372,22 +372,7 @@ Step by step:
    deletions that should happen, and set freezes and controls as they were.
    An audit export or your own notes say what those were.
 
-6. **Resume, then open it.** On a host that had an upgrade under way, look
-   first whether it is still recorded as pending:
-
-   ```sh
-   sudo grep '"state"' /etc/varlatch/upgrade.json
-   ```
-
-   If it says `in-progress` or `failed`, move that record away **before** you
-   resume, or the next `varlatch upgrade` would undo that upgrade over the
-   restored database. Keep the files in `/var/lib/varlatch/upgrades`:
-
-   ```sh
-   sudo mv /etc/varlatch/upgrade.json /root/
-   ```
-
-   Then:
+6. **Resume, then open it.**
 
    ```sh
    sudo varlatch admin restore resume
@@ -475,23 +460,32 @@ Every change since the archive is lost, revocations included. First
 sudo systemctl stop varlatchd
 sudo cp /var/lib/varlatch/backups/ARCHIVE-ID.vltbak /root/
 sudo varlatch admin backup restore --in /root/ARCHIVE-ID.vltbak
-sudo chown varlatch:varlatch /var/lib/varlatch/varlatch.db
+```
+
+Only when it says `Restore completed`:
+
+```sh
 sudo systemctl start varlatchd
 ```
 
-Then do steps 5 and 6 above, the check for a pending upgrade included, and
-make a fresh backup.
+Then do steps 5 and 6 above, and make a fresh backup.
 
 It uses the keys in `/etc/varlatch`; `--backup-key-file` names another
-backup key. The restore runs as root, so the `chown` gives the restored
-database back to the service: without it, `varlatchd` cannot open it. It
-prints the archive's settings, to compare with `varlatchd.conf`.
+backup key. It reads the archive and the keys as root, and writes the
+database as the service's user. It prints the archive's settings, to compare
+with `varlatchd.conf`. With `--check` it checks that the archive would
+restore and changes nothing; `varlatchd` may run meanwhile.
 
 It refuses while `varlatchd` runs, a wrong key, an archive it cannot read,
-and an archive of another installation, and then changes nothing. A restore
-that fails or is killed later, while it replaces the database, leaves the
-installation closed: it answers `503` until you run the same restore again
-with the same archive.
+and an archive of another installation, and then changes nothing. It refuses
+too while an [upgrade or a rollback is not over](upgrade.md#if-an-upgrade-is-interrupted),
+which would replace what you restore. Then run `sudo varlatch upgrade`, which
+starts `varlatchd` again, so stop it again before you retry; or, to restore
+instead of that, move the upgrade's record aside with the command it prints.
+
+A restore that fails or is killed later, while it replaces the database,
+leaves the installation closed: it answers `503` until the restore completes.
+Stop `varlatchd`, and run the same restore again with the same archive.
 
 ### Rehearse a restore
 

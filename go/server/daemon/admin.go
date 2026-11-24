@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
 	"github.com/varlatch/varlatch/go/lib/envelope"
 	"github.com/varlatch/varlatch/go/lib/keyenv"
+	"github.com/varlatch/varlatch/go/lib/preread"
 	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/server/auth"
 	"github.com/varlatch/varlatch/go/server/config"
@@ -66,7 +68,7 @@ func admin(args []string, stdout, stderr io.Writer) int {
 	keys := sub == "kek" || sub == "custody"
 	move := isMoveCommand(sub) || sub == "config"
 	hold := sub == "restore"
-	if sub != "bootstrap" && sub != "recover" && sub != "outbound" && sub != "audit-export" && sub != "tailnet" && sub != "doctor" && sub != "bootstrap-status" && sub != "schema" && sub != "migrate" && sub != "certificate" && sub != "status" && sub != "release-check" && !conformance && !operator && !backup && !keys && !move && !hold {
+	if sub != "bootstrap" && sub != "recover" && sub != "outbound" && sub != "audit-export" && sub != "tailnet" && sub != "doctor" && sub != "bootstrap-status" && sub != "schema" && sub != "migrate" && sub != "certificate" && sub != "status" && sub != "release-check" && sub != "changes" && !conformance && !operator && !backup && !keys && !move && !hold {
 		return adminUsage(stderr, "unknown command "+sub)
 	}
 	// The one probe that needs no installation: nothing stands in front
@@ -149,6 +151,11 @@ func admin(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, msg)
 			return 64
 		}
+	case sub == "changes":
+		if _, _, msg := changesArgs(rest); msg != "" {
+			fmt.Fprintln(stderr, msg)
+			return 64
+		}
 	case sub == "migrate":
 		if _, msg := parseMigrate(rest); msg != "" {
 			fmt.Fprintln(stderr, msg)
@@ -206,9 +213,23 @@ func admin(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "varlatchd admin %s: %s\n", sub, err.Error())
 		return ExitFailure
 	}
-	// Before any command opens the database (storage.Open refuses, with the
-	// reason, when there is no place; a command that only reads goes on).
-	_, _ = storage.PrepareTemp(cfg.DataDir)
+	if status, started := withRootsOutput(cfg, sub, rest, stdout, stderr); started {
+		return status
+	}
+	if !staysRoot(cfg, sub, rest) {
+		if err := becomeOwner(cfg, func() { keepForOwner(cfg, filepath.Dir(path), sub, rest) }, stderr); err != nil {
+			fmt.Fprintf(stderr, "varlatchd admin %s: %v\n", sub, err)
+			return ExitConfig
+		}
+	}
+	// As the user the command goes on as, and before any command opens the
+	// database (storage.Open refuses, with the reason, when there is no
+	// place; a command that only reads goes on). Not root's files in another
+	// user's data directory: a command that stays root has the place of the
+	// database it opens (storage.Open), if it opens one.
+	if ownDataDir(cfg) {
+		_, _ = storage.PrepareTemp(cfg.DataDir)
+	}
 	switch {
 	case sub == "config":
 		return runConfigCheck(cfg, stdout, stderr)
@@ -237,22 +258,24 @@ func admin(args []string, stdout, stderr io.Writer) int {
 		asJSON, _ := doctorArgs(rest)
 		return runDoctor(cfg, path, asJSON, stdout, stderr)
 	case sub == "backup" && rest[0] == "restore":
-		return restoreOffline(cfg, rest[1:], stdout, stderr)
+		return restoreOffline(cfg, filepath.Dir(path), rest[1:], stdout, stderr)
 	case sub == "schema":
 		return runSchema(cfg, rest, stdout, stderr)
 	case sub == "migrate" && (rest[0] == "open" || rest[0] == "barrier" || rest[0] == "release"):
 		// The live open, and the reverse's barrier: through the running
 		// daemon, whose admission holds the migration's gate; offline, on
 		// the data directory.
-		return route(cfg, append([]string{sub}, rest...), stdout, stderr)
+		return route(cfg, filepath.Dir(path), append([]string{sub}, rest...), stdout, stderr)
 	case sub == "migrate":
 		return runMigrate(cfg, rest, os.Stdin, stdout, stderr)
 	case sub == "status":
 		return statusOnline(cfg, rest, stdout, stderr)
 	case sub == "release-check":
 		return runReleaseCheck(cfg, rest, stdout, stderr)
+	case sub == "changes":
+		return runChanges(cfg, rest, stdout, stderr)
 	}
-	return route(cfg, append([]string{sub}, rest...), stdout, stderr)
+	return route(cfg, filepath.Dir(path), append([]string{sub}, rest...), stdout, stderr)
 }
 
 // adminAsRoot is whether admin runs as root (never on Windows, where
@@ -267,7 +290,7 @@ func adminUsage(stderr io.Writer, msg string) int {
 		"varlatchd admin audit-export discard-plan --export <id> --reason <expired|unsupported-format> | varlatchd admin tailnet repin [--yes [--adopt] [--offer <token>]] [--json] | "+
 		"varlatchd admin schema status|upgrade [--json] [--database <file>] | varlatchd admin doctor [--json] | varlatchd admin certificate issuances [--all] [--json]|record --attempts <json> | "+
 		"varlatchd admin migrate import|check|export --reverse|keys|state|discard|open|barrier|release | "+
-		"varlatchd admin status [--json] | varlatchd admin release-check record --repo <owner/name> (--version <version> [--published-at <time>] | --failed <reason>) | "+
+		"varlatchd admin status [--json] | varlatchd admin changes --since <time> [--json] | varlatchd admin release-check record --repo <owner/name> (--version <version> [--published-at <time>] | --failed <reason>) | "+
 		"varlatchd admin reenroll (--all | --identity <id>...) [--hours <1-168>] [--json] | varlatchd admin public-url-changed --from <url> | "+
 		"varlatchd admin move-facts | varlatchd admin config check  (each with [--config <file>])\n", msg)
 	return 64
@@ -371,7 +394,7 @@ func parseAdmin(sub string, args []string) (adminArgs, string) {
 // lock: the Root KEK, the database (its schema and installation created if
 // this is the first use, as serve would), and the canary checked.
 func openOffline(cfg *config.Config, what string, stderr io.Writer) (*hostEnv, int) {
-	material, err := os.ReadFile(cfg.RootKEKFile)
+	material, err := preread.ReadFile(cfg.RootKEKFile)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s: cannot read the Root KEK file: %v\n", what, err)
 		return nil, ExitFailure

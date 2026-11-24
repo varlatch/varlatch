@@ -256,8 +256,8 @@ jobs:
           # and notices); varlatchd's entrypoint, serve and admin (the
           # daemon), the configuration they parse; and the key-environment
           # refusal varlatchd and the CLI share (lib/keyenv, with the key
-          # parsers it uses) and the CLI's entrypoint, which applies it in
-          # the image; the storage engine (its temporary files, under a
+          # parsers and the files kept open it uses) and the CLI's entrypoint, which
+          # applies it in the image; the storage engine (its temporary files, under a
           # read-only root filesystem) and the Compose file the check runs.
           # scripts/conformance/test/routing.test.mjs checks that these
           # select every file the image's build and check read and the
@@ -269,6 +269,7 @@ jobs:
             go/server/config/*
             go/lib/keyenv/*
             go/lib/backup/*
+            go/lib/preread/*
             go/lib/envelope/*
             go/lib/storage/*
             go/cmd/varlatch/main.go
@@ -568,8 +569,8 @@ jobs:
 
       # install.sh is POSIX sh; its behavior (every prefix, end to end) is in
       # go/install's tests above.
-      - name: install.sh, the G9a runner, the restore drill, G6 and the setup test pass shellcheck
-        run: shellcheck -s sh go/install/install.sh go/bench/g9a/run.sh go/bench/restore-drill.sh go/release/g6.sh go/install/test-setup.sh
+      - name: install.sh, the G9a runner, the restore drill, G6, the setup and the upgrade test pass shellcheck
+        run: shellcheck -s sh go/install/install.sh go/bench/g9a/run.sh go/bench/restore-drill.sh go/release/g6.sh go/install/test-setup.sh go/install/build-upgrade.sh go/install/test-upgrade.sh
 
       - name: The release's asset scripts, the nightly report and the image pull pass shellcheck
         run: shellcheck -s bash go/release/build-assets.sh go/release/check-assets.sh scripts/ci-nightly-report.sh scripts/ci-pull-image.sh
@@ -791,6 +792,30 @@ jobs:
           trap 'go/server/publictls/testdata/pebble.sh stop' EXIT
           sudo VARLATCH_TEST_DISPOSABLE_ROOT=1 VARLATCH_TEST_PEBBLE="$VARLATCH_TEST_PEBBLE" VARLATCH_TEST_PEBBLE_ROOT="$VARLATCH_TEST_PEBBLE_ROOT" \
             go/install/test-setup.sh "$RUNNER_TEMP/setup-bin"
+
+      # What changes only as root: host commands that become the data
+      # directory's owner, and the host's upgrade. In temporary directories,
+      # nothing of the host's touched; the tests skip for anyone else. Go's
+      # cache, which the builds they make fill, is this user's again after.
+      - name: The tests that need root
+        if: runner.environment == 'github-hosted' && !vars.CI_RUNNER
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          set -o pipefail
+          cache=$(go env GOCACHE) mod=$(go env GOMODCACHE)
+          trap 'sudo chown -R "$(id -u):$(id -g)" "$cache" "$mod"' EXIT
+          names="$(grep -hoE '^func (TestAdminAsRoot|TestMigrate)[A-Za-z]*AsRoot?[A-Za-z]*|^func TestAdminAsRoot[A-Za-z]*' server/daemon/privileges_test.go | sed 's/^func //' | sort -u) TestUpgradeAsRootWorksAsTheOwner TestARollbackAsRootGivesTheServerItsDatabase TestUpgradeCommandOnAHost TestUpgradeBelowTheDatabasesSchema"
+          status=0
+          # shellcheck disable=SC2086 # one word per test
+          sudo env PATH="$PATH" HOME="$RUNNER_TEMP" GOCACHE="$cache" GOMODCACHE="$mod" GOFLAGS=-buildvcs=false CGO_ENABLED=0 \
+            go test -count=1 -v -run "^($(echo $names | tr ' ' '|'))\$" ./server/daemon ./cmd/varlatch/internal/upgrade ./cmd/varlatch/internal/cli > "$RUNNER_TEMP/root-tests.log" 2>&1 || status=$?
+          cat "$RUNNER_TEMP/root-tests.log"
+          [ "$status" -eq 0 ] || exit "$status"
+          for name in $names; do
+            grep -q -- "^--- PASS: $name " "$RUNNER_TEMP/root-tests.log" || { echo "::error::$name, which needs root, did not pass as root"; exit 1; }
+          done
 
       # A migration's host target (step 7, slice 7.4e): varlatch migrate
       # makes it with setup's steps, keys aside, on this runner's systemd,
@@ -1823,6 +1848,29 @@ jobs:
       - name: The migration and its way back on the published release
         run: go/test/rehearsal/published.sh whole "$RUNNER_TEMP/g5-published"
 
+  # `varlatch upgrade` and its rollback interrupted at every point, and every
+  # pair of points (internal/upgrade's sample_test.go): a pull request's `go`
+  # tries a fixed part of them. release.yml's go-g5 runs this for the release
+  # being cut.
+  go-upgrade-all:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.27.4
+          cache: false
+      - name: Every interruption of an upgrade and of a rollback
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+          VARLATCH_UPGRADE_TESTS: all
+        run: go test -count=1 -timeout 50m ./cmd/varlatch/internal/upgrade
+
   # The required check (the main ruleset's merge queue): every Go job
   # succeeded or was skipped because none of its paths changed.
   # The backup converter's conversions (go-step7 decision 18, slice 7.7b),
@@ -1890,11 +1938,12 @@ jobs:
     name: go-ok
     # On a draft it runs too, and fails: every other job is skipped then, and
     # a skipped required check would read as passed.
-    # go-container and go-g5-published run only at night and by hand (skipped
-    # on a pull request and in the merge queue, which go-ok accepts): listed so
-    # that a failed nightly run's go-ok is red too, not green beside a red job.
+    # go-container, go-g5-published and go-upgrade-all run only at night and by
+    # hand (skipped on a pull request and in the merge queue, which go-ok
+    # accepts): listed so that a failed nightly run's go-ok is red too, not
+    # green beside a red job.
     if: always()
-    needs: [changes, go, go-g5, go-g5-published, go-race, go-platforms, go-binary, go-image, go-container, openapi, windows, go-cli-platforms, go-binary-go-cli]
+    needs: [changes, go, go-g5, go-g5-published, go-upgrade-all, go-race, go-platforms, go-binary, go-image, go-container, openapi, windows, go-cli-platforms, go-binary-go-cli]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

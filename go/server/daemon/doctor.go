@@ -145,6 +145,7 @@ func runDoctorLive(ctx context.Context, env *hostEnv, rest []string, stdout, std
 	}
 	if env.admission != nil {
 		live.Maintenance = env.admission.Isolated()
+		live.UpgradeHold = env.admission.UpgradeHold()
 	}
 	if env.public != nil {
 		live.Public = json.RawMessage(jsvalue.Stringify(env.public.Report()))

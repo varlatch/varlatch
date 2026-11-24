@@ -11,8 +11,10 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -174,7 +176,7 @@ func RecordReleaseCheck(dir string, o CheckOutcome, now time.Time) (*ReleaseChec
 	if err != nil {
 		return nil, err
 	}
-	if err := WriteDurably(filepath.Join(dir, ReleaseCheckFile), append(b, '\n'), 0o644); err != nil {
+	if err := WriteDurably(filepath.Join(dir, ReleaseCheckFile), append(b, '\n'), 0o644); err != nil && !errors.Is(err, ErrNotDurable) {
 		return nil, err
 	}
 	return &rc, nil
@@ -217,9 +219,29 @@ func WriteDurably(path string, data []byte, mode os.FileMode) error {
 	if err := os.Rename(tmp, path); err != nil {
 		return err
 	}
-	if d, err := os.Open(dir); err == nil {
-		_ = d.Sync()
-		_ = d.Close()
+	if err := syncDir(dir); err != nil {
+		return fmt.Errorf("%w: %v", ErrNotDurable, err)
+	}
+	return nil
+}
+
+// ErrNotDurable is a file WriteDurably put in place whose name could not be
+// made durable: it is there, and may not be after a power cut.
+var ErrNotDurable = errors.New("the file is written, but not known to survive a power cut")
+
+// syncDir makes a directory's entries durable, where its file system can
+// (Windows syncs no directory).
+var syncDir = func(dir string) error {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	if err := d.Sync(); err != nil && !errors.Is(err, syscall.EINVAL) && !errors.Is(err, syscall.ENOTSUP) {
+		return err
 	}
 	return nil
 }

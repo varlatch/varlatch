@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 )
@@ -62,6 +63,28 @@ func (h *Host) systemctl(ctx context.Context, verb string) error {
 		return failure("systemctl "+verb+" "+h.unit(), r)
 	}
 	return nil
+}
+
+// DataOwner is the user and group varlatchd's host commands become on this
+// host (the data directory's), and whether they do: run as root, over a
+// directory that is not root's.
+func (h *Host) DataOwner(ctx context.Context) (*Owner, error) {
+	if os.Geteuid() != 0 {
+		return nil, nil
+	}
+	info, _, err := h.Describe(ctx)
+	if err != nil {
+		return nil, err
+	}
+	st, err := os.Stat(info.DataDir)
+	if err != nil {
+		return nil, err
+	}
+	uid, gid, ok := ownerOf(st)
+	if !ok || uid == 0 {
+		return nil, nil
+	}
+	return &Owner{UID: uid, GID: gid}, nil
 }
 
 func (h *Host) admin(ctx context.Context, args []string, stdin []byte) (Ran, error) {

@@ -230,6 +230,10 @@ func TestBackupRestoreEndToEnd(t *testing.T) {
 		tr.stop(t)
 	}
 
+	// --check: whether a restore would take the archive, changing nothing.
+	if code, _, errOut := runAdmin(t, "backup", "restore", "--check", "--in", bad, "--config", target.conf); code != ExitOK {
+		t.Errorf("--check reads the archive, not the database in it: %d %q", code, errOut)
+	}
 	// Running it again with the archive completes it.
 	code, out, errOut = runAdmin(t, "backup", "restore", "--in", filepath.Join(host, "archive.vltbak"), "--config", target.conf)
 	if code != ExitOK || !strings.HasPrefix(out, "Restore completed for inst_") || !strings.Contains(out, archiveID) {
@@ -246,6 +250,19 @@ func TestBackupRestoreEndToEnd(t *testing.T) {
 	// While it runs, a restore is refused.
 	if code, _, errOut := runAdmin(t, "backup", "restore", "--in", filepath.Join(host, "archive.vltbak"), "--config", target.conf); code != ExitFailure || !strings.Contains(errOut, "stop it before a restore") {
 		t.Errorf("a restore while varlatchd runs: %d %q", code, errOut)
+	}
+	// Its check is not, and says what the archive is.
+	if code, out, errOut := runAdmin(t, "backup", "restore", "--in", filepath.Join(host, "archive.vltbak"), "--check", "--config", target.conf); code != ExitOK || !strings.HasPrefix(out, "The archive "+archiveID+" of inst_") || !strings.HasSuffix(out, "nothing was changed.\n") {
+		t.Errorf("a check while varlatchd runs: %d %q %q", code, out, errOut)
+	}
+	if code, _, errOut := runAdmin(t, "backup", "restore", "--check", "--in", archive+".none", "--config", target.conf); code != ExitFailure || errOut == "" {
+		t.Errorf("a check of no archive: %d %q", code, errOut)
+	}
+	if code, _, _ := runAdmin(t, "backup", "restore", "--check", "--config", target.conf); code != 64 {
+		t.Errorf("a check without an archive: %d", code)
+	}
+	if _, err := os.Lstat(filepath.Join(target.data, ".restore-check")); !os.IsNotExist(err) {
+		t.Errorf("a check left its scratch: %v", err)
 	}
 	tr.stop(t)
 	conn, err := sql.Open("sqlite", "file:"+filepath.Join(target.data, config.DatabaseFile)+"?mode=ro")

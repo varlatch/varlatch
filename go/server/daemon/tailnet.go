@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/varlatch/varlatch/go/lib/preread"
 	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/server/audit"
 	"github.com/varlatch/varlatch/go/server/config"
@@ -80,7 +81,7 @@ func startTailnet(cfg *config.Config, controlURL string, certs tailnet.CertSourc
 		}
 	}
 	if fresh && t.AuthKeyFile != "" {
-		b, err := os.ReadFile(t.AuthKeyFile)
+		b, err := preread.ReadFile(t.AuthKeyFile)
 		switch {
 		case errors.Is(err, os.ErrNotExist):
 			log.Warn("the tailnet node is not enrolled and has no auth key; it waits for one", "file", t.AuthKeyFile)
@@ -615,7 +616,7 @@ func runTailnetProbe(cfg *config.Config, rest []string, stdout, stderr io.Writer
 	if t.AuthKeyFile == "" {
 		return fail("no auth key (tailnet_auth_key_file): the probe joins with the key the node will enrol with")
 	}
-	raw, err := os.ReadFile(t.AuthKeyFile)
+	raw, err := preread.ReadFile(t.AuthKeyFile)
 	if err != nil {
 		return fail("cannot read the auth key file: %v", err)
 	}

@@ -40,7 +40,11 @@ type Admission struct {
 	// unreadable: the gate file exists but cannot be read; nothing is
 	// admitted until an operator repairs it.
 	unreadable bool
-	busy       int
+	// upgrading: an upgrade is checking this varlatchd (HoldForUpgrade);
+	// upgradeNote is why it is still held.
+	upgrading   bool
+	upgradeNote string
+	busy        int
 	// hold: a restore's hold stands (backup.Hold), or one that cannot be
 	// read (holdUnreadable), until Resume.
 	hold           *backup.Hold
@@ -72,11 +76,56 @@ func (a *Admission) active() *backup.Gate {
 	return a.gate
 }
 
-// Isolated reports whether a gate is open (or unreadable).
+// closed is whether nothing is admitted. Called with mu held.
+func (a *Admission) closed() bool { return a.unreadable || a.upgrading || a.active() != nil }
+
+// Isolated reports whether a gate is open (or unreadable), or an upgrade
+// holds this varlatchd.
 func (a *Admission) Isolated() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.unreadable || a.active() != nil
+	return a.closed()
+}
+
+// HoldForUpgrade admits nothing until EndUpgrade, beside whatever gate is
+// open: this process's only, never written. It begins before anything asks
+// to be admitted.
+func (a *Admission) HoldForUpgrade() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.upgrading, a.upgradeNote = true, UpgradeHeld
+}
+
+// Why an upgrade holds this varlatchd: it is not over; or its journal, which
+// says when it is, is gone, or cannot be read.
+const (
+	UpgradeHeld              = "held"
+	UpgradeJournalMissing    = "journal-missing"
+	UpgradeJournalUnreadable = "journal-unreadable"
+)
+
+// NoteUpgrade says why the upgrade's hold stands.
+func (a *Admission) NoteUpgrade(note string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.upgradeNote = note
+}
+
+// UpgradeHold is why an upgrade holds this varlatchd, "" when none does.
+func (a *Admission) UpgradeHold() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if !a.upgrading {
+		return ""
+	}
+	return a.upgradeNote
+}
+
+// EndUpgrade ends HoldForUpgrade's hold. A gate stays as it is.
+func (a *Admission) EndUpgrade() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.upgrading = false
 }
 
 // Enter admits one request: false while isolated. leave ends it.
@@ -88,7 +137,7 @@ func (a *Admission) Enter() (leave func(), ok bool) {
 
 // enter is Enter, under the lock.
 func (a *Admission) enter() (leave func(), ok bool) {
-	if a.unreadable || a.active() != nil {
+	if a.closed() {
 		return nil, false
 	}
 	a.busy++
@@ -109,7 +158,7 @@ func (a *Admission) AdmitsMeta() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	g := a.active()
-	return !a.unreadable && g != nil && g.Kind == "migration"
+	return !a.unreadable && !a.upgrading && g != nil && g.Kind == "migration"
 }
 
 // EndMigration ends the migration's gate id (go-step7 decision 12, the

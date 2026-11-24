@@ -17,13 +17,19 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/upgrade"
 )
 
 // TestMain: run as `varlatchd` (a copy of this test binary under that
 // name, fakeVarlatchd), the binary is a fake varlatchd: it records its
 // arguments in its directory's args.json and answers with the stdout,
 // stderr and status files there.
+// It is the child of an upgrade run from it too, as varlatch is.
 func TestMain(m *testing.M) {
+	if len(os.Args) == 2 && os.Args[1] == upgrade.ChildCommand {
+		os.Exit(upgrade.Child(os.Stdin, os.Stdout, os.Stderr))
+	}
 	if strings.TrimSuffix(filepath.Base(os.Args[0]), ".exe") == "varlatchd" {
 		dir := filepath.Dir(os.Args[0])
 		args, _ := json.Marshal(os.Args[1:])

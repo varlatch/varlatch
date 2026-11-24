@@ -347,7 +347,7 @@ func (e *Engine) reverse(ctx context.Context, j *Journal) error {
 	}
 	crashPoint("rollback barrier held")
 
-	dir, err := e.scratchDir()
+	dir, err := e.scratchDir(ctx)
 	if err != nil {
 		return e.undoReverse(ctx, j, err)
 	}
@@ -428,10 +428,11 @@ func (e *Engine) reverse(ctx context.Context, j *Journal) error {
 		return e.undoReverse(ctx, j, fmt.Errorf("the TypeScript release's export: %w", err))
 	}
 	defer os.Remove(exported)
-	staged, err := e.stage(exported, dir)
+	staged, done, err := e.stage(ctx, exported)
 	if err != nil {
 		return e.undoReverse(ctx, j, err)
 	}
+	defer done()
 	checks, err := rt.CheckReverse(ctx, staged, keep, runKey)
 	if err != nil {
 		return e.undoReverse(ctx, j, fmt.Errorf("the reverse checks: %w", err))
@@ -910,6 +911,7 @@ func (e *Engine) finishRestore(ctx context.Context, j *Journal) error {
 // directory, or its stage directories.
 func (e *Engine) cleanReverseScratch() {
 	_ = cleanScratch(e.work())
+	_ = e.staged(context.Background())
 	if e.Options.Stage != nil && e.Options.StageBase != "" {
 		for _, re := range []*regexp.Regexp{leftoverStage} {
 			_ = removeMatchingExcept(e.Options.StageBase, re, true, e.Options.StageKeep)
