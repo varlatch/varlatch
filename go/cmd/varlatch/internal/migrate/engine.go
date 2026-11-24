@@ -57,8 +57,14 @@ type Options struct {
 	Drain time.Duration
 	// Now is the clock (time.Now when nil).
 	Now func() time.Time
-	// Say reports progress, one line at a time (nil: silent).
+	// Say reports progress, one line at a time (nil: silent). It must not
+	// wait for a reader (Lines).
 	Say func(string)
+	// Progress reports the steps of an undo, a rollback or a wait as they
+	// start, go on and end (progress.go), one line at a time, some from a
+	// goroutine beside Say's; it must not wait for a reader either (nil:
+	// none, for a machine's).
+	Progress func(string)
 	// Work is a directory of this host's for the dry run's scratch
 	// database (removed after it).
 	Work string
@@ -109,6 +115,10 @@ type Engine struct {
 	pin *imagePin
 	// sleep waits between probes (time.Sleep; the tests' clock).
 	sleep func(time.Duration)
+	// ticks is the progress lines' ticker (a time.Ticker when nil; the
+	// tests' clock).
+	ticks func(time.Duration) (<-chan time.Time, func())
+	prog  progress
 }
 
 // DryRunReport is the dry run's: each part of the projected downtime
@@ -726,7 +736,7 @@ func (e *Engine) finalCopy(ctx context.Context, j *Journal) error {
 		return err
 	}
 	defer clear(runKey)
-	exported, err := e.Source.Export(ctx, runKey, false)
+	exported, err := stepOf(e, "exporting the source at its frozen point", func() (string, error) { return e.Source.Export(ctx, runKey, false) })
 	if err != nil {
 		return fmt.Errorf("the export: %w", err)
 	}
@@ -742,7 +752,7 @@ func (e *Engine) finalCopy(ctx context.Context, j *Journal) error {
 			return err
 		}
 	}
-	cp, err := e.Target.Import(ctx, bundle, "")
+	cp, err := stepOf(e, "importing it into the target", func() (CopyRecord, error) { return e.Target.Import(ctx, bundle, "") })
 	if err != nil {
 		return fmt.Errorf("the import: %w", err)
 	}
@@ -750,7 +760,7 @@ func (e *Engine) finalCopy(ctx context.Context, j *Journal) error {
 	if err := e.enter(ctx, j, Copied); err != nil {
 		return err
 	}
-	checks, err := e.Target.Check(ctx, bundle, "", runKey)
+	checks, err := e.stepChecked("checking the copy", func() (CheckSummary, error) { return e.Target.Check(ctx, bundle, "", runKey) })
 	if err != nil {
 		return fmt.Errorf("the checks: %w", err)
 	}
@@ -816,7 +826,9 @@ func (e *Engine) switchSource(ctx context.Context, j *Journal) error {
 		}
 		owned = shared
 	}
-	stop := func() error { return stopSidecar(ctx, ts) }
+	stop := func() error {
+		return e.step("stopping the source's tailnet sidecar", func() error { return stopSidecar(ctx, ts) })
+	}
 	if owned {
 		temp := "its temporary name"
 		if j.Tailnet != nil && j.Tailnet.Handoff != nil && j.Tailnet.Handoff.ServingTemp != "" {
@@ -831,7 +843,7 @@ func (e *Engine) switchSource(ctx context.Context, j *Journal) error {
 			start = func(ctx context.Context) error { return gc.StartTailnetGated(ctx, barrierGate(j)) }
 		}
 		e.say("Tailnet: the source's sidecar starts again (its node under %s), so that its varlatchd, which shares its network, is marked migrated out; then it stops.", temp)
-		if err := start(ctx); err != nil {
+		if err := e.step("starting the source's tailnet sidecar", func() error { return start(ctx) }); err != nil {
 			// The sidecar may have started and varlatchd not: as the
 			// handoff left it, the old node off the tailnet.
 			if serr := stop(); serr != nil {
@@ -840,7 +852,7 @@ func (e *Engine) switchSource(ctx context.Context, j *Journal) error {
 			return fmt.Errorf("starting the source's tailnet sidecar to mark the source migrated out: %w; varlatch migrate --resume goes on", err)
 		}
 		crashPoint("switch sidecar started")
-		if err := e.sourceAnswers(ctx); err != nil {
+		if err := e.step(fmt.Sprintf("waiting for the source's varlatchd to answer (at most %s)", sourceReadyWait), func() error { return e.sourceAnswers(ctx) }); err != nil {
 			if serr := stop(); serr != nil {
 				err = fmt.Errorf("%w; stopping the sidecar again: %v", err, serr)
 			}
@@ -867,8 +879,11 @@ func (e *Engine) switchSource(ctx context.Context, j *Journal) error {
 
 // stopSidecar stops the source's tailnet sidecar on a context of its own
 // (context.WithoutCancel, within sidecarStopWait): a stop is cleanup, done
-// even when the run's ctx is cancelled, since an interrupted run would
-// otherwise leave the old node on the tailnet until --resume.
+// even when the run's ctx is done (a handoff past its deadline). It is no
+// help against Ctrl-C or a kill: varlatch migrate handles no signal, so
+// either ends the process wherever it is, and the old node may stay on the
+// tailnet until the next run (--resume, or --abort before the switch) stops
+// it.
 func stopSidecar(ctx context.Context, ts TailnetSource) error {
 	sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sidecarStopWait)
 	defer cancel()
@@ -1010,7 +1025,7 @@ func (e *Engine) undo(ctx context.Context, j *Journal, cause error) error {
 	if from == Transfer {
 		// The tailnet name first, then the address (decision 12's reverse
 		// order); an address is never given back while the name is not.
-		if err := e.unwindTailnet(ctx, j); errors.Is(err, ErrAwaitingOperator) {
+		if err := e.stepIf(nameMoved(j), "giving the tailnet name back", func() error { return e.unwindTailnet(ctx, j) }); errors.Is(err, ErrAwaitingOperator) {
 			// The operator's step first (exit 75); --resume goes on with
 			// the undo.
 			return fmt.Errorf("%w; undoing waits: %w", cause, err)
@@ -1018,9 +1033,10 @@ func (e *Engine) undo(ctx context.Context, j *Journal, cause error) error {
 			problems = append(problems, err)
 			nameBack = false
 		} else {
-			stop := e.stopTargetForUndo(ctx)
+			stop := e.stepAll("stopping the target", func() []error { return e.stopTargetForUndo(ctx) })
 			stopped = len(stop) == 0
 			problems = append(problems, stop...)
+			crashPoint("undo target stopped")
 		}
 	}
 	// open: the source is behind no gate now. Otherwise closed says why its
@@ -1039,11 +1055,12 @@ func (e *Engine) undo(ctx context.Context, j *Journal, cause error) error {
 		problems = append(problems, fmt.Errorf("reading the source's gate: %w", err))
 		closed = "could not confirm the source's gate is lifted, so its %s is not started again"
 	case g != nil && g.Kind == "migration":
-		if err := e.Source.Release(ctx, g.ID); err != nil {
+		if err := e.step("lifting the source's barrier", func() error { return e.Source.Release(ctx, g.ID) }); err != nil {
 			problems = append(problems, fmt.Errorf("lifting the barrier %s: %w", g.ID, err))
 			closed = "the source's %s is not started again while its barrier stands"
 		} else {
 			released, open = true, true
+			crashPoint("undo released")
 		}
 	case g != nil:
 		problems = append(problems, fmt.Errorf("the source is behind a %s gate (%s), not a migration barrier: left as it is", g.Kind, g.ID))
@@ -1062,7 +1079,8 @@ func (e *Engine) undo(ctx context.Context, j *Journal, cause error) error {
 		case !open:
 			problems = append(problems, fmt.Errorf(closed, ingressPart(j.Ingress)))
 		default:
-			back := e.returnAddress(ctx, j)
+			back := e.stepAll(fmt.Sprintf("starting the source's %s again", ingressPart(j.Ingress)), func() []error { return e.returnAddress(ctx, j) })
+			crashPoint("undo address started")
 			problems = append(problems, back...)
 			// The old installation is reopened only once it answers at its
 			// address: its ingress started is not yet its dashboard
@@ -1078,7 +1096,7 @@ func (e *Engine) undo(ctx context.Context, j *Journal, cause error) error {
 				if j.Copy != nil {
 					want = j.Copy.InstallationID
 				}
-				if err := e.waitForTypeScript(ctx, j, want); err != nil {
+				if err := e.step(e.awaiting(j, "the TypeScript release"), func() error { return e.waitForTypeScript(ctx, j, want) }); err != nil {
 					problems = append(problems, fmt.Errorf("the source's %s was started again, but %w", ingressPart(j.Ingress), err))
 					if !j.UndoUnanswered {
 						j.UndoUnanswered = true
@@ -1097,9 +1115,10 @@ func (e *Engine) undo(ctx context.Context, j *Journal, cause error) error {
 	// not there has none.
 	unmade := e.targetUnmade(j)
 	if !unmade && nameBack && stopped {
-		if err := e.discard(ctx, j); err != nil {
+		if err := e.step("discarding the target's database", func() error { return e.discard(ctx, j) }); err != nil {
 			problems = append(problems, fmt.Errorf("discarding the target's database: %w", err))
 		}
+		crashPoint("undo discarded")
 	}
 	if len(problems) > 0 {
 		// Not released: the journal stays where it was, for --resume.

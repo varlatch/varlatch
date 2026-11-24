@@ -278,7 +278,8 @@ release. CI routes by path: `.github/workflows/go.yml` checks `go/`, and
   SHA256SUMS in memory, then written to a new file beside the running one,
   made executable, run once (it must report the version), and renamed over
   it. On Windows the running file is renamed aside first, and the next run
-  removes it. It never goes to an older release without
+  removes it; a rename another process's hold on a file stops is tried
+  again for up to 5 seconds, the running file back in its place meanwhile. It never goes to an older release without
   `--allow-downgrade`, to a prerelease unless this binary is one or
   `--prerelease` is given, or to a release before the Go line (0.50.0); a
   copy Homebrew or winget installed (its path is in a Cellar or in WinGet's
@@ -1915,7 +1916,13 @@ by both commands, a new installation on a new volume as the image user
 with a read-only root filesystem,
 no key in `docker inspect` or `/proc/1/environ`, the recovery gate held in
 the volume across containers, and a backup restored into a new volume
-through the image alone. go.yml's `go-image` job builds the image for
+through the image alone. Then it uses an installation, with a read-only
+root filesystem and no tmpfs: the first passkey, values set, replaced,
+rotated and deleted, imports larger than SQLite keeps in memory, a deleted
+project, a backup and its restore; as `docker run`, as
+`infra/coolify/varlatchd.compose.yml` itself, and without `SQLITE_TMPDIR`;
+and serve refuses to start with nowhere to write (`lib/storage/temp.go`).
+go.yml's `go-image` job builds the image for
 both platforms and runs it on every pull request that touches it;
 `go-container` runs the conformance suites against it nightly (target
 `go-container:<image>`, which runs as go-binary with its expectations).
@@ -2134,6 +2141,28 @@ serves the tailnet listener on the node's own addresses
   binding is off (a userspace node has no TUN device). The node joins in
   the background: the ordinary listener serves at once, the tailnet
   listener once the node runs.
+- **No network map read from disk.** tsnet writes the node's own map to its
+  state directory and, by default, is Running on it at the next start before
+  it has spoken to the control plane (`TS_USE_CACHED_NETMAP`). varlatchd
+  turns that off for every node it starts, whatever its environment says: no
+  map is read from disk. tsnet still writes the node's own (its name, tags
+  and addresses, no peers) at a change of its home DERP region, and has no
+  switch for that; `profile-data/*/netmap-cache` is removed when the node
+  starts and when it closes. The node's name, tags and tailnet, and so the
+  pin's and the tags' checks, are what the control plane answers this start.
+- **Until it joins.** While the control plane does not answer, or puts the
+  node off (a rate limit), the node is not up and the tailnet listener does
+  not open; varlatchd waits for it without end, and the listener opens when
+  the node joins, with no restart. The log, doctor and the report's
+  `warnings` say what it waits for (`waiting-for-control`, or `login-needed`
+  when it must be logged in or approved there). A control plane that refuses
+  the node (`join-refused`: an auth key it does not take) ends the wait: the
+  listener stays closed, and doctor says so, until varlatchd is restarted,
+  though tsnet goes on and the node may come to run. The refusal's own words,
+  which may repeat the auth key, are shown nowhere: not in the log, the
+  report, or a host command's answer; a message of tsnet's own log with the
+  key in it, percent-escaped or not, is not logged. A control server that answers a registration with a plain HTTP error (a 403) is not
+  told from one that does not answer.
 - **Coordination server.** Tailscale's by default (`tailnet_control_url`
   unset, or Tailscale's own URL), and the node is always given its control
   URL explicitly (an empty one would let tsnet read `TS_CONTROL_URL`).
@@ -2297,6 +2326,14 @@ serves the tailnet listener on the node's own addresses
     already names, enrolled or not. Run again for the same name, it
     reports the same node; an enrolled node no handoff holds is held again
     only while the control plane names it exactly the temporary name.
+
+    The node's name and, on a self-hosted control server, its tags are what
+    the control plane sends this start (never a map read from disk), and
+    waited for, together, up to 30 seconds, since a rename just made reaches
+    the node a moment after the control plane records it. One reading of the
+    node must show all of it, with one StableID throughout, and that reading
+    is what is pinned and reported. What is expected is never relaxed: past
+    the wait it is refused, naming both.
   - **A varlatchd started under the hold** joins under the hold's
     temporary name, never announcing the configured one, which another
     node holds, and reads its name back as the hold's (open sets the
@@ -2311,8 +2348,10 @@ serves the tailnet listener on the node's own addresses
   - `varlatchd admin tailnet certificate obtain|expiry --name <name>
     [--json]` works on `<name>.<pinned suffix>`:
     - `obtain` is one attempt, through the running varlatchd's node or
-      offline through the enrolled node, started for it. A refusal for the
-      authority's rate limit is answered as `refusal: "rate-limited"`.
+      offline through the enrolled node, started for it, once the node's
+      own map names it that and lists exactly that among its certificate
+      domains (up to 30 seconds: before, the node itself refuses the name).
+      A refusal for the authority's rate limit is answered as `refusal: "rate-limited"`.
     - `expiry` reads the node's cached certificate (`tailnet/certs/`,
       tsnet's ACME store) and never issues one.
   - `varlatchd admin tailnet reaches --name <name> --stable-id <id>

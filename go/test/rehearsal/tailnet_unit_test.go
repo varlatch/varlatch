@@ -154,7 +154,7 @@ func TestTailnetPieces(t *testing.T) {
 		}{
 			{"", "tailnet", "", "", "", "", ""},
 			{"", "combined", "", "", "", "", "runs on the box only"},
-			{"box", "combined", "", "", "", "", "not built yet"},
+			{"box", "combined", "", "", "", "", "the combined case needs"},
 			{"", "tailnet", key, key, "tail1.ts.net", "", "owner's session on the box"},
 			{"box", "tailnet", key, "", "tail1.ts.net", "", "VL_RH_TAILSCALE_AUTH_KEY_FILE"},
 			{"box", "tailnet", key, key, "tail1.ts.net", "", ""},

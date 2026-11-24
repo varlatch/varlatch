@@ -76,6 +76,10 @@ func fakeSystemctl(args []string) int {
 		}
 		return 0
 	case "stop":
+		if pid := readPID(); pid > 0 && alive(pid) {
+			began := time.Now()
+			defer func() { logStop(time.Since(began)) }()
+		}
 		if err := stopService(); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
@@ -83,6 +87,33 @@ func fakeSystemctl(args []string) int {
 		return 0
 	}
 	return 1
+}
+
+// logStop notes a stop's time, where systemd's journal has it on the box.
+func logStop(took time.Duration) {
+	f, err := os.OpenFile(state("stops.log"), os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	fmt.Fprintln(f, took)
+}
+
+// fakeStops reads logStop's file: none when there is none.
+func fakeStops(path string) ([]stopped, error) {
+	b, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	var out []stopped
+	for _, l := range strings.Fields(string(b)) {
+		took, err := time.ParseDuration(l)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, stopped{took: took, killed: took >= unitStopTimeout})
+	}
+	return out, nil
 }
 
 func readPID() int {
@@ -198,12 +229,12 @@ func stopService() error {
 		return nil
 	}
 	_ = syscall.Kill(pid, syscall.SIGTERM)
-	for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+	for deadline := time.Now().Add(unitStopTimeout); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
 		if !alive(pid) {
 			return os.Remove(state("service.pid"))
 		}
 	}
-	return errors.New("varlatchd did not stop within 30 s")
+	return fmt.Errorf("varlatchd did not stop within %s", unitStopTimeout)
 }
 
 // startSquatter holds addr in a process of its own (this binary as
