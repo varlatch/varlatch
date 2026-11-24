@@ -635,8 +635,9 @@ func nodeFor(ctx context.Context, env *hostEnv) (*tailnet.TSNode, func(), error)
 	return node, func() { _ = node.Close() }, nil
 }
 
-// reachDirPrefix names a reach probe's state directory in the system's
-// temporary directory.
+// reachDirPrefix names a reach probe's state directory, in the data
+// directory: the image has no other writable one, and the state holds the
+// probe's node key.
 const reachDirPrefix = "varlatchd-reach-"
 
 // A probe lives at most its --wait (reachMaxWait at most) and its slack
@@ -651,8 +652,8 @@ const (
 // sweepReachDirs removes the reach probes' state directories a killed
 // probe left before cutoff: this user's own, directories only, never a
 // link.
-func sweepReachDirs(tmp string, cutoff time.Time) {
-	entries, err := os.ReadDir(tmp)
+func sweepReachDirs(parent string, cutoff time.Time) {
+	entries, err := os.ReadDir(parent)
 	if err != nil {
 		return
 	}
@@ -660,7 +661,7 @@ func sweepReachDirs(tmp string, cutoff time.Time) {
 		if !e.IsDir() || !strings.HasPrefix(e.Name(), reachDirPrefix) {
 			continue
 		}
-		p := filepath.Join(tmp, e.Name())
+		p := filepath.Join(parent, e.Name())
 		st, err := os.Lstat(p)
 		if err != nil || !st.IsDir() || !ownedByMe(st) || st.ModTime().After(cutoff) {
 			continue
@@ -704,8 +705,12 @@ func runTailnetReaches(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer) 
 	clear(raw)
 	// A probe stopped by a signal logs out and removes its state, as one
 	// that ends; what a killed one left (its node key) is swept here.
-	sweepReachDirs(os.TempDir(), time.Now().Add(-reachSweepAfter))
-	dir, err := os.MkdirTemp("", reachDirPrefix)
+	// (A probe of 0.50.0-rc.2 or earlier had it in the system's temporary
+	// directory.)
+	for _, d := range []string{cfg.DataDir, os.TempDir()} {
+		sweepReachDirs(d, time.Now().Add(-reachSweepAfter))
+	}
+	dir, err := os.MkdirTemp(cfg.DataDir, reachDirPrefix)
 	if err != nil {
 		return config("%v", err)
 	}

@@ -166,6 +166,17 @@ fixes.
 
 ### Server
 
+- **The container image works with a read-only root filesystem.** SQLite
+  had nowhere to put its temporary files there, so a larger write failed
+  with a server error while smaller ones went on: enrolling the first
+  passkey, `admin bootstrap --cli-credential`, a new machine identity, and
+  a change set of five values or more (an import). The image now sets
+  `SQLITE_TMPDIR` to the data directory, and `varlatchd` does the same by
+  itself wherever it finds no writable temporary directory. It refuses to
+  start, and says what to set, when the data directory is not writable
+  either. The tailnet reach check keeps its state in the data directory
+  too. None of these files stays there: SQLite's have no name in the
+  directory, and the reach check removes its own.
 - **A stop during a certificate issuance ends `varlatchd`.** With
   `listen_https`, the Go server kept trying again without end after a stop
   interrupted an issuance or a renewal, until it was killed (after the 30
