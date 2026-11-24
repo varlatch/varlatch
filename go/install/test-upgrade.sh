@@ -11,6 +11,8 @@
 #    release checked as install.sh checks it; set up, with data.
 # 2. It is upgraded to the candidate (this checkout) by its own varlatch, as
 #    people do it: that release's engine, its journal and its health checks.
+#    First killed on the way, then restarted as by a reboot and finished by
+#    the varlatch that is installed then, as an operator would.
 #    Where the candidate has upgrade --rollback, a rollback to a release that
 #    cannot read one's journal is refused with the steps by hand, which are
 #    then taken, and it is upgraded again, by the candidate's varlatch.
@@ -138,7 +140,8 @@ VARLATCH=/usr/local/bin/varlatch VARLATCHD=/usr/local/bin/varlatchd
 # The client is the candidate's, whatever the host runs, with its own home.
 client_bin=$built/releases/$CANDIDATE/$(cd "$built/releases/$CANDIDATE" && echo varlatch-*)
 chmod 755 "$client_bin"
-client() { (cd "$work/repo" && HOME="$work/home" VARLATCH_TOKEN="$(cat "$work/token")" "$client_bin" "$@"); }
+# It waits out a 503 by itself, for longer than a check here.
+client() { (cd "$work/repo" && HOME="$work/home" VARLATCH_TOKEN="$(cat "$work/token")" timeout 10 "$client_bin" "$@"); }
 
 # --- what must hold of the host ---
 
@@ -161,7 +164,7 @@ value() { client run -e development -- sh -c 'printenv "$1" || echo absent' sh "
 has() { [ "$(value "$1")" = "value-of-$1" ]; }
 has_not() { [ "$(value "$1")" = absent ]; }
 put() { printf 'value-of-%s' "$1" | client values set "$1" --stdin -e development >/dev/null 2>&1; }
-journal_says() { grep -q "\"state\": *\"$1\"" /etc/varlatch/upgrade.json; }
+journal_says() { grep -q "\"state\": *\"$1\"" /etc/varlatch/upgrade.json 2>/dev/null; }
 # varlatchd runs as varlatch: a file of root's in its directory is one it may
 # not be able to open.
 data_is_varlatchs() { [ -z "$(find /var/lib/varlatch ! -user varlatch -print -quit)" ]; }
@@ -195,6 +198,14 @@ upgraded() { # <name> <release>: the last upgrade ended so
   check "$1: the journal says done" journal_says "done"
   check "$1: the data directory is varlatch's" data_is_varlatchs
   check "$1: the keys are root's" keys_are_roots
+}
+
+# As a reboot finds the host: varlatchd killed, then started by its unit.
+restarted() {
+  systemctl kill -s KILL varlatchd.service >/dev/null 2>&1 || true
+  systemctl stop varlatchd.service >/dev/null 2>&1 || true
+  systemctl reset-failed varlatchd.service >/dev/null 2>&1 || true
+  systemctl start varlatchd.service >/dev/null 2>&1 || true
 }
 
 # --- installing and setting up ---
@@ -254,11 +265,53 @@ must "$FROM: the data is read back" has FIRST
 
 # --- 2. to the candidate ---
 
+# past <step>: an upgrade is under way, its journal at that step or further
+# (the step is in $at).
+past() {
+  journal_says in-progress || return 1
+  at=$(sed -n 's/.*"step": *"\([^"]*\)".*/\1/p' /etc/varlatch/upgrade.json 2>/dev/null || true)
+  seen=no
+  for s in verified snapshot stopping stopped prepared swapped started checked; do
+    if [ "$s" = "$1" ]; then seen=yes; fi
+    if [ "$seen $s" = "yes $at" ]; then return 0; fi
+  done
+  return 1
+}
 # Beside the installed varlatchd. $FROM's own engine, and not the candidate's.
 tool=/usr/local/bin/varlatch-upgrade-test
 trap 'rm -f "$tool"; cleanup' EXIT
 install -m 755 "$built/from/varlatch" "$tool"
 must "to-candidate: upgraded by $FROM's varlatch" [ "$("$tool" --version)" = "varlatch $FROM" ]
+# It has no crash points: it is killed once its journal is at a step, which
+# it may have gone on from meanwhile.
+for step in stopped swapped started; do
+  name=from-kill-$step
+  HOME="$work/home" VARLATCH_TEST_SELFUPDATE_SOURCE="$work/source/source.json" "$tool" upgrade "$CANDIDATE" --yes --accept-not-rollback-safe </dev/null >"$work/$name.out" 2>&1 &
+  engine=$!
+  for _ in $(seq 1 6000); do
+    if past "$step" || ! kill -0 "$engine" 2>/dev/null; then break; fi
+    sleep 0.01
+  done
+  kill -KILL "$engine" 2>/dev/null || true
+  wait "$engine" 2>/dev/null || true
+  check "$name: killed on the way" journal_says in-progress
+  echo "      at $at, $("$VARLATCH" --version) installed"
+  restarted
+  upgrade "$name-again" "$VARLATCH"
+  if [ "$status" != 0 ]; then tail -n 8 "$work/$name-again.out" >&2; fi
+  check "$name: finished by the installed varlatch: it exits 0" [ "$status" = 0 ]
+  if journal_says undone; then
+    check "$name: undone: $FROM serves" serves "$FROM"
+  else
+    # It got through its checks before the kill.
+    check "$name: finished: $CANDIDATE serves" serves "$CANDIDATE"
+  fi
+  check "$name: the data is there" has FIRST
+  check "$name: the data directory is varlatch's" data_is_varlatchs
+  if [ "$failures" -gt 0 ] || ! journal_says undone; then break; fi
+done
+if [ "$failures" -gt 0 ]; then finish; fi
+must "from-kill: $FROM serves, to go on from" serves "$FROM"
 upgrade to-candidate "$tool" "$CANDIDATE" --yes --accept-not-rollback-safe
 upgraded to-candidate "$CANDIDATE"
 must "to-candidate: the data is there" has FIRST
@@ -309,13 +362,6 @@ if [ "$failures" -gt 0 ]; then finish; fi
 
 # --- 4. killed at each step ---
 
-# As a reboot finds the host: varlatchd killed, then started by its unit.
-restarted() {
-  systemctl kill -s KILL varlatchd.service >/dev/null 2>&1 || true
-  systemctl stop varlatchd.service >/dev/null 2>&1 || true
-  systemctl reset-failed varlatchd.service >/dev/null 2>&1 || true
-  systemctl start varlatchd.service >/dev/null 2>&1 || true
-}
 for point in $KILLS; do
   name=$(echo "kill-$point" | tr ':' '-')
   export VARLATCH_TEST_UPGRADE_KILL="$point"
@@ -338,7 +384,7 @@ for point in $KILLS; do
   # ready at once: it is tried for a few seconds.
   item=MEANWHILE_$(echo "$point" | tr -c 'A-Za-z0-9\n' _ | tr '[:lower:]' '[:upper:]')
   written=no
-  for _ in 1 2 3 4 5; do
+  for _ in 1 2; do
     if put "$item"; then written=yes; break; fi
     sleep 1
   done
