@@ -628,3 +628,58 @@ func TestARollbackAsRootGivesTheServerItsDatabase(t *testing.T) {
 		}
 	}
 }
+
+// Killed in the middle of the copy of the database the rollback replaces:
+// the part is never put back over the database.
+func TestAKillInTheCopyOfTheDatabase(t *testing.T) {
+	h := upgraded(t, false)
+	plan, err := h.upgrader(nil).PlanRollback(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	j, err := h.upgrader(func(p string) bool { return p == "rollback:copying:varlatch.db" }).Rollback(context.Background(), plan)
+	if !errors.Is(err, errKilled) {
+		t.Fatal(err)
+	}
+	parts, _ := filepath.Glob(filepath.Join(j.Work, "*", "varlatch.db"))
+	if len(parts) != 1 {
+		t.Fatalf("the copy so far: %q", parts)
+	}
+	if err := os.Truncate(parts[0], 4096); err != nil {
+		t.Fatal(err)
+	}
+	if j, err = h.upgrader(nil).Recover(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	upgradedServes(t, h, j)
+}
+
+// Killed in the middle of the restore: the database it was writing, its
+// gate, the archive it opened and the one it had not put in place all go,
+// and the release left serves on its own database.
+func TestAKillInTheRestore(t *testing.T) {
+	h := upgraded(t, false)
+	plan, err := h.upgrader(nil).PlanRollback(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.upgrader(func(p string) bool { return p == "rollback:current-kept" }).Rollback(context.Background(), plan); !errors.Is(err, errKilled) {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(h.data, ".restore-work"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for name, content := range map[string]string{
+		"varlatch.db": "a part", "varlatch.db-wal": "another", "varlatch.db.restore": "a part", ".restore-work/database.sqlite": "an archive's",
+		backup.GateFile: `{"id":"x","kind":"restore","phase":"paused","archiveId":"a"}`,
+	} {
+		if err := os.WriteFile(filepath.Join(h.data, name), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	j, err := h.upgrader(nil).Recover(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	upgradedServes(t, h, j)
+}
