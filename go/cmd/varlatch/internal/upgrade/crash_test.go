@@ -971,45 +971,34 @@ func TestWhatAKilledRunStartedHoldsTheLock(t *testing.T) {
 	h := newStandHost(t, standFrom, false, false)
 	u := &Upgrader{BinDir: h.bin, ConfigPath: h.conf}
 	programs := t.TempDir() // /dev/shm may run none
-	go1, go2 := filepath.Join(h.dir, "1"), filepath.Join(h.dir, "2")
-	script := func(name, wait string) string {
+	program := func(name, text string) string {
 		p := filepath.Join(programs, name)
-		h.put(p, "#!/bin/sh\n: >"+p+".runs\nwhile [ ! -e "+wait+" ]; do sleep 0.02; done\necho '{}'\n", 0o755)
+		h.put(p, "#!/bin/sh\n"+text, 0o755)
 		return p
 	}
-	slow, admin := script("slow", go1), script("admin", go2)
-	release, err := u.hold()
-	if err != nil {
+	if _, err := u.hold(); err != nil {
 		t.Fatal(err)
 	}
-	done := make(chan error, 2)
-	go func() {
-		cmd := exec.Command(slow)
-		u.bind(cmd)
-		done <- cmd.Run()
-	}()
-	go func() {
-		_, err := u.admin(context.Background(), admin, "admin")
-		done <- err
-	}()
-	for _, p := range []string{slow, admin} {
-		for i := 0; !exists(p + ".runs"); i++ {
-			if i == 500 {
-				t.Fatalf("%s does not run", p)
-			}
-			time.Sleep(10 * time.Millisecond)
-		}
+	locked := filepath.Join(filepath.Dir(h.conf), "upgrade.lock")
+	end := filepath.Join(h.dir, "end")
+	cmd := exec.Command(program("slow", "while [ ! -e "+end+" ]; do sleep 0.02; done\n"))
+	u.bind(cmd)
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	// So does a varlatchd (the data directory's child is bound as this is).
+	out, err := u.admin(context.Background(), program("varlatchd", "readlink /proc/self/fd/3\n"), "admin")
+	if err != nil || strings.TrimSpace(string(out)) != locked {
+		t.Fatalf("%q, %v", out, err)
 	}
 	// The run is killed: its own descriptor goes.
-	release()
-	for _, end := range []string{go1, go2} {
-		if _, err := lock(filepath.Dir(h.conf)); err == nil || !strings.Contains(err.Error(), "a command that a killed one started") {
-			t.Fatalf("the lock is free: %v", err)
-		}
-		h.put(end, "", 0o600)
-		if err := <-done; err != nil {
-			t.Fatal(err)
-		}
+	u.held.Close()
+	if _, err := lock(filepath.Dir(h.conf)); err == nil || !strings.Contains(err.Error(), "a command that a killed one started") {
+		t.Fatalf("the lock is free: %v", err)
+	}
+	h.put(end, "", 0o600)
+	if err := cmd.Wait(); err != nil {
+		t.Fatal(err)
 	}
 	f, err := lock(filepath.Dir(h.conf))
 	if err != nil {
