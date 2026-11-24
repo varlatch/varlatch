@@ -646,20 +646,40 @@ const (
 	reachSweepAfter = reachMaxWait + reachSlack + 3*time.Minute
 )
 
+// reachTemp is os.MkdirTemp; tests have one that finds no place.
+var reachTemp = os.MkdirTemp
+
 // makeReachDir makes a reach probe's state directory: in the system's
 // temporary directory; in the data directory when that is not writable (a
 // read-only root filesystem, the image's) and TMPDIR names no other. Only
 // then: varlatch migrate sets TMPDIR for its probe, whose directory, left by
-// a kill, would be in the way of an import into the data directory.
+// a kill, would be in the way of an import into the data directory. And
+// never root's in another user's data directory (a command that stays root).
 func makeReachDir(cfg *config.Config) (string, error) {
-	dir, err := os.MkdirTemp("", reachDirPrefix)
-	if err == nil || os.Getenv("TMPDIR") != "" {
+	dir, err := reachTemp("", reachDirPrefix)
+	if err == nil || os.Getenv("TMPDIR") != "" || !ownDataDir(cfg) {
 		return dir, err
 	}
 	if in, err := os.MkdirTemp(cfg.DataDir, reachDirPrefix); err == nil {
 		return in, nil
 	}
 	return "", err
+}
+
+// ownDataDir is whether the data directory is this process's user's.
+func ownDataDir(cfg *config.Config) bool {
+	st, err := os.Stat(cfg.DataDir)
+	return err == nil && ownedByMe(st)
+}
+
+// reachParents are the directories a reach probe's state may be in, as far
+// as this process may remove it there.
+func reachParents(cfg *config.Config) []string {
+	parents := []string{os.TempDir()}
+	if ownDataDir(cfg) {
+		parents = append(parents, cfg.DataDir)
+	}
+	return parents
 }
 
 // sweepReachDirs removes the reach probes' state directories a killed
@@ -718,7 +738,7 @@ func runTailnetReaches(cfg *config.Config, c nodeCmd, stdout, stderr io.Writer) 
 	clear(raw)
 	// A probe stopped by a signal logs out and removes its state, as one
 	// that ends; what a killed one left (its node key) is swept here.
-	for _, d := range []string{os.TempDir(), cfg.DataDir} {
+	for _, d := range reachParents(cfg) {
 		sweepReachDirs(d, time.Now().Add(-reachSweepAfter))
 	}
 	dir, err := makeReachDir(cfg)
