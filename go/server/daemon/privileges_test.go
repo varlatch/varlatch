@@ -551,6 +551,17 @@ func TestMigrateAsRootLeavesTheOwnersFiles(t *testing.T) {
 		t.Errorf("the bundle there changed: %v %v", again, err)
 	}
 	h.owned("migrate export to root's directory")
+
+	// The variable that tells a command its output is open says nothing by
+	// itself: the file is made as ever.
+	h.env = append(h.env, outputEnv+"=3")
+	stray := filepath.Join(h.private, "stray.jsonl")
+	if text, status := h.admin("migrate", "export", "--reverse", "--out", stray); status != ExitOK {
+		t.Fatalf("with a stray variable: %d %s", status, text)
+	}
+	if info, err := os.Stat(stray); err != nil || info.Size() == 0 {
+		t.Errorf("%v %v", info, err)
+	}
 }
 
 // The keys are root's, and nothing is made in the data directory for them.
@@ -688,6 +699,34 @@ func TestAdminAsRootWhoseDirectory(t *testing.T) {
 	}
 	if out, status := h.admin("schema", "status"); status != ExitConfig || !strings.Contains(out, "may be written by its group") {
 		t.Fatalf("a directory its group writes: %d %s", status, out)
+	}
+}
+
+func TestFileAndDirectory(t *testing.T) {
+	dir, err := os.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dir.Close()
+	f, err := os.Create(filepath.Join(dir.Name(), "f"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	defer w.Close()
+	file, folder, pipe := int(f.Fd()), int(dir.Fd()), int(r.Fd())
+	for _, c := range []struct {
+		f, dir int
+		want   bool
+	}{{file, folder, true}, {folder, file, false}, {file, file, false}, {pipe, folder, false}, {file, pipe, false}, {1 << 20, folder, false}, {file, 1 << 20, false}} {
+		if got := fileAndDirectory(c.f, c.dir); got != c.want {
+			t.Errorf("%+v: %v", c, got)
+		}
 	}
 }
 

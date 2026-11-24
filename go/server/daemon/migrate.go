@@ -374,7 +374,7 @@ func migrateWork(cfg *config.Config, a migrateArgs, frozen *frozenCopy, stdin io
 			return fail(ExitFailure, "%v", err)
 		}
 		o.Work = filepath.Dir(abs)
-		if os.Getenv(outputEnv) != "" {
+		if f, _ := handedOutput(); f != nil {
 			// The bundle's directory is root's alone, and this process is
 			// the data directory's owner now.
 			if o.Work, err = os.MkdirTemp("", "varlatchd-export-"); err != nil {

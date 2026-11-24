@@ -269,8 +269,11 @@ func (j *Journal) Reached(s Step) bool {
 }
 
 // Read reads dir's journal: nil when there is none.
-func Read(dir string) (*Journal, error) {
-	raw, err := os.ReadFile(filepath.Join(dir, File))
+func Read(dir string) (*Journal, error) { return ReadWith(os.ReadFile, dir) }
+
+// ReadWith is Read, the file read with read.
+func ReadWith(read func(path string) ([]byte, error), dir string) (*Journal, error) {
+	raw, err := read(filepath.Join(dir, File))
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}
