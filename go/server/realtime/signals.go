@@ -229,11 +229,15 @@ type Closures struct {
 	// Organization (membership.removed): their streams close, after the
 	// identitySignal that tells them.
 	RemovedMembers map[string]bool
+	// Narrowed are the Organizations that may signal fewer people from the
+	// batch on: frozen for an incident, or a control changed. Streams that
+	// lose one close (dispatch).
+	Narrowed map[string]bool
 }
 
 // ClosuresOf finds a batch's closures.
 func ClosuresOf(events []Event) Closures {
-	c := Closures{RemovedMembers: map[string]bool{}}
+	c := Closures{RemovedMembers: map[string]bool{}, Narrowed: map[string]bool{}}
 	for _, e := range events {
 		switch e.Type {
 		case "credential.revoked":
@@ -243,6 +247,10 @@ func ClosuresOf(events []Event) Closures {
 		case "membership.removed":
 			if subject := resourceIdentity(e.Resource); subject != "" {
 				c.RemovedMembers[subject] = true
+			}
+		case "organization.frozen", "security_control.changed":
+			if e.OrganizationID != "" {
+				c.Narrowed[e.OrganizationID] = true
 			}
 		}
 	}

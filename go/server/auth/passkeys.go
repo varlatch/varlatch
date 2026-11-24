@@ -500,6 +500,29 @@ func VerificationGap(ctx context.Context, db query.DBTX, credentialID, credentia
 	return "", nil
 }
 
+// SessionVerificationGap is VerificationGap of what a browser session's own
+// credentials carry: the evidence of the session's sign-in.
+func SessionVerificationGap(ctx context.Context, db query.DBTX, sessionID, identityID string) (string, error) {
+	row, err := query.New(db).SessionEvidence(ctx, sessionID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return GapNoEvidence, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if !row.UserVerified {
+		return GapNotUserVerified, nil
+	}
+	list, err := ownPasskeys(ctx, db, identityID)
+	if err != nil {
+		return "", err
+	}
+	if p := findPasskey(list, row.PasskeyID); p == nil || p.Trust != "trusted" {
+		return GapUntrusted, nil
+	}
+	return "", nil
+}
+
 // PendingReport is a report-mode count the request makes once it
 // succeeded (PendingAccessReport).
 type PendingReport struct {
