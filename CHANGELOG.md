@@ -157,7 +157,9 @@ fixes.
     refuses a placement its destination does not take
     (`placement-not-for-destination`).
   - Audit events gain `destinationKind`, `selector` and `topDestination` for
-    these kinds.
+    these kinds. A `;` or a character that does not show in a target's name is
+    percent-encoded in `targets` and `placements`; `field:` and `pipe:` take
+    neither.
   - An OAuth connection's hosts bind pages too, and a connection that names
     hosts goes to no application.
   - No schema change. On an earlier release, as after a reverse migration to

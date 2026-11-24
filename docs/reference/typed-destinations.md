@@ -89,6 +89,13 @@ Capability to a run (`runId`).
 | `pipe:/token` | at that JSON pointer of a document handed to a process over a pipe | hosts (the process talks to one), applications (the process is one) |
 | `field:Password` | typed into the field your broker knows by that name | pages, applications |
 
+A field's name and a pipe's pointer are text that shows as it is, at most 256
+characters and 512 bytes: without `;` and `=`, which separate the entries in the
+audit log, without control, invisible and bidirectional characters, and a field
+without a blank at either end. Names are compared as they are written. The
+targets of a request take more; in the audit log such characters are
+percent-encoded, so an entry is never read as two.
+
 Until now a broker that uses a pipe borrowed `json:`. That still works;
 `pipe:` says what it is. A target that none of the Capability's destinations
 takes is refused at issuing (`target-without-destination`), and a placement

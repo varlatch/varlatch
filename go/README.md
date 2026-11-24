@@ -1922,6 +1922,9 @@ may use; it never adds to the Agent's Grants.
     hosts beside the other kinds (an older server would match the host alone,
     for targets that are not a host's), another machine's application, a target
     nothing takes. `authz.Takes` decides the last again at exercise.
+  - `targets.Recorded` is a target in the audit log's lists (`targets`,
+    `placements`): `;` and what does not show percent-encoded, where the
+    TypeScript server has the name as it is.
   - `targets.ParseAny` takes `pipe:` and `field:`; `targets.Parse`, which the
     CLI's Broker uses, refuses them: it sends requests alone.
 - **Entry links** (ADR-0063, `server/entry`, `server/values/entry.go`,
