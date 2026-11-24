@@ -214,17 +214,19 @@ describe("realtime.ts's hooks over server-sent events", () => {
     const backendModule = await import("../src/lib/backend");
     backendModule.chooseBackend({ session: "varlatchd", realtime: "sse" });
     vi.doMock("../src/lib/session", () => ({ useSession: () => ({ api: {} }) }));
-    const { useMirrorInvalidation, useMeSignal, useRealtimeConnected } = await import("../src/lib/realtime");
+    const { useLiveUpdatesBack, useMirrorInvalidation, useMeSignal, useRealtimeConnected } = await import("../src/lib/realtime");
     const { SseProvider } = await import("../src/lib/sseProvider");
     const h = harness();
     const qc = new QueryClient();
     const invalidated: unknown[] = [];
     qc.invalidateQueries = (async (filters?: { queryKey?: unknown }) => void invalidated.push(filters?.queryKey)) as typeof qc.invalidateQueries;
     const membership: number[] = [];
+    let back = 0;
     let connected = false;
     function Page() {
       useMirrorInvalidation("org_a", ["project"], [["projects", "org_a"]]);
       useMeSignal(["membership"], () => membership.push(1));
+      useLiveUpdatesBack(() => back++);
       connected = useRealtimeConnected();
       return null;
     }
@@ -253,8 +255,18 @@ describe("realtime.ts's hooks over server-sent events", () => {
     expect(membership).toEqual([]);
     await send("identity", { lastEventId: "evt_5", domains: ["membership"] });
     expect(membership).toEqual([1]);
+    // A gap: nothing on the drop itself or on a failed attempt, once when it is over.
     await act(async () => h.last().fail());
     expect(connected).toBe(false);
+    await act(async () => void h.fire());
+    await act(async () => h.last().fail());
+    expect(back).toBe(0);
+    await act(async () => void h.fire());
+    await send("ready", { identityId: "idn_1" });
+    expect(connected).toBe(true);
+    expect(back).toBe(1);
+    await send("identity", { lastEventId: "evt_6", domains: ["credential"] });
+    expect(back).toBe(1);
     await act(async () => root!.unmount());
     root = null;
     expect(h.sources.every((s) => s.closed)).toBe(true);

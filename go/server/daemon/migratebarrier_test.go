@@ -12,6 +12,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"maps"
@@ -20,9 +21,9 @@ import (
 	"net/http/cookiejar"
 	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -141,27 +142,31 @@ func tableSections(t *testing.T, b []byte) []byte {
 	return b[start : end+1]
 }
 
-// liveUpdates is one /auth/events stream of a browser's session.
-type liveUpdates struct {
-	res   *http.Response
-	lines *bufio.Scanner
-}
+// liveUpdates is one /auth/events stream of a browser's session, every read of
+// it bounded and ended with the test.
+type liveUpdates struct{ lines *bufio.Scanner }
 
-func (b *browser) liveUpdates(t *testing.T) (*liveUpdates, int, string) {
+func (b *browser) liveUpdates(t *testing.T) (l *liveUpdates, status int, body string) {
 	t.Helper()
-	c := *b.c
-	c.Timeout = 0
-	res, err := c.Get(b.origin + "/auth/events")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	t.Cleanup(cancel)
+	req, err := http.NewRequestWithContext(ctx, "GET", b.origin+"/auth/events", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.StatusCode != http.StatusOK {
-		raw, _ := io.ReadAll(res.Body)
-		res.Body.Close()
-		return nil, res.StatusCode, res.Header.Get("Retry-After") + " " + string(raw)
+	c := *b.c
+	c.Timeout = 0 // the context's
+	res, err := c.Do(req)
+	if err != nil {
+		t.Errorf("the live updates: %v", err)
+		return nil, 0, ""
 	}
 	t.Cleanup(func() { res.Body.Close() })
-	return &liveUpdates{res: res, lines: bufio.NewScanner(res.Body)}, res.StatusCode, ""
+	if res.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(res.Body)
+		return nil, res.StatusCode, res.Header.Get("Retry-After") + " " + string(raw)
+	}
+	return &liveUpdates{lines: bufio.NewScanner(res.Body)}, res.StatusCode, ""
 }
 
 // next is the stream's next event and its data; "" at its end.
@@ -177,12 +182,28 @@ func (l *liveUpdates) next() (event, data string) {
 	return "", ""
 }
 
+// ends is whether the stream's next event of the end is the server's as it
+// stops, and nothing follows it.
+func (l *liveUpdates) ends(t *testing.T, which string) {
+	t.Helper()
+	event, data := l.next()
+	for event != "" && event != "close" {
+		event, data = l.next()
+	}
+	if event != "close" || data != `{"reason":"shutdown"}` {
+		t.Errorf("%s ended with %q %q", which, event, data)
+	}
+	if event, _ := l.next(); event != "" {
+		t.Errorf("%s goes on: %q", which, event)
+	}
+}
+
 // A dashboard's live updates are a request admitted before the barrier, which
 // never ends by itself: the barrier ends every open one, with what the server
-// sends as it stops, and drains at once. One asked for behind it is refused as
-// maintenance, not as signed out; after the release the same session opens it
-// again. Dashboards that reconnect all the while, as they do, open none that
-// holds the barrier.
+// sends as it stops, and drains at once. One that was admitted before it, and
+// opens its stream only after the barrier ended the open ones, ends too. One
+// asked for behind it is refused as maintenance, not as signed out; after the
+// release the same session opens it again, and a second barrier ends that one.
 func TestTheBarrierEndsOpenDashboards(t *testing.T) {
 	in, _ := migrated(t)
 	const origin = "http://localhost:18999"
@@ -194,7 +215,19 @@ func TestTheBarrierEndsOpenDashboards(t *testing.T) {
 	if cerr := f.Close(); err != nil || cerr != nil {
 		t.Fatal(err, cerr)
 	}
-	r := start(t, in)
+	// The request held as it asks for its stream: told when it is, and let go.
+	var hold atomic.Bool
+	held, letGo := make(chan struct{}), make(chan struct{})
+	r := startWith(t, in, &hooks{beforeSubscribe: func() {
+		if hold.CompareAndSwap(true, false) {
+			close(held)
+			select {
+			case <-letGo:
+			case <-time.After(20 * time.Second):
+			}
+		}
+	}})
+	defer r.stop(t)
 	jar, _ := cookiejar.New(nil)
 	b := &browser{origin: origin, c: &http.Client{Jar: jar, Timeout: 15 * time.Second, Transport: &http.Transport{
 		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
@@ -207,24 +240,23 @@ func TestTheBarrierEndsOpenDashboards(t *testing.T) {
 			Enabled bool
 		}
 	}
-	if code != ExitOK || json.Unmarshal([]byte(out), &st) != nil || len(st.Admins) == 0 {
+	if code != ExitOK || json.Unmarshal([]byte(out), &st) != nil {
 		t.Fatalf("bootstrap-status: %d %q %q", code, out, errOut)
 	}
-	admin := st.Admins[slices.IndexFunc(st.Admins, func(a struct {
-		ID      string
-		Enabled bool
-	}) bool {
-		return a.Enabled
-	})].ID
+	admin := ""
+	for _, a := range st.Admins {
+		if a.Enabled {
+			admin = a.ID
+		}
+	}
 	code, out, errOut = runAdmin(t, "recover", "--identity", admin, "--config", in.conf)
 	m := enrollToken.FindStringSubmatch(out)
 	if code != ExitOK || m == nil {
-		t.Fatalf("recover: %d %q %q", code, out, errOut)
+		t.Fatalf("recover %q: %d %q %q", admin, code, out, errOut)
 	}
 	b.enroll(t, m[1], authtest.New(t))
-
-	var open []*liveUpdates
-	for range 3 {
+	open := func() *liveUpdates {
+		t.Helper()
 		l, status, body := b.liveUpdates(t)
 		if l == nil {
 			t.Fatalf("the live updates: %d %s", status, body)
@@ -232,80 +264,61 @@ func TestTheBarrierEndsOpenDashboards(t *testing.T) {
 		if event, _ := l.next(); event != "ready" {
 			t.Fatalf("the stream's first event: %q", event)
 		}
-		open = append(open, l)
+		return l
 	}
-	// Dashboards that reconnect at once, whatever they are answered.
-	stop, done := make(chan struct{}), make(chan int)
-	go func() {
-		n := 0
-		defer func() { done <- n }()
-		c := *b.c
-		c.Timeout = 0
-		for {
-			select {
-			case <-stop:
-				return
-			default:
-			}
-			res, err := c.Get(origin + "/auth/events")
-			if err != nil {
-				continue
-			}
-			n++
-			_, _ = io.Copy(io.Discard, res.Body)
-			res.Body.Close()
-		}
-	}()
 
-	began := time.Now()
-	code, out, errOut = runAdmin(t, "migrate", "barrier", "--id", migA, "--drain-seconds", "5", "--config", in.conf)
-	if code != ExitOK || !strings.Contains(out, `"phase":"paused"`) {
-		t.Fatalf("the barrier with dashboards open: %d %q %q", code, out, errOut)
+	streams := []*liveUpdates{open(), open(), open()}
+	hold.Store(true)
+	late := make(chan *liveUpdates, 1)
+	go func() {
+		l, _, _ := b.liveUpdates(t)
+		late <- l
+	}()
+	select {
+	case <-held:
+	case <-time.After(15 * time.Second):
+		t.Fatal("the held request never asked for its stream")
 	}
-	if took := time.Since(began); took > 4*time.Second {
-		t.Errorf("the barrier took %s", took)
+	type answer struct {
+		code        int
+		out, errOut string
+		took        time.Duration
 	}
-	for i, l := range open {
-		var event, data string
-		for event != "close" {
-			if event, data = l.next(); event == "" {
-				break
-			}
-		}
-		if event != "close" || data != `{"reason":"shutdown"}` {
-			t.Errorf("stream %d ended with %q %q", i, event, data)
-		}
-		if event, _ := l.next(); event != "" {
-			t.Errorf("stream %d goes on: %q", i, event)
-		}
+	barrier := make(chan answer, 1)
+	go func() {
+		began := time.Now()
+		code, out, errOut := runAdmin(t, "migrate", "barrier", "--id", migA, "--drain-seconds", "10", "--config", in.conf)
+		barrier <- answer{code, out, errOut, time.Since(began)}
+	}()
+	for i, l := range streams {
+		l.ends(t, fmt.Sprintf("stream %d", i))
+	}
+	// The open ones are ended: the held one opens its stream now.
+	close(letGo)
+	if l := <-late; l == nil {
+		t.Error("the held request got no stream")
+	} else {
+		l.ends(t, "the held request's stream")
+	}
+	if a := <-barrier; a.code != ExitOK || !strings.Contains(a.out, `"phase":"paused"`) || a.took > 8*time.Second {
+		t.Fatalf("the barrier with dashboards open, after %s: %d %q %q", a.took, a.code, a.out, a.errOut)
 	}
 	if l, status, body := b.liveUpdates(t); l != nil || status != http.StatusServiceUnavailable || !strings.HasPrefix(body, "5 ") || !strings.Contains(body, `"code":"MAINTENANCE"`) {
 		t.Errorf("the live updates behind the barrier: %d %s", status, body)
 	}
-	close(stop)
-	if n := <-done; n == 0 {
-		t.Error("no dashboard reconnected")
-	}
 
-	if code, _, errOut := runAdmin(t, "migrate", "release", "--id", migA, "--config", in.conf); code != ExitOK {
-		t.Fatalf("the release: %q", errOut)
-	}
-	l, status, body := b.liveUpdates(t)
-	if l == nil {
-		t.Fatalf("the live updates after the release: %d %s", status, body)
-	}
-	if event, _ := l.next(); event != "ready" {
-		t.Errorf("after the release the stream's first event is %q", event)
-	}
-	// A barrier again: the streams of the second time end too.
-	if code, out, errOut := runAdmin(t, "migrate", "barrier", "--id", migA, "--drain-seconds", "5", "--config", in.conf); code != ExitOK {
-		t.Fatalf("the barrier a second time: %d %q %q", code, out, errOut)
-	}
-	if event, _ := l.next(); event != "close" {
-		t.Errorf("the second time: %q", event)
-	}
-	if code, _, errOut := runAdmin(t, "migrate", "release", "--id", migA, "--config", in.conf); code != ExitOK {
-		t.Fatalf("the second release: %q", errOut)
+	for _, again := range []bool{true, false} {
+		if code, _, errOut := runAdmin(t, "migrate", "release", "--id", migA, "--config", in.conf); code != ExitOK {
+			t.Fatalf("the release: %q", errOut)
+		}
+		l := open()
+		if !again {
+			break
+		}
+		if code, out, errOut := runAdmin(t, "migrate", "barrier", "--id", migA, "--drain-seconds", "10", "--config", in.conf); code != ExitOK {
+			t.Fatalf("the barrier a second time: %d %q %q", code, out, errOut)
+		}
+		l.ends(t, "the stream after the release")
 	}
 }
 

@@ -109,6 +109,29 @@ export function useMeSignal(domains: "*" | string[], onChange: () => void): void
   useSignal(useMeDocs(), domains, onChange);
 }
 
+/**
+ * Runs `onBack` when live updates open again after a gap: over server-sent
+ * events what was signalled meanwhile is lost (a Convex client reads the latest
+ * signal again by itself). Never on the drop itself, nor on the first opening.
+ */
+export const useLiveUpdatesBack: (onBack: () => void) => void = transport === "sse" ? useSseBack : () => {};
+
+function useSseBack(onBack: () => void): void {
+  const connected = useSseConnected();
+  const latest = useRef(onBack);
+  latest.current = onBack;
+  const state = useRef({ opened: false, gap: false });
+  useEffect(() => {
+    if (!connected) {
+      state.current.gap = state.current.opened;
+      return;
+    }
+    const gap = state.current.gap;
+    state.current = { opened: true, gap: false };
+    if (gap) latest.current();
+  }, [connected]);
+}
+
 function useSignalInvalidation(
   docs: { data?: ChangeSignal }[] | undefined,
   domains: "*" | string[],

@@ -699,8 +699,9 @@ sudo varlatch migrate --rollback --config /etc/varlatch/varlatchd.conf
 until the address moves back:
 
 1. The new server takes a barrier and freezes its state; it keeps running,
-   isolated. Open dashboards lose their live updates at once, say that the
-   installation is in maintenance, and come back by themselves. Other requests
+   isolated. Open dashboards lose their live updates at once, show maintenance
+   as soon as they ask the server for something, and come back by themselves.
+   Other requests
    and deliveries finish within `--drain` (60 seconds by default). One that
    does not (a backup being uploaded, a large audit export or CLI download
    that a client reads slowly) undoes the rollback: the new server serves on

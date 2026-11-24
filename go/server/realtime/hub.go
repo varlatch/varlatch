@@ -69,6 +69,8 @@ type Options struct {
 	Validate   time.Duration
 	Buffer     int
 	PerSession int
+	// BeforeSubscribe runs, in tests, as a stream is asked for.
+	BeforeSubscribe func()
 }
 
 // Hub reads the committed audit events, works out their signals and sends
@@ -473,6 +475,9 @@ func (h *Hub) startCursor(ctx context.Context) (int64, error) {
 // response ends. The hub's starting point is fixed before the stream
 // exists, so whatever commits after Subscribe returns reaches it.
 func (h *Hub) Subscribe(ctx context.Context, session, identity string) (*Stream, error) {
+	if h.opts.BeforeSubscribe != nil {
+		h.opts.BeforeSubscribe()
+	}
 	ok, err := h.live(ctx, query.New(h.opts.Store.Reader()), session, identity)
 	if err != nil {
 		return nil, err
