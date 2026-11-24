@@ -238,7 +238,11 @@ func TestAdminMigrateDiscardAndScratch(t *testing.T) {
 	if code, _, errOut := migrateWith(t, in.conf, nil, "discard", "--id", migB); code != ExitFailure || !strings.Contains(errOut, "not "+migB) {
 		t.Fatalf("another migration's discard: %d %q", code, errOut)
 	}
-	if code, out, errOut := migrateWith(t, in.conf, nil, "discard", "--id", migA); code != ExitOK || !strings.Contains(out, config.DatabaseFile) {
+	// A restore's hold goes with the database, whatever has its name.
+	if err := os.Symlink(filepath.Join(in.dir, "missing"), filepath.Join(in.data, backup.HoldFile)); err != nil {
+		t.Fatal(err)
+	}
+	if code, out, errOut := migrateWith(t, in.conf, nil, "discard", "--id", migA); code != ExitOK || !strings.Contains(out, config.DatabaseFile) || !strings.Contains(out, backup.HoldFile) {
 		t.Fatalf("discard: %d %q %q", code, out, errOut)
 	}
 	if _, err := os.Stat(filepath.Join(in.data, config.DatabaseFile)); !os.IsNotExist(err) {

@@ -1617,6 +1617,16 @@ func (u *Upgrader) Recover(ctx context.Context) (*journal.Journal, error) {
 	return j, nil
 }
 
+// Pending is the upgrade left pending, nil when there is none: what
+// Recover would finish or undo.
+func (u *Upgrader) Pending() (*journal.Journal, error) {
+	j, err := journal.Read(u.configDir())
+	if err != nil || !j.Pending() {
+		return nil, err
+	}
+	return j, nil
+}
+
 // spaceMargin is kept free beyond what an upgrade writes.
 const spaceMargin = 64 << 20
 

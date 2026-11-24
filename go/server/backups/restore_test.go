@@ -89,8 +89,11 @@ func TestRestore(t *testing.T) {
 	if got.ArchiveID != res.ArchiveID || got.InstallationID != f.inst || got.CreatedAt != res.CreatedAt || got.Settings["listen"] != "127.0.0.1:8686" {
 		t.Errorf("%+v", got)
 	}
-	if l := listing(t, cfg.DataDir); l != "varlatch.db" {
+	if l := listing(t, cfg.DataDir); l != "restore-hold.json varlatch.db" {
 		t.Errorf("the data directory holds %q", l)
+	}
+	if h, err := backup.ReadHold(cfg.DataDir); err != nil || h == nil || h.ArchiveID != res.ArchiveID || h.RestoredAt == "" {
+		t.Errorf("the hold: %+v %v", h, err)
 	}
 	db := cfg.DatabasePath()
 	if v := queryOne(t, db, "SELECT v FROM marker"); v != "restored" {
@@ -286,7 +289,7 @@ func TestFailedRestoreStaysIsolatedAndResumes(t *testing.T) {
 	if _, err := Restore(ctx, cfg, res.Path, bek, f.rootKEK, nil); err != nil {
 		t.Fatalf("the retry: %v", err)
 	}
-	if l := listing(t, cfg.DataDir); l != "varlatch.db" {
+	if l := listing(t, cfg.DataDir); l != "restore-hold.json varlatch.db" {
 		t.Errorf("after the retry the data directory holds %q", l)
 	}
 	if id := queryOne(t, cfg.DatabasePath(), "SELECT id FROM installation"); id != f.inst {

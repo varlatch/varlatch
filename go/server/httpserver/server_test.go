@@ -355,6 +355,11 @@ func TestHealthReadyMeta(t *testing.T) {
 	if w := do(s, "GET", "/readyz", "", nil); w.Code != 200 || w.Body.String() != `{"ready":true,"checks":{"schema":true,"kek":true,"installation":true}}` {
 		t.Errorf("readyz: %d %s", w.Code, w.Body.String())
 	}
+	// A restore's hold: ready, and it says so.
+	held, _, _, _ := newTestServer(t, func(o *Options) { o.Held = func() bool { return true } })
+	if w := do(held, "GET", "/readyz", "", nil); w.Code != 200 || w.Body.String() != `{"ready":true,"checks":{"schema":true,"kek":true,"installation":true},"held":true}` {
+		t.Errorf("readyz while held: %d %s", w.Code, w.Body.String())
+	}
 	b.kek = false
 	if w := do(s, "GET", "/readyz", "", nil); w.Code != 503 || w.Body.String() != `{"ready":false,"checks":{"schema":true,"kek":false,"installation":true}}` {
 		t.Errorf("readyz with a wrong key: %d %s", w.Code, w.Body.String())

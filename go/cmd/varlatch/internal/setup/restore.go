@@ -176,7 +176,9 @@ func (r *run) restore(ctx context.Context) error {
 		return &UsageError{fmt.Sprintf("setup: the archive's installation is reached at %s, not %s: its passkeys belong to that address. Remove %s and %s (this run's answers; the keys and the restored data stay), then run setup --restore again with --public-url %s; to change the address, restore first and move it with varlatch move",
 			was, r.j.Answers.PublicURL, Journal, ConfigFile, was)}
 	}
-	return r.o.Say("Restored the installation " + r.j.Restore.InstallationID + " from the archive " + r.j.Restore.ArchiveID + " (made " + created + ").")
+	return r.o.Say("Restored the installation " + r.j.Restore.InstallationID + " from the archive " + r.j.Restore.ArchiveID + " (made " + created + ").\n" +
+		"It is held: its background work (sync, webhooks, audit export, organization deletion) does not run. Put right what changed\n" +
+		"since the archive was made (what was revoked or removed since works again), then run: sudo varlatch admin restore resume")
 }
 
 // takeName is a restore's tailnet handoff (go-step7 decision 11), with the

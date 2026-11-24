@@ -278,7 +278,8 @@ release. CI routes by path: `.github/workflows/go.yml` checks `go/`, and
   SHA256SUMS in memory, then written to a new file beside the running one,
   made executable, run once (it must report the version), and renamed over
   it. On Windows the running file is renamed aside first, and the next run
-  removes it. It never goes to an older release without
+  removes it; a rename another process's hold on a file stops is tried
+  again for up to 5 seconds, the running file back in its place meanwhile. It never goes to an older release without
   `--allow-downgrade`, to a prerelease unless this binary is one or
   `--prerelease` is given, or to a release before the Go line (0.50.0); a
   copy Homebrew or winget installed (its path is in a Cellar or in WinGet's
@@ -1028,6 +1029,7 @@ it to the recording.
 | `skill-order` (how Windows compares a Linux recording, not a behaviour) | walks the skill directories in the file system's order: sorted on Linux and macOS, NTFS's case-insensitive order on Windows (`references/` before `SKILL.md`), which orders `agents install`'s changes and decides which files a removal reaches before a link stops it | the same: the skill directories and empty-directory pruning are read in the system's order on Windows and sorted elsewhere (`internal/agents`' `readDir`); the guardrail hook's reads, whose answers do not depend on order, stay sorted | A case recorded on Windows compares exactly. A case replayed on Windows against its Linux recording (it names no path below its directory, so it has no Windows expectation) compares each run of consecutive skill-file entries as a multiset (`transcript.SkillOrderFree`): in a `--json` document the runs of `changes` entries whose path is a skill file, in human output the runs of lines that name one, in the install vectors both. Nothing is added or dropped and everything else keeps its bytes and place (`TestSkillOrderFree`) |
 | `tailnet-repin`: `varlatch tailnet repin [--yes] [--adopt] [--json] [--config <file>]` (slice 6.2b) | no such command (`tailnet` has `require`, `requirements` and `remove`); the TypeScript server keeps no tailnet pin | runs `varlatchd admin tailnet repin --json [--yes [--adopt]] [--config <file>]` (as `host-admin`) and shows `varlatchd`'s text from its answer: the pinned and the observed tailnet, then what it did or offers, on stderr with `varlatchd`'s status when it refuses. On a terminal, without `--yes`, an offered re-pin (or, with `--adopt`, an adoption) is asked for (`[y/N]`), then done with `--yes --offer <the offer shown>`: `varlatchd` acts only while the pin and the observed tailnet are still what was shown, and otherwise changes nothing and answers `offer-changed` (status 1) with the new view, which is shown and asked about once more (a second change stops, nothing re-pinned). `varlatch tailnet repin --yes` (scripted use) passes no offer and acts on the observation at that moment. `--json` prints `varlatchd`'s answer. `varlatchd admin tailnet repin --json` gives stable names (the view's `pinned`, `observed`, `reason`, `closed`, `missing`, `offered`, `offer` (a value-free token: 128 bits of a SHA-256 over what is offered, the pin and the observation; empty when nothing is offered), and `pinnedText`, `observedText`, `outcome`, `message`, `pin`) with or without `--yes`; `varlatchd`'s 78 adds a line saying to run it as root (`sudo varlatch tailnet repin`; Unix), as `host-admin`'s; its text is unchanged | The tailnet pin is the Go server's (step 4.13); a re-pin changes what the tailnet listener trusts, so it is the host's and is confirmed. Pinned by `internal/cli`'s `TestTailnetRepinFront` and `daemon`'s `TestTailnetListener` |
 | `installation.migrated` (an audit event only Go records, until the last TypeScript release) | not recorded by v0.22 | appended by `varlatchd admin migrate import` and `export --reverse` (step 7.3a) after the source's events and the revocations of the sessions the migration ended: no Organization and no actor identity, metadata `direction`, `sourceRelease`, `manifestVersion`, `frozenPoint` (`auditPosition`, and `snapshot` for a forward import), `sessionsEnded`, `credentialsRevoked` | Decision 9's audit-append transformation (internal docs/design/go-step7.md decision 5); the last TypeScript release (0.23.0) records and lists it too (slice 7.2a). Pinned by `server/migration/migrate`'s `TestRoundTrip` |
+| `restore-hold`: a completed `admin backup restore` (so `setup --restore`, the image's restore and a restored `move --abandon` too) holds the installation; `varlatchd admin restore status` and `restore resume`; the audit event `installation.restore_resumed` | a restore serves, delivers and deletes at once | `restore-hold.json` in the data directory (the archive and the time), durable before the restore's gate goes. While it stands `varlatchd` serves as normal, requests that send or erase included, but its background work does not run: no sync, webhook, audit export, organization deletion (or drain) or GitHub App sweep pass (`maintenance.EnterWork`); scheduled backups remove nothing from this host, `/readyz` answers 200 with `"held":true`, `doctor` has the advisory check `restore.hold`, and `varlatch upgrade`, the reverse migration's barrier and its export are refused. An upgrade left pending is refused too, before it is undone over the restored database: its journal is moved away first, then the hold resumed. Whatever has the file's name and is no hold of root's or the directory owner's (a link, a pipe) holds. Deadlines go on while held, as on a stopped server: at the resume a drain past its deadline is given up, due deletions run, and webhooks may repeat what they delivered after the archive. `restore resume` (one at a time; killed between its event and the removal it records again) records `installation.restore_resumed` (no Organization, no actor, the archive) and then ends it, in the running `varlatchd` or with it stopped; behind a maintenance gate it is refused, and without a database it only removes the file. `migrate`'s import and `upgrade`'s undo leave no hold | An archive brings back what was changed since: a cancelled deletion that is due would destroy an Organization's key at the first start. Requests by credentials the archive brings back are not refused. Pinned by `lib/backup`'s `TestHoldIsNeverMistaken`, `server/maintenance`'s and `server/doctor`'s `TestRestoreHold`, `server/backups`' `TestRestore` and `TestHeldKeepsEveryArchive`, `server/daemon`'s `TestRestoreHoldsWork` and `TestStaleHold`, `go/bench/restore-drill.sh`, `go/image/check-image.mjs` and `go/install/test-setup.sh` |
 | `tailnet.repinned` (an audit event only Go records) | not recorded | each re-pin, reopening or adoption by `varlatchd admin tailnet repin --yes`: no Organization and no actor identity (the host operator: the control socket's peer is the data directory's owner or root), metadata `action` (`repinned`, `reopened`, `adopted`), `fromSuffix`, `toSuffix`, `tailnetId`, `reason` (what the re-pin's own check found), `operator: true`, never the control server's URL. Committed before the pin changes: a re-pin whose event cannot be recorded does not happen (`audit.GoOnlyEventTypes`) | The TypeScript server's event list is frozen; ADR-0059 step 6's G10 asks for the re-pin to be audited. Pinned by `daemon`'s `TestTailnetListener` (both events, read from the database) and `audit`'s `TestGoOnlyEventTypes` |
 | `public-https`: `listen_https`, `listen_http_redirect`, `acme_email`, `acme_ca`, `acme_ca_root` (step 6, slice 6.3a) | public HTTPS is Caddy's, in the Compose stack (`--ingress public`; `VARLATCH_ACME_CA`) | `varlatchd` serves HTTPS itself on `listen_https`, with a certificate for `public_url`'s host obtained and renewed over ACME (HTTP-01 on `listen_http_redirect`, default port 80 on the same address; TLS-ALPN-01 on `listen_https`) through certmagic; nothing is served over HTTPS before a certificate exists, a handshake for another name (or none) is refused, a request for another `Host` is 421, no `X-Forwarded-For` is believed on it, and `listen` must then be a loopback address, TLS 1.2 at least with ECDHE and AEAD suites, HTTP/2 and HTTP/1.1; the plain listener answers a pending HTTP-01 challenge for the host and redirects everything else (308) to `public_url`, never a page; no `Strict-Transport-Security` header (an operator adds one at their own proxy or CDN); `GET /v1/installation/listeners` gains `public` (configuration, status, the certificate's dates and issuer, the last attempt, failures, the next attempt) only when it is on. Off (unset), nothing changes. The certificate and the ACME account key are in `<data_dir>/acme` (0700, files 0600), never logged and never in a backup archive | Decision 5 builds certificates into `varlatchd` (owner, O1); the Go installation has no Compose stack. Pinned by `publictls`'s tests and `daemon`'s `TestPublicHTTPSAgainstPebble` (Pebble in go.yml), `backups`' `TestRunLeavesTheACMEStoreOut`, `config`'s `TestParsePublicHTTPS` |
 | A system error while `init` writes the agent files (a directory where a file goes, a file it cannot read) | `varlatch: the files for coding agents were not written (<Node.js's message>); run varlatch agents install to try again.`, exit 0 | the same line with Go's message, exit 0 | Decision 2: runtime error wording; what the files are refused for by the CLI itself (a damaged `AGENTS.md`) has the same message in both |
@@ -1244,7 +1246,7 @@ daemon's maintenance admission and its one backup at a time.
   snapshot beside the database, removes the old WAL, renames it into
   place, opens it with this release, checks the installation and its
   canary, records `installation.restored` (archive, manifest hash,
-  installation) and removes the gate. A restore that fails or is killed
+  installation), leaves the restore hold and removes the gate. A restore that fails or is killed
   leaves the gate: a varlatchd that starts then serves 503 MAINTENANCE and
   leaves the database untouched (no schema, installation or canary
   check), and running the restore again with the same archive completes
@@ -2151,6 +2153,28 @@ serves the tailnet listener on the node's own addresses
   binding is off (a userspace node has no TUN device). The node joins in
   the background: the ordinary listener serves at once, the tailnet
   listener once the node runs.
+- **No network map read from disk.** tsnet writes the node's own map to its
+  state directory and, by default, is Running on it at the next start before
+  it has spoken to the control plane (`TS_USE_CACHED_NETMAP`). varlatchd
+  turns that off for every node it starts, whatever its environment says: no
+  map is read from disk. tsnet still writes the node's own (its name, tags
+  and addresses, no peers) at a change of its home DERP region, and has no
+  switch for that; `profile-data/*/netmap-cache` is removed when the node
+  starts and when it closes. The node's name, tags and tailnet, and so the
+  pin's and the tags' checks, are what the control plane answers this start.
+- **Until it joins.** While the control plane does not answer, or puts the
+  node off (a rate limit), the node is not up and the tailnet listener does
+  not open; varlatchd waits for it without end, and the listener opens when
+  the node joins, with no restart. The log, doctor and the report's
+  `warnings` say what it waits for (`waiting-for-control`, or `login-needed`
+  when it must be logged in or approved there). A control plane that refuses
+  the node (`join-refused`: an auth key it does not take) ends the wait: the
+  listener stays closed, and doctor says so, until varlatchd is restarted,
+  though tsnet goes on and the node may come to run. The refusal's own words,
+  which may repeat the auth key, are shown nowhere: not in the log, the
+  report, or a host command's answer; a message of tsnet's own log with the
+  key in it, percent-escaped or not, is not logged. A control server that answers a registration with a plain HTTP error (a 403) is not
+  told from one that does not answer.
 - **Coordination server.** Tailscale's by default (`tailnet_control_url`
   unset, or Tailscale's own URL), and the node is always given its control
   URL explicitly (an empty one would let tsnet read `TS_CONTROL_URL`).
@@ -2314,6 +2338,14 @@ serves the tailnet listener on the node's own addresses
     already names, enrolled or not. Run again for the same name, it
     reports the same node; an enrolled node no handoff holds is held again
     only while the control plane names it exactly the temporary name.
+
+    The node's name and, on a self-hosted control server, its tags are what
+    the control plane sends this start (never a map read from disk), and
+    waited for, together, up to 30 seconds, since a rename just made reaches
+    the node a moment after the control plane records it. One reading of the
+    node must show all of it, with one StableID throughout, and that reading
+    is what is pinned and reported. What is expected is never relaxed: past
+    the wait it is refused, naming both.
   - **A varlatchd started under the hold** joins under the hold's
     temporary name, never announcing the configured one, which another
     node holds, and reads its name back as the hold's (open sets the
@@ -2328,8 +2360,10 @@ serves the tailnet listener on the node's own addresses
   - `varlatchd admin tailnet certificate obtain|expiry --name <name>
     [--json]` works on `<name>.<pinned suffix>`:
     - `obtain` is one attempt, through the running varlatchd's node or
-      offline through the enrolled node, started for it. A refusal for the
-      authority's rate limit is answered as `refusal: "rate-limited"`.
+      offline through the enrolled node, started for it, once the node's
+      own map names it that and lists exactly that among its certificate
+      domains (up to 30 seconds: before, the node itself refuses the name).
+      A refusal for the authority's rate limit is answered as `refusal: "rate-limited"`.
     - `expiry` reads the node's cached certificate (`tailnet/certs/`,
       tsnet's ACME store) and never issues one.
   - `varlatchd admin tailnet reaches --name <name> --stable-id <id>

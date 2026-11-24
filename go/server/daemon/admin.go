@@ -67,7 +67,8 @@ func admin(args []string, stdout, stderr io.Writer) int {
 	backup := sub == "backup" || sub == "maintenance"
 	keys := sub == "kek" || sub == "custody"
 	move := isMoveCommand(sub) || sub == "config"
-	if sub != "bootstrap" && sub != "recover" && sub != "outbound" && sub != "audit-export" && sub != "tailnet" && sub != "doctor" && sub != "bootstrap-status" && sub != "schema" && sub != "migrate" && sub != "certificate" && sub != "status" && sub != "release-check" && sub != "changes" && !conformance && !operator && !backup && !keys && !move {
+	hold := sub == "restore"
+	if sub != "bootstrap" && sub != "recover" && sub != "outbound" && sub != "audit-export" && sub != "tailnet" && sub != "doctor" && sub != "bootstrap-status" && sub != "schema" && sub != "migrate" && sub != "certificate" && sub != "status" && sub != "release-check" && sub != "changes" && !conformance && !operator && !backup && !keys && !move && !hold {
 		return adminUsage(stderr, "unknown command "+sub)
 	}
 	// The one probe that needs no installation: nothing stands in front
@@ -175,6 +176,11 @@ func admin(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, msg)
 			return 64
 		}
+	case hold:
+		if len(rest) != 1 || rest[0] != "status" && rest[0] != "resume" {
+			fmt.Fprintln(stderr, holdUsage)
+			return 64
+		}
 	case sub == "config":
 		if len(rest) != 1 || rest[0] != "check" {
 			fmt.Fprintln(stderr, configCheckUsage)
@@ -271,7 +277,7 @@ var adminAsRoot = func() bool { return os.Geteuid() == 0 }
 func adminUsage(stderr io.Writer, msg string) int {
 	fmt.Fprintf(stderr, "varlatchd admin: %s\nUsage: varlatchd admin bootstrap [--cli-credential] [--name <name>] [--revoke-unused] | varlatchd admin bootstrap-status | "+
 		"varlatchd admin recover --identity <id> [--enable] | --new-admin [--cli-credential] [--name <name>] [--revoke-unused] | "+
-		"varlatchd admin security reset ... | varlatchd admin unfreeze ... | varlatchd admin backup run|status|restore|test-bucket | varlatchd admin maintenance begin|end|status | "+
+		"varlatchd admin security reset ... | varlatchd admin unfreeze ... | varlatchd admin backup run|status|restore|test-bucket | varlatchd admin restore status|resume | varlatchd admin maintenance begin|end|status | "+
 		"varlatchd admin kek verify|export|restore|split|combine | varlatchd admin custody attest|status | varlatchd admin outbound check | "+
 		"varlatchd admin audit-export discard-plan --export <id> --reason <expired|unsupported-format> | varlatchd admin tailnet repin [--yes [--adopt] [--offer <token>]] [--json] | "+
 		"varlatchd admin schema status|upgrade [--json] [--database <file>] | varlatchd admin doctor [--json] | varlatchd admin certificate issuances [--all] [--json]|record --attempts <json> | "+
@@ -424,10 +430,11 @@ const MaintenanceRefusal = "Installation is in maintenance; ordinary admin opera
 // writes reports whether a host command may write the installation: all
 // but the backup and maintenance commands, which take the admission their
 // own way (backup run enters it; maintenance manages it; backup status
-// only reads), doctor and status (which only read), migrate (which
-// manages its own gate), and move-facts, which only reads.
+// only reads), restore (resume enters it, status only reads), doctor and
+// status (which only read), migrate (which manages its own gate), and
+// move-facts, which only reads.
 func writes(sub string) bool {
-	return sub != "backup" && sub != "maintenance" && sub != "doctor" && sub != "status" && sub != "migrate" && sub != "move-facts"
+	return sub != "backup" && sub != "restore" && sub != "maintenance" && sub != "doctor" && sub != "status" && sub != "migrate" && sub != "move-facts"
 }
 
 // runHost runs one host command, in the daemon or offline, with env. A
@@ -455,6 +462,8 @@ func runHost(ctx context.Context, env *hostEnv, args []string, stdout, stderr io
 		return runOperator(ctx, env, sub, rest, stdout, stderr)
 	case sub == "backup" || sub == "maintenance":
 		return runBackupCommand(ctx, env, sub, rest, stdout, stderr)
+	case sub == "restore":
+		return runHold(ctx, env, rest, stdout, stderr)
 	case sub == "custody":
 		return runCustodyAttest(ctx, env, rest, stdout, stderr)
 	case sub == "audit-export":

@@ -59,6 +59,8 @@ type statusJSON struct {
 	// UpgradeHold is why an upgrade holds it (server/maintenance): its
 	// listeners answer 503. "" when none does.
 	UpgradeHold string `json:"upgradeHold,omitempty"`
+	// Held is whether a restore's hold stands (backup.Hold).
+	Held bool `json:"held,omitempty"`
 }
 
 // statusOnline is `admin status` in this process: the running varlatchd
@@ -100,11 +102,15 @@ func runStatus(ctx context.Context, env *hostEnv, rest []string, stdout, stderr 
 	if env.admission != nil {
 		st.UpgradeHold = env.admission.UpgradeHold()
 	}
+	st.Held = env.admission != nil && env.admission.Held()
 	if asJSON {
 		return printJSON(stdout, stderr, "varlatchd admin status", st)
 	}
 	fmt.Fprintf(stdout, "varlatchd %s (schema version %d) is running; serving: %v; schema ready: %v, Root KEK: %v, installation: %v.\n",
 		st.Version, st.SchemaVersion, st.Serving, st.Ready.Schema, st.Ready.RootKEK, st.Ready.Installation)
+	if st.Held {
+		fmt.Fprintln(stdout, "It was restored from an archive and is held: varlatchd admin restore resume ends that.")
+	}
 	return ExitOK
 }
 

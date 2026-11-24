@@ -126,6 +126,43 @@ func TestHealthyInstallation(t *testing.T) {
 	}
 }
 
+// TestRestoreHold: a restore's hold is an advisory failure that names the
+// archive and the way to end it, with varlatchd stopped too; one that
+// cannot be read holds; without one there is no such check.
+func TestRestoreHold(t *testing.T) {
+	f := newFixture(t, "")
+	find := func(r Report) (Check, bool) {
+		for _, c := range r.Checks {
+			if c.ID == "restore.hold" {
+				return c, true
+			}
+		}
+		return Check{}, false
+	}
+	if c, ok := find(f.run(t)); ok {
+		t.Errorf("a check without a hold: %+v", c)
+	}
+	dir := f.in.Config.DataDir
+	if err := backup.WriteHold(dir, backup.Hold{ArchiveID: "archive-1", RestoredAt: "2026-11-24T08:00:00.000Z"}); err != nil {
+		t.Fatal(err)
+	}
+	r := f.run(t)
+	c, ok := find(r)
+	if !ok || r.Failed() || c.Class != Advisory || c.Status != Fail || !strings.Contains(c.Detail, "archive-1 at 2026-11-24T08:00:00.000Z") || !strings.Contains(c.Remedy, "varlatchd admin restore resume") {
+		t.Errorf("held: %+v", c)
+	}
+	f.in.Live = nil
+	if _, ok := find(f.run(t)); !ok {
+		t.Error("not shown with varlatchd stopped")
+	}
+	if err := os.WriteFile(filepath.Join(dir, backup.HoldFile), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if c, ok := find(f.run(t)); !ok || !strings.Contains(c.Detail, "cannot be read") {
+		t.Errorf("unreadable: %+v", c)
+	}
+}
+
 // TestFailingChecks: each failing check, with its status, class, what it
 // says and its remedy (step 6.5's acceptance list).
 func TestFailingChecks(t *testing.T) {
@@ -194,6 +231,22 @@ func TestFailingChecks(t *testing.T) {
 			f.in.Live.Tailnet, f.in.Live.TailnetClosed = true, "tags-differ"
 			f.in.Live.TailnetDetail = "The node's tags (none) are not tailnet_tags (tag:varlatch): on a self-hosted control server they are its pre-auth key's."
 		}, "tailnet access is closed: The node's tags (none) are not tailnet_tags (tag:varlatch)", "headscale nodes tag"},
+		{"a node waiting for its control server", "tailnet.pin", Mandatory, "tailnet = on\ntailnet_hostname = varlatch\ntailnet_tags = tag:varlatch\ntailnet_port = 8687\n", func(f *fixture) {
+			f.in.Live.Tailnet, f.in.Live.TailnetClosed = true, "waiting-for-control"
+			f.in.Live.TailnetDetail = "The node is waiting for control: its control server has not answered since varlatchd started."
+		}, "tailnet access is closed: The node is waiting for control: its control server has not answered since varlatchd started.", "After 5 minutes of this, the control server may also be refusing the node: check the auth key"},
+		{"a node that must be logged in", "tailnet.pin", Mandatory, "tailnet = on\ntailnet_hostname = varlatch\ntailnet_tags = tag:varlatch\ntailnet_port = 8687\n", func(f *fixture) {
+			f.in.Live.Tailnet, f.in.Live.TailnetClosed = true, "login-needed"
+			f.in.Live.TailnetDetail = "The node must be logged in or approved at its control server."
+		}, "tailnet access is closed: The node must be logged in or approved at its control server.", "admin console"},
+		{"a node its control server refused", "tailnet.pin", Mandatory, "tailnet = on\ntailnet_hostname = varlatch\ntailnet_tags = tag:varlatch\ntailnet_port = 8687\n", func(f *fixture) {
+			f.in.Live.Tailnet, f.in.Live.TailnetClosed = true, "join-refused"
+			f.in.Live.TailnetDetail = "The node's control server refused it."
+		}, "tailnet access is closed: The node's control server refused it.", "put it right, then restart varlatchd. Keep <data_dir>/tailnet"},
+		{"a node its control server refused, enrolling", "tailnet.pin", Mandatory, "tailnet = on\ntailnet_hostname = varlatch\ntailnet_tags = tag:varlatch\ntailnet_port = 8687\n", func(f *fixture) {
+			f.in.Live.Tailnet, f.in.Live.TailnetClosed, f.in.Live.TailnetNeverJoined = true, "join-refused", true
+			f.in.Live.TailnetDetail = "The node's control server refused it."
+		}, "tailnet access is closed: The node's control server refused it.", "The node never joined: a new auth key (tailnet_auth_key_file) is read only while it has no state, so stop varlatchd, move <data_dir>/tailnet away"},
 		{"Tailscale's DERP servers in a self-hosted DERP map", "tailnet.control", Advisory, "tailnet = on\ntailnet_hostname = varlatch\ntailnet_tags = tag:varlatch\ntailnet_port = 8687\ntailnet_control_url = https://192.0.2.10\n", func(f *fixture) {
 			f.in.Live.Tailnet = true
 			f.in.Live.TailnetWarnings = []string{"The control server's DERP map lists Tailscale's DERP servers (derp1f.tailscale.com)."}
