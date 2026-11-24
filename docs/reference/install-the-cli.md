@@ -136,6 +136,10 @@ installs an older release without `--allow-downgrade`, nor a prerelease
 without `--prerelease` unless you run one. A copy that Homebrew or winget
 installed is updated with them.
 
+`self-update` of 0.23.0 and earlier does not reach 0.50: it installs nothing
+and says that `releases before 0.9.0 predate the single-file CLI`. Run the
+script for your system, above, or `brew upgrade varlatch`.
+
 ## Node.js version
 
 From 0.50, the CLI does not need Node.js. The CLI of 0.23.0 and earlier
