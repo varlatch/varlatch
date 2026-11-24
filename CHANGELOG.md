@@ -80,6 +80,13 @@ fixes.
   `/opt/homebrew/` or `/home/linuxbrew/.linuxbrew/`. It still refuses the
   TypeScript CLI's formula's wrapper script, which says it is Homebrew's.
   `install.ps1` was not affected.
+- **`varlatch self-update` on Windows waits for a file another process
+  holds.** A virus scanner or an indexer reading the new binary made it
+  fail with "The process cannot access the file because it is being used by
+  another process". It now tries again for up to 5 seconds, with the old
+  binary in its place between the tries, and then fails as before. If the
+  old binary cannot be put back, it now says where that is, where it said
+  that nothing had changed.
 
 ### Server
 
