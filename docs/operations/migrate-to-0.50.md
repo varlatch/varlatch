@@ -746,6 +746,10 @@ refuse, nothing is started, and the new server serves on. Do not start the
 TypeScript installation then. Keep that volume during the rollback window, as
 you keep its PostgreSQL and Convex volumes.
 
+Finish an undo with the `varlatch` that began it: a rollback's undo that an
+earlier 0.50 pre-release began can have left a gate this one does not know,
+and refuses.
+
 An undo of the rollback puts that gate back first, before it starts or
 changes anything else, and lifts the new server's barrier last, only while
 the gate is there: the two servers never both take requests, whoever starts
