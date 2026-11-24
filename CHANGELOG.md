@@ -292,6 +292,8 @@ fixes.
   joined yet.** Right after `setup` with tailnet ingress, its `tailnet.pin`
   failed with `not-enrolled` and said to run `varlatch tailnet repin`, though
   there is no pin yet. It now says that the node has not joined, and to wait.
+  A node that does not know its tailnet now (`tailnet-unknown`) is not sent to
+  re-pin either: there is nothing to compare its pin with.
 
 ### Documentation
 
