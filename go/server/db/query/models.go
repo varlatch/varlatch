@@ -462,7 +462,6 @@ type OidcTokenUse struct {
 type OneTimeCodesGiven struct {
 	VersionID string
 	Step      int64
-	EndsAt    int64
 }
 
 type OrgMembership struct {

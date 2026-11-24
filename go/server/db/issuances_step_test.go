@@ -144,7 +144,7 @@ func TestEveryEarlierVersionUpgrades(t *testing.T) {
 			"INSERT INTO oidc_token_uses (token_key, used_at, expires_at) VALUES ('" + key + "', 1, 2)",
 			"INSERT INTO oidc_token_uses (token_key, used_at, expires_at) VALUES ('jti', 1, 2)",
 			"INSERT INTO exercise_credentials (credential_id, oidc_binding_id) VALUES ('crd_none', 'oib_none')",
-			"INSERT INTO one_time_codes_given (version_id, step, ends_at) VALUES ('ver_none', 1, 2)",
+			"INSERT INTO one_time_codes_given (version_id, step) VALUES ('ver_none', 1)",
 		} {
 			if err := tryExec(older, bad); err == nil {
 				t.Errorf("from %d: accepted: %s", from, bad)

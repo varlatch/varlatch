@@ -37,8 +37,8 @@ WHERE v.environment_id = ? AND v.deleted_at IS NOT NULL AND v.current_version_id
 SELECT step FROM one_time_codes_given WHERE version_id = ?;
 
 -- name: GiveOneTimeCode :exec
-INSERT INTO one_time_codes_given (version_id, step, ends_at) VALUES (?, ?, ?)
-ON CONFLICT (version_id) DO UPDATE SET step = max(one_time_codes_given.step, excluded.step), ends_at = max(one_time_codes_given.ends_at, excluded.ends_at);
+INSERT INTO one_time_codes_given (version_id, step) VALUES (?, ?)
+ON CONFLICT (version_id) DO UPDATE SET step = max(one_time_codes_given.step, excluded.step);
 
 -- name: CapturedCiphertext :many
 -- domain/retrieval.ts captureState: an erased version has nothing to capture.

@@ -1489,11 +1489,10 @@ CREATE INDEX oidc_token_uses_expires ON oidc_token_uses (expires_at);
 
 -- One-time codes given (ADR-0061): Go only, schema version 5. The newest
 -- time step a seed's code was given for, so a code asked to be fresh is of a
--- later one; one row per seed version (bounded, never pruned). A seed itself
+-- later one; one row per seed version, kept. A seed itself
 -- is a value version, in a row an older server reads as deleted (env_values,
 -- above).
 CREATE TABLE one_time_codes_given (
   version_id TEXT NOT NULL PRIMARY KEY REFERENCES value_versions (id),
-  step INTEGER NOT NULL,
-  ends_at INTEGER NOT NULL
+  step INTEGER NOT NULL
 ) STRICT;

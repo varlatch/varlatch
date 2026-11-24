@@ -582,7 +582,7 @@ func sealSeed(t *testing.T, s seeded, path string) {
 	dek, _ := json.Marshal(sealed.WrappedDEK)
 	damage(t, path,
 		"UPDATE value_versions SET payload = json_set('"+string(payload)+"', '$.totp', json('"+params+"')), wrapped_dek = '"+string(dek)+"' WHERE id = '"+version+"'",
-		"INSERT INTO one_time_codes_given (version_id, step, ends_at) VALUES ('"+version+"', 58817400, 1)",
+		"INSERT INTO one_time_codes_given (version_id, step) VALUES ('"+version+"', 58817400)",
 		"UPDATE env_values SET deleted_at = 1795000000000000 WHERE id = '"+value+"'")
 }
 

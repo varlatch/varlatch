@@ -57,8 +57,7 @@ CREATE INDEX oidc_token_uses_expires ON oidc_token_uses (expires_at);
 	{To: 5, CompatibleFrom: 1, SQL: `
 CREATE TABLE one_time_codes_given (
   version_id TEXT NOT NULL PRIMARY KEY REFERENCES value_versions (id),
-  step INTEGER NOT NULL,
-  ends_at INTEGER NOT NULL
+  step INTEGER NOT NULL
 ) STRICT;
 `},
 }

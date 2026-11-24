@@ -221,18 +221,17 @@ func (q *Queries) ExportControl(ctx context.Context, organizationID string) (Exp
 }
 
 const giveOneTimeCode = `-- name: GiveOneTimeCode :exec
-INSERT INTO one_time_codes_given (version_id, step, ends_at) VALUES (?, ?, ?)
-ON CONFLICT (version_id) DO UPDATE SET step = max(one_time_codes_given.step, excluded.step), ends_at = max(one_time_codes_given.ends_at, excluded.ends_at)
+INSERT INTO one_time_codes_given (version_id, step) VALUES (?, ?)
+ON CONFLICT (version_id) DO UPDATE SET step = max(one_time_codes_given.step, excluded.step)
 `
 
 type GiveOneTimeCodeParams struct {
 	VersionID string
 	Step      int64
-	EndsAt    int64
 }
 
 func (q *Queries) GiveOneTimeCode(ctx context.Context, arg GiveOneTimeCodeParams) error {
-	_, err := q.db.ExecContext(ctx, giveOneTimeCode, arg.VersionID, arg.Step, arg.EndsAt)
+	_, err := q.db.ExecContext(ctx, giveOneTimeCode, arg.VersionID, arg.Step)
 	return err
 }
 

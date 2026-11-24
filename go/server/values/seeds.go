@@ -259,8 +259,8 @@ func giveCodes(ctx context.Context, tx *storage.Tx, wanted []codeWanted, minVali
 				return nil, nil, &notFresh{item: w.item.Name, after: start.Sub(now)}
 			}
 		}
-		start, end := w.params.Window(step)
-		if err := q.GiveOneTimeCode(ctx, query.GiveOneTimeCodeParams{VersionID: w.versionID, Step: step, EndsAt: end.UnixMicro()}); err != nil {
+		start, _ := w.params.Window(step)
+		if err := q.GiveOneTimeCode(ctx, query.GiveOneTimeCodeParams{VersionID: w.versionID, Step: step}); err != nil {
 			return nil, nil, err
 		}
 		steps[w.versionID] = step
