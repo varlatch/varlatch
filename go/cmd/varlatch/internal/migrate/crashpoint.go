@@ -81,6 +81,10 @@ func crashPoint(point string) {
 	}
 	fmt.Fprintf(cp.log, "reached %s\n", point)
 	if point == cp.pause {
+		// What the run said before it is there when it is killed.
+		if l := currentLines.Load(); l != nil {
+			l.Flush(5 * time.Second)
+		}
 		fmt.Fprintf(cp.log, "paused %s\n", point)
 		_ = cp.log.Sync()
 		// Asleep on a timer, not in select {}: with every other goroutine

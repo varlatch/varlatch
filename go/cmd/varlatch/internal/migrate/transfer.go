@@ -227,9 +227,7 @@ func (e *Engine) waitForTarget(ctx context.Context, j *Journal) error {
 	deadline := e.now().Add(timeout)
 	var last error
 	for {
-		pctx, cancel := e.within(ctx, deadline)
-		id, version, err := e.Prober.Probe(pctx, j.Transfer.Origin)
-		cancel()
+		id, version, err := e.Prober.Probe(ctx, j.Transfer.Origin)
 		switch {
 		case err != nil:
 			last = err

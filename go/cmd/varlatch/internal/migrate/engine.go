@@ -57,12 +57,13 @@ type Options struct {
 	Drain time.Duration
 	// Now is the clock (time.Now when nil).
 	Now func() time.Time
-	// Say reports progress, one line at a time (nil: silent).
+	// Say reports progress, one line at a time (nil: silent). It must not
+	// wait for a reader (Lines).
 	Say func(string)
 	// Progress reports the steps of an undo, a rollback or a wait as they
-	// start, go on and end (progress.go), one line at a time, from a
-	// goroutine of its own (so beside Say), and nothing waits for it (nil:
-	// none, for a machine's reader).
+	// start, go on and end (progress.go), one line at a time, some from a
+	// goroutine beside Say's; it must not wait for a reader either (nil:
+	// none, for a machine's).
 	Progress func(string)
 	// Work is a directory of this host's for the dry run's scratch
 	// database (removed after it).
@@ -155,7 +156,6 @@ func (e *Engine) now() time.Time {
 
 func (e *Engine) say(format string, args ...any) {
 	if e.Options.Say != nil {
-		e.FlushProgress(sayAfter)
 		e.Options.Say(fmt.Sprintf(format, args...))
 	}
 }

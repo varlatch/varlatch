@@ -230,9 +230,7 @@ func (e *Engine) askRoute(ctx context.Context, j *Journal) error {
 	// answers without the route's header has no route, whoever answers.
 	deadline := e.now().Add(askRouteWait)
 	for {
-		pctx, cancel := e.within(ctx, deadline)
-		a, err := gp.ProbeGate(pctx, originOf(j))
-		cancel()
+		a, err := gp.ProbeGate(ctx, originOf(j))
 		switch {
 		case err == nil && a.Route == j.ID:
 			return nil
@@ -315,9 +313,7 @@ func (e *Engine) waitForGate(ctx context.Context, gp GateProber, j *Journal) err
 	}
 	deadline := e.now().Add(timeout)
 	for {
-		pctx, cancel := e.within(ctx, deadline)
-		a, err := gp.ProbeGate(pctx, originOf(j))
-		cancel()
+		a, err := gp.ProbeGate(ctx, originOf(j))
 		switch {
 		case err == nil && a.Route == j.ID && a.migratedOut():
 			e.say("The name reaches the TypeScript installation, migrated out, by the operator's route: the way back works.")
@@ -610,9 +606,7 @@ func (e *Engine) waitForTypeScript(ctx context.Context, j *Journal, want string)
 	deadline := e.now().Add(timeout)
 	var last error
 	for {
-		pctx, cancel := e.within(ctx, deadline)
-		id, version, err := e.Prober.Probe(pctx, originOf(j))
-		cancel()
+		id, version, err := e.Prober.Probe(ctx, originOf(j))
 		switch {
 		case err != nil:
 			last = err

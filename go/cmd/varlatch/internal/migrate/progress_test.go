@@ -28,12 +28,11 @@ type progressClock struct {
 	made  int
 	lines []string
 	said  chan struct{}
-	eng   *Engine
 }
 
 // watch gives w's engine the clock and collects its progress lines.
 func watch(t *testing.T, w *world) *progressClock {
-	c := &progressClock{t: t, at: w.src.clock.t, said: make(chan struct{}, 1000), eng: w.eng}
+	c := &progressClock{t: t, at: w.src.clock.t, said: make(chan struct{}, 1000)}
 	w.eng.Options.Now, w.eng.sleep, w.eng.ticks = c.now, c.advance, c.ticker
 	w.eng.Options.Progress = func(s string) {
 		c.mu.Lock()
@@ -78,7 +77,6 @@ func (c *progressClock) advance(d time.Duration) {
 		if tick == nil {
 			continue
 		}
-		c.eng.FlushProgress(10 * time.Second)
 		for len(c.said) > 0 {
 			<-c.said
 		}
@@ -92,7 +90,6 @@ func (c *progressClock) advance(d time.Duration) {
 }
 
 func (c *progressClock) all() []string {
-	c.eng.FlushProgress(10 * time.Second)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return slices.Clone(c.lines)
@@ -306,35 +303,18 @@ func TestTheSidecarWaitIsSaid(t *testing.T) {
 	}
 }
 
-// A step that lasts is said every 15 s for ten minutes, then every five.
-func TestAStepThatLasts(t *testing.T) {
-	w := newWorld(t)
-	c := watch(t, w)
-	_ = w.eng.step("a long one", func() error {
-		for range 40 {
-			c.advance(15 * time.Second)
-		}
-		s := w.eng.prog.steps[0]
-		for range 60 {
-			w.eng.stepGoesOn(s)
-		}
-		return nil
-	})
-	if n := len(c.all()); n != 1+40+3+1 {
-		t.Errorf("%d lines", n)
-	}
-}
-
-// Progress nobody takes holds nothing up: the undo of a transfer, its
-// barrier lifted and its address back, and Say as it was.
-func TestProgressNobodyReads(t *testing.T) {
-	for _, how := range []string{"it blocks", "a full pipe", "a closed pipe"} {
-		t.Run(how, func(t *testing.T) {
-			w := interrupted(t, Transfer)
-			setIngress(t, w, Public)
-			never := make(chan struct{})
-			w.eng.Options.Progress = func(string) { <-never }
-			if how != "it blocks" {
+// Lines nobody reads hold nothing up: one pipe for Say and Progress, nearly
+// full, or closed, and the undo of a transfer ends released and a migration's
+// final copy open; no line of Say's is dropped, in its order.
+func TestLinesNobodyReads(t *testing.T) {
+	for _, how := range []string{"a pipe nobody reads, nearly full", "a closed pipe"} {
+		for _, what := range []string{"abort", "run"} {
+			t.Run(how+", "+what, func(t *testing.T) {
+				w := newWorld(t)
+				if what == "abort" {
+					w = interrupted(t, Transfer)
+					setIngress(t, w, Public)
+				}
 				r, out, err := os.Pipe()
 				if err != nil {
 					t.Fatal(err)
@@ -344,42 +324,128 @@ func TestProgressNobodyReads(t *testing.T) {
 				if how == "a closed pipe" {
 					r.Close()
 				} else {
+					// Full, then room for one page of its own (a pipe takes
+					// a short write into a page it can still add to).
 					_ = out.SetWriteDeadline(time.Now().Add(200 * time.Millisecond))
 					for err == nil {
 						_, err = out.Write(make([]byte, 4096))
 					}
 					_ = out.SetWriteDeadline(time.Time{})
-				}
-				w.eng.Options.Progress = func(s string) { _, _ = out.WriteString(s + "\n") }
-			}
-			type result struct {
-				j   *Journal
-				err error
-			}
-			done := make(chan result, 1)
-			go func() {
-				if how == "it blocks" {
-					// More than the queue holds.
-					for range 3 * progressQueue {
-						w.eng.progressLine("a line")
+					if _, err := r.Read(make([]byte, 4096)); err != nil {
+						t.Fatal(err)
+					}
+					if _, err := out.Write(make([]byte, 4000)); err != nil {
+						t.Fatal(err)
 					}
 				}
-				j, err := w.eng.Abort(context.Background())
-				w.eng.FlushProgress(50 * time.Millisecond)
-				done <- result{j, err}
-			}()
-			select {
-			case got := <-done:
-				if got.err != nil || got.j.Phase != Released || w.src.gate != nil || w.src.ingressDown {
-					t.Errorf("%+v %v, gate %v, ingress down %v", got.j, got.err, w.src.gate, w.src.ingressDown)
+				wrote := make(chan struct{}, 1000)
+				lines := NewLines(func(s string) { _, _ = out.WriteString(s + "\n"); wrote <- struct{}{} })
+				var said []string
+				w.eng.Options.Say = func(s string) { said = append(said, s); lines.Say(s) }
+				w.eng.Options.Progress = lines.Progress
+				done := make(chan error, 1)
+				go func() {
+					var j *Journal
+					var err error
+					want := Released
+					if what == "abort" {
+						j, err = w.eng.Abort(context.Background())
+					} else {
+						want = Open
+						j, err = w.eng.Run(context.Background(), false)
+					}
+					if err == nil && j.Phase != want {
+						err = errors.New("ended in " + string(j.Phase))
+					}
+					done <- err
+				}()
+				select {
+				case err := <-done:
+					if err != nil {
+						t.Error(err)
+					}
+				case <-time.After(30 * time.Second):
+					t.Fatal("it waits for its reader")
 				}
-				if len(w.said) == 0 || !strings.HasPrefix(w.said[0], "Undoing: ") {
-					t.Errorf("said %q", w.said)
+				// What Say gave is all there still, but what was written.
+				lines.mu.Lock()
+				var left []string
+				for _, q := range lines.queue {
+					if slices.Contains(said, q.text) {
+						left = append(left, q.text)
+					}
 				}
-			case <-time.After(30 * time.Second):
-				t.Fatal("--abort waits for its reader")
+				lines.mu.Unlock()
+				if how != "a closed pipe" && (len(left) == 0 || !slices.Equal(left, said[len(said)-len(left):])) {
+					t.Errorf("queued still:\n%s\nsaid:\n%s", strings.Join(left, "\n"), strings.Join(said, "\n"))
+				}
+				if lines.Close(50*time.Millisecond) != (how == "a closed pipe") {
+					t.Error("closed, against what the pipe is")
+				}
+			})
+		}
+	}
+}
+
+// A reader that reads gets every line, in the order they were given, and the
+// writer ends with Close; what comes after is not written.
+func TestLinesInOrder(t *testing.T) {
+	var got []string
+	lines := NewLines(func(s string) { got = append(got, s) })
+	var want []string
+	for i := range 300 {
+		s := "line " + string(rune('a'+i%26))
+		if i%3 == 0 {
+			lines.Progress(s)
+			if !lines.Flush(10 * time.Second) {
+				t.Fatal("not flushed")
 			}
-		})
+		} else {
+			lines.Say(s)
+		}
+		want = append(want, s)
+	}
+	if !lines.Close(10*time.Second) || !slices.Equal(got, want) {
+		t.Errorf("%d lines of %d", len(got), len(want))
+	}
+	lines.Say("after")
+	lines.Progress("after")
+	if lines.Flush(20*time.Millisecond) || len(got) != 300 || currentLines.Load() != nil {
+		t.Error("something after Close")
+	}
+}
+
+// Progress is dropped over the backlog and while the writer is stuck; Say is
+// not.
+func TestLinesBacklog(t *testing.T) {
+	go1 := make(chan struct{})
+	var got []string
+	lines := NewLines(func(s string) { <-go1; got = append(got, s) })
+	lines.Say("first")
+	for range 1000 {
+		lines.Progress("p")
+	}
+	for range 200 {
+		lines.Say("s")
+	}
+	lines.mu.Lock()
+	if n := len(lines.queue); n > linesBacklog+200 || n < 200 {
+		t.Errorf("%d queued", n)
+	}
+	// Stuck for longer than a write takes: none more.
+	lines.since = time.Now().Add(-2 * linesStuck)
+	lines.queue = nil
+	lines.mu.Unlock()
+	lines.Progress("p")
+	lines.Say("s")
+	lines.mu.Lock()
+	if len(lines.queue) != 1 || lines.queue[0].text != "s" {
+		t.Errorf("while stuck: %+v", lines.queue)
+	}
+	lines.mu.Unlock()
+	close(go1)
+	if !lines.Close(10*time.Second) || !slices.Equal(got, []string{"first", "s"}) {
+		t.Errorf("wrote %q", got)
 	}
 }
 
@@ -425,18 +491,5 @@ func TestANameThatDidNotMoveIsNotSaid(t *testing.T) {
 	}
 	if nameMoved(&Journal{}) || nameMoved(&Journal{Tailnet: &TailnetRecord{}}) {
 		t.Error("no handoff, moved")
-	}
-}
-
-// A probe is given what is left of its wait, a second at the least.
-func TestAProbeIsBounded(t *testing.T) {
-	w := newWorld(t)
-	for left, want := range map[time.Duration]time.Duration{3 * time.Minute: 3 * time.Minute, 4 * time.Second: 4 * time.Second, -time.Minute: time.Second} {
-		ctx, cancel := w.eng.within(t.Context(), w.eng.now().Add(left))
-		at, ok := ctx.Deadline()
-		if got := time.Until(at); !ok || got > want || got < want-time.Second {
-			t.Errorf("%s left: %s", left, got)
-		}
-		cancel()
 	}
 }
