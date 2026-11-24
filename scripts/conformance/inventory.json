@@ -4188,7 +4188,7 @@
       "feature": "doctor",
       "title": "doctor: release.pending-upgrade passes",
       "replacement": {
-        "open": "ADR-0059 step 6.6: upgrade's journal (an upgrade left unfinished) is what doctor reports pending"
+        "none": "Not a check of `varlatchd admin doctor`, which the suite go-doctor runs: `varlatch doctor`, the CLI in front of it, adds release.pending-upgrade from the upgrade journal on its host (ADR-0059 steps 6.5 and 6.6). Its Go counterparts are Go tests, in the step 'Test' of go.yml: go/cmd/varlatch/internal/cli.TestDoctorFrontsVarlatchd (it passes with nothing pending and one release, and fails with varlatch and varlatchd of two), go/cmd/varlatch/internal/cli.TestDoctorReadsTheUpgradeJournal (an upgrade interrupted at its start or after a step, one whose undo failed, and a rollback fail it, each named with what to do; one done or undone passes; a journal that cannot be read is unknown) and go/cmd/varlatch/internal/cli.TestDoctorWithTheRealVarlatchd (it passes with the real varlatchd, built from the commit)."
       }
     },
     "doctor.browser-reachability-unknown": {
@@ -4590,7 +4590,7 @@
       "script": "scripts/test-adopt.mjs",
       "kind": "ts-stack",
       "replacement": {
-        "open": "varlatch migrate (varlatch/varlatch#371) takes a TypeScript installation over. It closes with the step 8 rehearsals on the experiments server, B1 to B5, then B6 on a restored copy of production."
+        "none": "The Go CLI has no adopt, and needs none: it never manages a Compose installation, so there is nothing to make a hand-configured one into (decision 9 of internal docs/design/go-cli.md, which dropped adopt; step 6's plan, internal docs/design/go-step6.md, keeps it dropped). The TypeScript suite still runs on the TypeScript stack (ci.yml). What takes such an installation over is `varlatch migrate`; whether it does that on a production-shaped one is the entry prod-shape's, below."
       }
     },
     "backup-compose": {
@@ -4622,7 +4622,7 @@
       "script": "scripts/test-backup-upgrade.mjs",
       "kind": "ts-stack",
       "replacement": {
-        "open": "Upgrade and rollback safety are built (G6, and the rollback window of varlatch/varlatch#330 and #387). Recovery from the pre-migration archive closes with the step 8 rehearsal B6."
+        "open": "Built, with what proves it: G6 (go.yml), the upgrade engine's tests (go/cmd/varlatch/internal/upgrade: a failed check undone, a kill and a power cut after every change, --rollback to the pre-upgrade snapshot) and go/install/test-upgrade.sh on systemd (upgrade-systemd.yml, by hand). Still open: recovery from the pre-migration archive on a restored copy of production, the step 8 rehearsal B6 (session 2)."
       }
     },
     "backup-v0100-restore": {
@@ -4630,7 +4630,7 @@
       "script": "scripts/test-backup-v0100-restore.mjs",
       "kind": "ts-stack",
       "replacement": {
-        "open": "The backup converter (varlatch migrate --from-archive, varlatch/varlatch#362, which lands after 0.23.0) restores archives of earlier releases, with its nightly converter job. It closes with that PR and the step 8 rehearsal B6 (the converter on the production archive)."
+        "open": "The backup converter (varlatch migrate --from-archive, varlatch/varlatch#362) is merged, and go.yml's nightly job converter converts and restores archives of formats 1 and 2, one of a published 0.7.0 installation among them (TestConvertArchives). Not in them: the environment-name mapping that a 0.10.0 archive holds and migration 21 removes, which the TypeScript suite covers (ci.yml). Still open: the converter on the production archive, the step 8 rehearsal B6 (session 2)."
       }
     },
     "prod-shape": {
@@ -4638,7 +4638,7 @@
       "script": "scripts/test-prod-shape.mjs",
       "kind": "ts-stack",
       "replacement": {
-        "open": "Migrating a production-shaped TypeScript installation closes with the step 8 rehearsals B3 (the Coolify shape) and B6 (a restored copy of production)."
+        "open": "B3 is done (2026-11-24, internal docs/evidence/step8-rehearsals/2026-11-24-b3-combined/): the Coolify shape with the tailnet sidecar, on the 0.23.0 Compose files, migrated, rolled back through a kill at each step, migrated again and finished, on an empty installation: 108 of 108 checks at b3adad45 and 107 of 108 at 7a4e45d9, where one check of the harness ran 0.7 s before Coolify wrote its file. Still open: B6 (a restored copy of production, session 2)."
       }
     },
     "sidecar-restart": {
@@ -4662,7 +4662,7 @@
       "script": "scripts/test-ingress-tailnet.mjs",
       "kind": "ts-stack",
       "replacement": {
-        "open": "ADR-0059 step 6.4a built setup's tailnet ingress, but no run proves it on a real tailnet yet. The step 8 rehearsal B4, on the throwaway Tailscale tailnet (internal docs/design/go-step8-rehearsals.md), closes it."
+        "open": "ADR-0059 step 6.4a built setup's tailnet ingress, and its questions and settings are tested on a stand-in host (go/cmd/varlatch/internal/setup.TestTailnetSetup). No run has joined a real tailnet through setup: the rehearsals migrate, they do not set up. The real-Tailscale step of the G1 walkthrough (its Section 5.1), on a build of main, closes it."
       }
     },
     "tailnet-endpoint": {
@@ -4670,7 +4670,7 @@
       "script": "scripts/test-tailnet-endpoint.mjs",
       "kind": "ts-stack",
       "replacement": {
-        "open": "Step 4's half passed on a real tailnet (the live check of 2026-11-17, internal docs/evidence/go-tailnet-live-check-2026-11-17/). Setup's tailnet endpoint closes with the step 8 rehearsal B4, on the throwaway Tailscale tailnet."
+        "open": "Step 4's half passed on a real tailnet (the live check of 2026-11-17, internal docs/evidence/go-tailnet-live-check-2026-11-17/). The endpoint that setup turns on (tailnet_https_port) has not been seen on one: the real-Tailscale step of the G1 walkthrough (its Section 5.1), on a build of main, closes it."
       }
     },
     "move": {

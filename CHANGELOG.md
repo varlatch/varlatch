@@ -288,6 +288,10 @@ fixes.
   exactly that name among the node's certificate domains: before it does, the
   node itself refuses the certificate, so the handoff's three attempts could
   be spent at once.
+- **`varlatch doctor` no longer advises a re-pin for a node that has not
+  joined yet.** Right after `setup` with tailnet ingress, its `tailnet.pin`
+  failed with `not-enrolled` and said to run `varlatch tailnet repin`, though
+  there is no pin yet. It now says that the node has not joined, and to wait.
 
 ### Documentation
 
