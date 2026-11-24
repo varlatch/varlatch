@@ -1080,6 +1080,10 @@ func (u *Upgrader) failed(j *journal.Journal, why string, left error) error {
 		j.Reason = fmt.Sprintf("%s; the undo did not complete: %v. Put the original database's files back into %s, then run sudo varlatch upgrade; or restore the pre-upgrade snapshot %s (varlatchd admin backup restore --in <it>)",
 			why, left, filepath.Join(j.Work, originalDir), j.Snapshot)
 	}
+	if errors.Is(left, errNoOriginal) && j.Kind == journal.Rollback {
+		// The snapshot is the release's that the undo leaves.
+		j.Reason = fmt.Sprintf("%s; the undo did not complete: %v. Put the replaced database's files back into %s, then run sudo varlatch upgrade", why, left, filepath.Join(j.Work, originalDir))
+	}
 	if err := u.write(j); err != nil {
 		return fmt.Errorf("the %s to %s failed, its undo did not complete (%s), and the journal could not record it: %v", change(j), j.To, j.Reason, err)
 	}
