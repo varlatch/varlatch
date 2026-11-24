@@ -7,11 +7,14 @@ package migrate
 import (
 	"context"
 	"errors"
+	"os"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/varlatch/varlatch/go/lib/tailhandoff"
 )
 
 // progressClock is the progress lines' clock: a time moved by hand, which
@@ -25,11 +28,12 @@ type progressClock struct {
 	made  int
 	lines []string
 	said  chan struct{}
+	eng   *Engine
 }
 
 // watch gives w's engine the clock and collects its progress lines.
 func watch(t *testing.T, w *world) *progressClock {
-	c := &progressClock{t: t, at: w.src.clock.t, said: make(chan struct{}, 1000)}
+	c := &progressClock{t: t, at: w.src.clock.t, said: make(chan struct{}, 1000), eng: w.eng}
 	w.eng.Options.Now, w.eng.sleep, w.eng.ticks = c.now, c.advance, c.ticker
 	w.eng.Options.Progress = func(s string) {
 		c.mu.Lock()
@@ -74,6 +78,7 @@ func (c *progressClock) advance(d time.Duration) {
 		if tick == nil {
 			continue
 		}
+		c.eng.FlushProgress(10 * time.Second)
 		for len(c.said) > 0 {
 			<-c.said
 		}
@@ -87,6 +92,7 @@ func (c *progressClock) advance(d time.Duration) {
 }
 
 func (c *progressClock) all() []string {
+	c.eng.FlushProgress(10 * time.Second)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return slices.Clone(c.lines)
@@ -162,10 +168,10 @@ func TestTheUndoSaysItsSteps(t *testing.T) {
 		"Done in 0s: lifting the source's barrier.",
 		"Step: starting the source's Caddy again.",
 		"Done in 0s: starting the source's Caddy again.",
-		"Step: waiting for https://vault.example.test to answer from the TypeScript release (at most 3m0s).",
-		"Still going after 15s: waiting for https://vault.example.test to answer from the TypeScript release (at most 3m0s).",
-		"Still going after 30s: waiting for https://vault.example.test to answer from the TypeScript release (at most 3m0s).",
-		"Done in 40s: waiting for https://vault.example.test to answer from the TypeScript release (at most 3m0s).",
+		"Step: waiting for https://vault.example.test to answer from the TypeScript release (about 3m0s at most).",
+		"Still going after 15s: waiting for https://vault.example.test to answer from the TypeScript release (about 3m0s at most).",
+		"Still going after 30s: waiting for https://vault.example.test to answer from the TypeScript release (about 3m0s at most).",
+		"Done in 40s: waiting for https://vault.example.test to answer from the TypeScript release (about 3m0s at most).",
 		"Step: discarding the target's database.",
 		"Done in 0s: discarding the target's database.",
 	}
@@ -237,7 +243,7 @@ func TestTheRouteWaitIsSaid(t *testing.T) {
 	if _, err := w.eng.Rollback(t.Context()); !errors.Is(err, src.importErr) {
 		t.Fatal(err)
 	}
-	wait := "waiting for https://vault.example.test to answer from the TypeScript installation's gate, by the operator's route (at most 3m0s)."
+	wait := "waiting for https://vault.example.test to answer from the TypeScript installation's gate, by the operator's route (about 3m0s at most)."
 	for _, want := range []string{"Step: stopping the source's dashboard.", "Done in 0s: reading the TypeScript installation's gate.", "Step: starting the TypeScript installation behind its migrated-out gate.",
 		"Done in 0s: starting the TypeScript dashboard.", "Still going after 15s: " + wait, "Done in 18s: " + wait, "Step: having the TypeScript installation's gate stand.", "Step: stopping what serves the TypeScript release's address."} {
 		if !slices.Contains(c.all(), want) {
@@ -297,5 +303,140 @@ func TestTheSidecarWaitIsSaid(t *testing.T) {
 			t.Fatalf("no %q after line %d of:\n%s", want, from, strings.Join(lines, "\n"))
 		}
 		from += i
+	}
+}
+
+// A step that lasts is said every 15 s for ten minutes, then every five.
+func TestAStepThatLasts(t *testing.T) {
+	w := newWorld(t)
+	c := watch(t, w)
+	_ = w.eng.step("a long one", func() error {
+		for range 40 {
+			c.advance(15 * time.Second)
+		}
+		s := w.eng.prog.steps[0]
+		for range 60 {
+			w.eng.stepGoesOn(s)
+		}
+		return nil
+	})
+	if n := len(c.all()); n != 1+40+3+1 {
+		t.Errorf("%d lines", n)
+	}
+}
+
+// Progress nobody takes holds nothing up: the undo of a transfer, its
+// barrier lifted and its address back, and Say as it was.
+func TestProgressNobodyReads(t *testing.T) {
+	for _, how := range []string{"it blocks", "a full pipe", "a closed pipe"} {
+		t.Run(how, func(t *testing.T) {
+			w := interrupted(t, Transfer)
+			setIngress(t, w, Public)
+			never := make(chan struct{})
+			w.eng.Options.Progress = func(string) { <-never }
+			if how != "it blocks" {
+				r, out, err := os.Pipe()
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer r.Close()
+				defer out.Close()
+				if how == "a closed pipe" {
+					r.Close()
+				} else {
+					_ = out.SetWriteDeadline(time.Now().Add(200 * time.Millisecond))
+					for err == nil {
+						_, err = out.Write(make([]byte, 4096))
+					}
+					_ = out.SetWriteDeadline(time.Time{})
+				}
+				w.eng.Options.Progress = func(s string) { _, _ = out.WriteString(s + "\n") }
+			}
+			type result struct {
+				j   *Journal
+				err error
+			}
+			done := make(chan result, 1)
+			go func() {
+				if how == "it blocks" {
+					// More than the queue holds.
+					for range 3 * progressQueue {
+						w.eng.progressLine("a line")
+					}
+				}
+				j, err := w.eng.Abort(context.Background())
+				w.eng.FlushProgress(50 * time.Millisecond)
+				done <- result{j, err}
+			}()
+			select {
+			case got := <-done:
+				if got.err != nil || got.j.Phase != Released || w.src.gate != nil || w.src.ingressDown {
+					t.Errorf("%+v %v, gate %v, ingress down %v", got.j, got.err, w.src.gate, w.src.ingressDown)
+				}
+				if len(w.said) == 0 || !strings.HasPrefix(w.said[0], "Undoing: ") {
+					t.Errorf("said %q", w.said)
+				}
+			case <-time.After(30 * time.Second):
+				t.Fatal("--abort waits for its reader")
+			}
+		})
+	}
+}
+
+// Checks that do not pass are no step that is done: forward and in the
+// reverse. The forward final copy's parts are steps.
+func TestTheChecksThatFailAreSaid(t *testing.T) {
+	w := newWorld(t)
+	w.tgt.pass = false
+	c := watch(t, w)
+	if _, err := w.eng.stepChecked("checks", func() (CheckSummary, error) { return CheckSummary{}, nil }); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (steppedTarget{failingChecks{}, w.eng}).CheckReverse(t.Context(), "", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	sameLines(t, c.all(), []string{"Step: checks.", "Failed after 0s: checks.", "Step: the reverse checks.", "Failed after 0s: the reverse checks."})
+
+	w = newWorld(t)
+	c = watch(t, w)
+	if j, err := w.eng.Run(t.Context(), false); err != nil || j.Phase != Open {
+		t.Fatalf("%+v %v", j, err)
+	}
+	lines := strings.Join(c.all(), "\n")
+	for _, what := range []string{"exporting the source at its frozen point", "importing it into the target", "checking the copy"} {
+		if !strings.Contains(lines, "Step: "+what+".\nDone in ") {
+			t.Errorf("no step %q in:\n%s", what, lines)
+		}
+	}
+}
+
+type failingChecks struct{ ReverseTarget }
+
+func (failingChecks) CheckReverse(context.Context, string, string, []byte) (CheckSummary, error) {
+	return CheckSummary{Passed: false, Faults: []string{"a table"}}, nil
+}
+
+// A handoff that moved nothing gives nothing back, and says nothing of it.
+func TestANameThatDidNotMoveIsNotSaid(t *testing.T) {
+	for phase, moved := range map[tailhandoff.Phase]bool{tailhandoff.Prepared: false, tailhandoff.Undone: false, tailhandoff.Switching: true, tailhandoff.Done: true} {
+		if got := nameMoved(&Journal{Tailnet: &TailnetRecord{Handoff: &tailhandoff.State{Phase: phase}}}); got != moved {
+			t.Errorf("%s: moved %v", phase, got)
+		}
+	}
+	if nameMoved(&Journal{}) || nameMoved(&Journal{Tailnet: &TailnetRecord{}}) {
+		t.Error("no handoff, moved")
+	}
+}
+
+// A probe is given what is left of its wait, a second at the least.
+func TestAProbeIsBounded(t *testing.T) {
+	w := newWorld(t)
+	for left, want := range map[time.Duration]time.Duration{3 * time.Minute: 3 * time.Minute, 4 * time.Second: 4 * time.Second, -time.Minute: time.Second} {
+		ctx, cancel := w.eng.within(t.Context(), w.eng.now().Add(left))
+		at, ok := ctx.Deadline()
+		if got := time.Until(at); !ok || got > want || got < want-time.Second {
+			t.Errorf("%s left: %s", left, got)
+		}
+		cancel()
 	}
 }

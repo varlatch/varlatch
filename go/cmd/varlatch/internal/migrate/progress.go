@@ -16,25 +16,85 @@ import (
 // doing, one line as a step starts and one as it ends, and one every
 // progressEvery while it lasts, so that a run that takes minutes is told
 // from one that hangs. A nil Progress says none and starts nothing.
+//
+// They are a help, never a condition: a reader that does not read must not
+// hold a step up (an --abort between Go's stop and the barrier's lifting
+// would leave both servers shut). A goroutine of its own writes them, from a
+// queue that drops what does not fit, and no step waits for it.
 
-// progressEvery is how often a step that goes on is said again.
-const progressEvery = 15 * time.Second
+// progressEvery is how often a step that goes on is said again: each time
+// for the first progressOften times (ten minutes), then every progressRarely
+// of them (five minutes), so a step that never ends does not fill a pipe
+// that Say writes too.
+const (
+	progressEvery                 = 15 * time.Second
+	progressOften, progressRarely = 40, 20
+	progressQueue                 = 64
+	// sayAfter bounds Say's wait for the lines before it, to keep their
+	// order when the reader keeps up.
+	sayAfter = 100 * time.Millisecond
+)
 
-// progress is the steps a run is in, the innermost last, and the lock its
-// lines are written under: a step's ticks come from a goroutine of their
-// own, beside Say.
+// progress is the steps a run is in, the innermost last, and the writer's
+// queue.
 type progress struct {
 	mu    sync.Mutex
 	steps []*stepRun
+	start sync.Once
+	queue chan progressItem
 }
 
 type stepRun struct {
 	what  string
 	since time.Time
+	ticks int
 }
 
-func (e *Engine) progressLocked(format string, args ...any) {
-	e.Options.Progress(fmt.Sprintf(format, args...))
+// progressItem is a line, or (written) a mark in the queue.
+type progressItem struct {
+	line    string
+	written chan struct{}
+}
+
+// progressLine queues a line, or drops it: it never waits.
+func (e *Engine) progressLine(format string, args ...any) {
+	e.prog.start.Do(func() {
+		queue, write := make(chan progressItem, progressQueue), e.Options.Progress
+		e.prog.queue = queue
+		go func() {
+			for it := range queue {
+				if it.written != nil {
+					close(it.written)
+					continue
+				}
+				write(it.line)
+			}
+		}()
+	})
+	select {
+	case e.prog.queue <- progressItem{line: fmt.Sprintf(format, args...)}:
+	default:
+	}
+}
+
+// FlushProgress waits until every progress line before it is written, limit
+// at the most: the command's end, where nothing is held up by it.
+func (e *Engine) FlushProgress(limit time.Duration) {
+	if e.prog.queue == nil {
+		return
+	}
+	t := time.NewTimer(limit)
+	defer t.Stop()
+	mark := progressItem{written: make(chan struct{})}
+	select {
+	case e.prog.queue <- mark:
+	case <-t.C:
+		return
+	}
+	select {
+	case <-mark.written:
+	case <-t.C:
+	}
 }
 
 // step runs f as the step what (a phrase that follows a colon, holding no
@@ -47,7 +107,7 @@ func (e *Engine) step(what string, f func() error) (err error) {
 	s := &stepRun{what: what, since: e.now()}
 	e.prog.mu.Lock()
 	e.prog.steps = append(e.prog.steps, s)
-	e.progressLocked("Step: %s.", what)
+	e.progressLine("Step: %s.", what)
 	e.prog.mu.Unlock()
 
 	ticks, stop := e.progressTicks()
@@ -76,12 +136,12 @@ func (e *Engine) step(what string, f func() error) (err error) {
 		switch {
 		case !returned: // a panic says itself
 		case err == nil:
-			e.progressLocked("Done in %s: %s.", took, what)
+			e.progressLine("Done in %s: %s.", took, what)
 		case errors.As(err, &human), errors.Is(err, ErrAwaitingOperator):
-			e.progressLocked("Left to you after %s: %s.", took, what)
+			e.progressLine("Left to you after %s: %s.", took, what)
 		default:
 			// Why is in what the command says as it ends.
-			e.progressLocked("Failed after %s: %s.", took, what)
+			e.progressLine("Failed after %s: %s.", took, what)
 		}
 	}()
 	err = f()
@@ -92,8 +152,12 @@ func (e *Engine) step(what string, f func() error) (err error) {
 func (e *Engine) stepGoesOn(s *stepRun) {
 	e.prog.mu.Lock()
 	defer e.prog.mu.Unlock()
+	s.ticks++
+	if s.ticks > progressOften && s.ticks%progressRarely != 0 {
+		return
+	}
 	if n := len(e.prog.steps); n > 0 && e.prog.steps[n-1] == s {
-		e.progressLocked("Still going after %s: %s.", elapsed(e.now().Sub(s.since)), s.what)
+		e.progressLine("Still going after %s: %s.", elapsed(e.now().Sub(s.since)), s.what)
 	}
 }
 
@@ -115,7 +179,31 @@ func (e *Engine) awaiting(j *Journal, who string) string {
 	if timeout <= 0 {
 		timeout = DefaultTransferTimeout
 	}
-	return fmt.Sprintf("waiting for %s to answer from %s (at most %s)", originOf(j), who, timeout)
+	return fmt.Sprintf("waiting for %s to answer from %s (about %s at most)", originOf(j), who, timeout)
+}
+
+// within bounds one probe by what is left of its wait (a second at the
+// least, so the last is asked at all).
+func (e *Engine) within(ctx context.Context, deadline time.Time) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, max(deadline.Sub(e.now()), time.Second))
+}
+
+// stepChecked is step for checks, which end without an error when they do
+// not pass: not a step that is done.
+func (e *Engine) stepChecked(what string, f func() (CheckSummary, error)) (sum CheckSummary, err error) {
+	_ = e.step(what, func() error {
+		if sum, err = f(); err == nil && !sum.Passed {
+			return errors.New("the checks did not pass")
+		}
+		return err
+	})
+	return sum, err
+}
+
+// nameMoved is whether unwindTailnet has anything to give back: a handoff
+// that is only prepared, or undone, moved nothing.
+func nameMoved(j *Journal) bool {
+	return j.Tailnet != nil && j.Tailnet.Handoff != nil && j.Tailnet.Handoff.Phase != tailhandoff.Prepared && j.Tailnet.Handoff.Phase != tailhandoff.Undone
 }
 
 // stepIf is step when there is something to do, f alone otherwise.
@@ -245,5 +333,5 @@ func (t steppedTarget) ExportReverse(ctx context.Context, out, keep string) (Cop
 }
 
 func (t steppedTarget) CheckReverse(ctx context.Context, bundle, keep string, runKey []byte) (CheckSummary, error) {
-	return stepOf(t.e, "the reverse checks", func() (CheckSummary, error) { return t.ReverseTarget.CheckReverse(ctx, bundle, keep, runKey) })
+	return t.e.stepChecked("the reverse checks", func() (CheckSummary, error) { return t.ReverseTarget.CheckReverse(ctx, bundle, keep, runKey) })
 }

@@ -139,7 +139,9 @@ fixes.
 - **`varlatch migrate` says what an undo, a rollback and a wait are doing.**
   Each step says when it starts, every 15 seconds while it lasts (how long
   so far, and what it waits for) and when it ends, where a minute or more
-  could pass without a line. Not with `--json`. An undo stopped anywhere is
+  could pass without a line; so do the final copy and `--finish`'s archive.
+  Not with `--json`. A pipe nobody reads holds no step up, and a closed one
+  no longer ends `varlatch migrate` half way. An undo stopped anywhere is
   finished by `--resume` or `--abort`, as before, and the tests now stop it
   between its steps.
 - **`install.sh` updates an existing Go install again.** In 0.50.0-rc.2 it

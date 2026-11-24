@@ -593,6 +593,8 @@ type world struct {
 	// extraEnv is the CLI's added environment (a target made under a test
 	// root, maketarget_test.go).
 	extraEnv []string
+	// out, when set, is the CLI's stdout and stderr (a pipe of the test's).
+	out *os.File
 	// client asks the public URL (http.DefaultClient when nil; a TLS
 	// origin's own client in maketarget_test.go).
 	client *http.Client
@@ -1067,6 +1069,9 @@ func (w *world) runArgs(pause string, args []string) int {
 	cmd.Env = append(cmd.Env, w.extraEnv...)
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
+	if w.out != nil {
+		cmd.Stdout, cmd.Stderr = w.out, w.out
+	}
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -1335,6 +1340,42 @@ func TestG5Interruptions(t *testing.T) {
 	}
 }
 
+// An --abort in the transfer whose output is a pipe nobody reads, or a closed
+// one, undoes all the same; a run's status is its result's own (0, and 1 for
+// a run over an interrupted migration).
+func TestG5AnAbortNobodyReads(t *testing.T) {
+	for _, closed := range []bool{false, true} {
+		t.Run(map[bool]string{false: "a pipe nobody reads", true: "a closed pipe"}[closed], func(t *testing.T) {
+			w := newWorld(t, false)
+			w.useState()
+			before := w.sourceHash()
+			if code := w.run("transfer started"); code != -1 {
+				t.Fatalf("not killed: %d", code)
+			}
+			r, out, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer r.Close()
+			defer out.Close()
+			if closed {
+				r.Close()
+			}
+			w.out = out
+			refused := w.run("")
+			code := w.run("", "--abort")
+			w.out = nil
+			if refused != 1 || code != 0 {
+				t.Errorf("a run over the interrupted migration: %d; --abort: %d", refused, code)
+			}
+			w.expect("aborted", "released", "released", "source", "")
+			if after := w.sourceHash(); after != before {
+				t.Error("the source's data changed")
+			}
+		})
+	}
+}
+
 // An undo of the transfer killed between its steps, then undone again by
 // --abort or --resume: the target never serves again, the source's ingress
 // starts only once its barrier is lifted, and the old installation ends
@@ -1363,7 +1404,7 @@ func TestG5TheUndoInterrupted(t *testing.T) {
 					t.Fatalf("the undo was not killed: %d", code)
 				}
 				w.expect("killed at "+c.point, "transfer", "transfer", c.answers, c.gate)
-				if out := string(w.outputs[len(w.outputs)-1]); !strings.Contains(out, "Step: "+c.step+".") || !regexp.MustCompile(`Done in \d+s: `+c.step+`\.`).MatchString(out) {
+				if out := string(w.outputs[len(w.outputs)-1]); !strings.Contains(out, "Step: "+c.step+".") || !regexp.MustCompile(`Done in [0-9hms]+: `+c.step+`\.`).MatchString(out) {
 					t.Errorf("no step %q in:\n%s", c.step, out)
 				}
 				code := w.run("", again, "--json")

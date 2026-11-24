@@ -318,15 +318,23 @@ saying its steps finish.
 ### What you see printed
 
 `varlatch migrate` writes what it does on stderr, one line at a time. Each
-step of an undo and of a rollback, each wait for an address to answer, and
-each step that moves the tailnet name or starts or stops the sidecar says
-when it starts, every 15 seconds while it lasts, and when it ends:
+step of an undo and of a rollback, the final copy's export, import and
+checks, `--finish`'s archive, each wait for an address to answer, and each
+step that moves the tailnet name or starts or stops the sidecar says when it
+starts, every 15 seconds while it lasts (every five minutes once it has
+lasted ten), and when it ends:
 
 ```text
-Step: waiting for https://vault.example.com to answer from the TypeScript release (at most 3m0s).
-Still going after 15s: waiting for https://vault.example.com to answer from the TypeScript release (at most 3m0s).
-Done in 22s: waiting for https://vault.example.com to answer from the TypeScript release (at most 3m0s).
+Step: waiting for https://vault.example.com to answer from the TypeScript release (about 3m0s at most).
+Still going after 15s: waiting for https://vault.example.com to answer from the TypeScript release (about 3m0s at most).
+Done in 22s: waiting for https://vault.example.com to answer from the TypeScript release (about 3m0s at most).
 ```
+
+These lines are a help only: when nobody reads them they are left out, and
+no step waits for a reader. A migration whose output goes to a pipe that is
+closed goes on to its end, with the same exit status. A terminal that closes
+ends it, as Ctrl-C does: run it in `tmux` or `screen` over a connection that
+may drop.
 
 - `Failed after` is a step that did not succeed. An undo goes on past some
   and makes up for them later. When one matters, why, and what to do, is in
@@ -334,7 +342,7 @@ Done in 22s: waiting for https://vault.example.com to answer from the TypeScript
 - `Left to you after` is a step that is yours; the line beside it says
   what to do.
 - `Still going` says that `varlatch migrate` waits, and for what. A step
-  that names a limit (`at most`) ends by itself; one that runs a command,
+  that names a limit (`at most`) ends by itself, within a few seconds of it; one that runs a command,
   as a service's stop, lasts as long as that command.
 - An undo of the address transfer can take minutes: a service may take its
   time to stop, the address has up to `--transfer-timeout` (3 minutes by

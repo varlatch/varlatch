@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/migrate"
@@ -349,6 +350,11 @@ func migrateCommand(r *Run) error {
 		e.Target = img
 		e.Options.Stage, e.Options.StageBase, e.Options.StageKeep = &migrate.ImageUser, base, filepath.Dir(img.Host.Config)
 	}
+	// A pipe whose reader went away ends no migration half way: a write to
+	// it fails, and is ignored. For the rest of the process, so that what is
+	// printed last cannot end it either, with another status than the
+	// result's.
+	_ = ignoreBrokenPipe()
 	var j *migrate.Journal
 	switch {
 	case o.resume:
@@ -364,6 +370,7 @@ func migrateCommand(r *Run) error {
 	default:
 		j, err = e.Run(context.Background(), o.dryRun)
 	}
+	e.FlushProgress(time.Second)
 	// What the journal records, read back: a refusal's request (such as
 	// --delete-old-data refused before anything was done) is not shown as
 	// done.
@@ -371,7 +378,8 @@ func migrateCommand(r *Run) error {
 		if disk, rerr := migrate.Status(o.from); rerr == nil && disk != nil {
 			j = disk
 		}
-		if serr := r.showJournal(j, o.asJSON); serr != nil {
+		// A journal nobody reads is no other result.
+		if serr := r.showJournal(j, o.asJSON); serr != nil && err == nil && !errors.Is(serr, syscall.EPIPE) {
 			return serr
 		}
 	}

@@ -60,8 +60,9 @@ type Options struct {
 	// Say reports progress, one line at a time (nil: silent).
 	Say func(string)
 	// Progress reports the steps of an undo, a rollback or a wait as they
-	// start, go on and end (progress.go), one line at a time, never while
-	// Say does (nil: none, for a machine's reader).
+	// start, go on and end (progress.go), one line at a time, from a
+	// goroutine of its own (so beside Say), and nothing waits for it (nil:
+	// none, for a machine's reader).
 	Progress func(string)
 	// Work is a directory of this host's for the dry run's scratch
 	// database (removed after it).
@@ -154,8 +155,7 @@ func (e *Engine) now() time.Time {
 
 func (e *Engine) say(format string, args ...any) {
 	if e.Options.Say != nil {
-		e.prog.mu.Lock()
-		defer e.prog.mu.Unlock()
+		e.FlushProgress(sayAfter)
 		e.Options.Say(fmt.Sprintf(format, args...))
 	}
 }
@@ -735,7 +735,7 @@ func (e *Engine) finalCopy(ctx context.Context, j *Journal) error {
 		return err
 	}
 	defer clear(runKey)
-	exported, err := e.Source.Export(ctx, runKey, false)
+	exported, err := stepOf(e, "exporting the source at its frozen point", func() (string, error) { return e.Source.Export(ctx, runKey, false) })
 	if err != nil {
 		return fmt.Errorf("the export: %w", err)
 	}
@@ -751,7 +751,7 @@ func (e *Engine) finalCopy(ctx context.Context, j *Journal) error {
 			return err
 		}
 	}
-	cp, err := e.Target.Import(ctx, bundle, "")
+	cp, err := stepOf(e, "importing it into the target", func() (CopyRecord, error) { return e.Target.Import(ctx, bundle, "") })
 	if err != nil {
 		return fmt.Errorf("the import: %w", err)
 	}
@@ -759,7 +759,7 @@ func (e *Engine) finalCopy(ctx context.Context, j *Journal) error {
 	if err := e.enter(ctx, j, Copied); err != nil {
 		return err
 	}
-	checks, err := e.Target.Check(ctx, bundle, "", runKey)
+	checks, err := e.stepChecked("checking the copy", func() (CheckSummary, error) { return e.Target.Check(ctx, bundle, "", runKey) })
 	if err != nil {
 		return fmt.Errorf("the checks: %w", err)
 	}
@@ -1024,7 +1024,7 @@ func (e *Engine) undo(ctx context.Context, j *Journal, cause error) error {
 	if from == Transfer {
 		// The tailnet name first, then the address (decision 12's reverse
 		// order); an address is never given back while the name is not.
-		if err := e.stepIf(j.Tailnet != nil && j.Tailnet.Handoff != nil, "giving the tailnet name back", func() error { return e.unwindTailnet(ctx, j) }); errors.Is(err, ErrAwaitingOperator) {
+		if err := e.stepIf(nameMoved(j), "giving the tailnet name back", func() error { return e.unwindTailnet(ctx, j) }); errors.Is(err, ErrAwaitingOperator) {
 			// The operator's step first (exit 75); --resume goes on with
 			// the undo.
 			return fmt.Errorf("%w; undoing waits: %w", cause, err)
