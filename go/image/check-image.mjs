@@ -470,6 +470,10 @@ async function main() {
   const third = await serve("serve-3", restored, keys, conf);
   await until(third, 200, "the restored installation");
   admin(third, ["kek", "verify"]);
+  // Held until the host operator resumes it; ready meanwhile.
+  assert.equal(JSON.parse(admin(third, ["restore", "status"])).held, true, "the restored installation is held");
+  admin(third, ["restore", "resume"]);
+  assert.deepEqual(JSON.parse(admin(third, ["restore", "status"])), { held: false }, "it is resumed");
   remove(third.c);
   console.log("ok 6 a backup restores into a new volume through the image alone");
 

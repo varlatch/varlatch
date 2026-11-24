@@ -13,6 +13,8 @@
 #    static), with no network, the archive and the two keys mounted
 #    read-only and an empty data directory: `varlatchd admin backup
 #    restore` restores the archive there.
+#    It is held after that (`admin restore status`), and resumed there, in
+#    a second container, with varlatchd stopped (`admin restore resume`).
 # 3. Outside, the source's Root KEK opens the restored installation's
 #    canary (`admin kek verify`).
 #
@@ -58,12 +60,21 @@ root_kek_file = /keys/root-kek
 backup_key_file = /keys/backup-key
 backup_interval = off
 EOF
-docker run --rm --network none --read-only --user "$(id -u):$(id -g)" \
-  --volume "$out/in/archive.vltbak:/in/archive.vltbak:ro" \
-  --volume "$out/keys:/keys:ro" \
-  --volume "$out/restored/varlatchd.conf:/varlatchd.conf:ro" \
-  --volume "$out/restored/data:/data" \
-  "$image" admin backup restore --in /in/archive.vltbak --config /varlatchd.conf
+in_container() {
+  docker run --rm --network none --read-only --user "$(id -u):$(id -g)" \
+    --volume "$out/in/archive.vltbak:/in/archive.vltbak:ro" \
+    --volume "$out/keys:/keys:ro" \
+    --volume "$out/restored/varlatchd.conf:/varlatchd.conf:ro" \
+    --volume "$out/restored/data:/data" \
+    "$image" admin "$@" --config /varlatchd.conf
+}
+in_container backup restore --in /in/archive.vltbak
+case $(in_container restore status) in
+  '{"held":true,'*) ;;
+  *) echo "restore-drill: the restored installation is not held" >&2; exit 1 ;;
+esac
+in_container restore resume
+[ "$(in_container restore status)" = '{"held":false}' ] || { echo "restore-drill: the restored installation is still held" >&2; exit 1; }
 
 cp "$out/keys/root-kek" "$out/restored/root-kek"
 cat > "$out/restored/check.conf" <<EOF

@@ -395,7 +395,12 @@ func (s *Service) Run(ctx context.Context) (Result, error) {
 			res.Delivery = delivery
 		}
 	}
-	res.Removed = s.retain(backups)
+	// Held after a restore, nothing is removed from this host: the archive
+	// it came from, and those after it, may still be needed.
+	res.Removed = []string{}
+	if s.o.Admission == nil || !s.o.Admission.Held() {
+		res.Removed = s.retain(backups)
+	}
 	if res.UploadError != "" {
 		return res, errors.New(res.UploadError)
 	}

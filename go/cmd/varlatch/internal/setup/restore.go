@@ -176,7 +176,9 @@ func (r *run) restore(ctx context.Context) error {
 	}); err != nil {
 		return err
 	}
-	return r.o.Say("Restored the installation " + r.j.Restore.InstallationID + " from the archive " + r.j.Restore.ArchiveID + " (made " + created + ").")
+	return r.o.Say("Restored the installation " + r.j.Restore.InstallationID + " from the archive " + r.j.Restore.ArchiveID + " (made " + created + ").\n" +
+		"It is held: its background work (sync, webhooks, audit export, organization deletion) does not run. Put right what changed\n" +
+		"since the archive was made (what was revoked or removed since works again), then run: sudo varlatch admin restore resume")
 }
 
 // takeName is a restore's tailnet handoff (go-step7 decision 11), with the

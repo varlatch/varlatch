@@ -155,6 +155,43 @@ func TestRemoteCopyUnchecked(t *testing.T) {
 	}
 }
 
+// TestRestoreHold: a restore's hold is an advisory failure that names the
+// archive and the way to end it, with varlatchd stopped too; one that
+// cannot be read holds; without one there is no such check.
+func TestRestoreHold(t *testing.T) {
+	f := newFixture(t, "")
+	find := func(r Report) (Check, bool) {
+		for _, c := range r.Checks {
+			if c.ID == "restore.hold" {
+				return c, true
+			}
+		}
+		return Check{}, false
+	}
+	if c, ok := find(f.run(t)); ok {
+		t.Errorf("a check without a hold: %+v", c)
+	}
+	dir := f.in.Config.DataDir
+	if err := backup.WriteHold(dir, backup.Hold{ArchiveID: "archive-1", RestoredAt: "2026-11-24T08:00:00.000Z"}); err != nil {
+		t.Fatal(err)
+	}
+	r := f.run(t)
+	c, ok := find(r)
+	if !ok || r.Failed() || c.Class != Advisory || c.Status != Fail || !strings.Contains(c.Detail, "archive-1 at 2026-11-24T08:00:00.000Z") || !strings.Contains(c.Remedy, "varlatchd admin restore resume") {
+		t.Errorf("held: %+v", c)
+	}
+	f.in.Live = nil
+	if _, ok := find(f.run(t)); !ok {
+		t.Error("not shown with varlatchd stopped")
+	}
+	if err := os.WriteFile(filepath.Join(dir, backup.HoldFile), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if c, ok := find(f.run(t)); !ok || !strings.Contains(c.Detail, "cannot be read") {
+		t.Errorf("unreadable: %+v", c)
+	}
+}
+
 // TestFailingChecks: each failing check, with its status, class, what it
 // says and its remedy (step 6.5's acceptance list).
 func TestFailingChecks(t *testing.T) {

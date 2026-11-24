@@ -727,6 +727,16 @@ func (u *Upgrader) Recover(ctx context.Context) (*journal.Journal, error) {
 	return j, nil
 }
 
+// Pending is the upgrade left pending, nil when there is none: what
+// Recover would finish or undo.
+func (u *Upgrader) Pending() (*journal.Journal, error) {
+	j, err := journal.Read(u.configDir())
+	if err != nil || !j.Pending() {
+		return nil, err
+	}
+	return j, nil
+}
+
 // prune removes upgrades' directories older than keepSnapshots, but never
 // the journal's own.
 func (u *Upgrader) prune(dataDir string) {

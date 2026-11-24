@@ -182,6 +182,21 @@ fixes.
   remote copy can be checked from the host: until a first check was made, the
   backup status has no warning of it, and `varlatch doctor` says that none
   was made.
+- **A restored installation is held until you resume it.** An archive brings
+  back what was changed since it was made: a deletion cancelled since, a
+  webhook removed since, an old value. After every restore (`varlatch setup
+  --restore`, `varlatch admin backup restore`, in the image too) `varlatchd`
+  serves, but its background work does not run (sync, webhooks, audit
+  export, organization deletion) and no local backup is removed, until
+  `varlatch admin restore resume` (audited as
+  `installation.restore_resumed`). `varlatch admin restore status`,
+  `varlatch doctor`, `/readyz` (`"held":true`) and the log say so. `varlatch
+  upgrade` and a migration's rollback are refused until then. It holds
+  background work only: people and credentials in the archive can still
+  read and write, so keep clients away until you put right what changed.
+  Deadlines go on meanwhile, as on a stopped server: at the resume, due
+  deletions run, an export being drained past its deadline is given up, and
+  webhooks may repeat events.
 - **The container image works with a read-only root filesystem.** SQLite
   had nowhere to put its temporary files there, so a larger write failed
   with a server error while smaller ones went on: enrolling the first
