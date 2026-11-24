@@ -167,6 +167,9 @@ func (c *Compose) TailnetCertExpiry(ctx context.Context, domain string) (time.Ti
 	return leafNotAfter(r.Answer)
 }
 
+// certNameWait is how many seconds the sidecar is given to hear of its name.
+var certNameWait = 30
+
 // RenewTailnetCert asks the running sidecar for a certificate for domain
 // valid at least minValidity (tailscale cert --min-validity), written in
 // the container's temporary directory and removed there: the key never
@@ -176,7 +179,10 @@ func (c *Compose) RenewTailnetCert(ctx context.Context, domain string, minValidi
 	if !certDomain.MatchString(domain) {
 		return fmt.Errorf("%q is not a tailnet domain", domain)
 	}
-	script := fmt.Sprintf("set -e; d=$(mktemp -d); trap 'rm -rf \"$d\"' EXIT; tailscale cert --min-validity %s --cert-file \"$d/c\" --key-file \"$d/k\" %s",
+	// The node's own certificate domain first: right after a rename it may
+	// not have heard of its name, and refuses it, try after try.
+	wait := fmt.Sprintf(`i=0; until tailscale status --json --peers=false | grep -qF '"%s"'; do i=$((i+1)); [ $i -lt %d ] || { echo "the node is not named %s yet" >&2; exit 1; }; sleep 1; done; `, domain, certNameWait, domain)
+	script := fmt.Sprintf("set -e; "+wait+"d=$(mktemp -d); trap 'rm -rf \"$d\"' EXIT; tailscale cert --min-validity %s --cert-file \"$d/c\" --key-file \"$d/k\" %s",
 		minValidity.Truncate(time.Second).String(), domain)
 	r, err := c.docker(ctx, []string{"compose", "exec", "-T", tailscaleService, "sh", "-c", script}, nil)
 	if err != nil {

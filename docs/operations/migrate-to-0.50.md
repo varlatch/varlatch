@@ -705,12 +705,20 @@ refuse, nothing is started, and the new server serves on. Do not start the
 TypeScript installation then. Keep that volume during the rollback window, as
 you keep its PostgreSQL and Convex volumes.
 
-An undone rollback that cannot put the TypeScript installation back (its
-volume gone, for example) does not keep the new server behind its barrier:
-the old server is held stopped, the new one takes requests again, and the
-message says so. Do not start the old installation then: `varlatch migrate
---resume` puts it back once the cause is gone, and until then neither
-`--rollback` nor `--finish` begins.
+An undo of the rollback puts that gate back first, before it starts or
+changes anything else, and lifts the new server's barrier last, only while
+the gate is there: the two servers never both take requests, whoever starts
+the old containers (Docker after a restart, or a Coolify deploy).
+
+- **The gate cannot be put back** (its volume is another project's, say): the
+  undo stops. The new server stays behind its barrier, so the outage goes on
+  and no data is lost. The message says what is not as it should be and what
+  to do; then `--resume` or `--abort` tries again.
+- **The gate is back, the rest is not** (a database volume is gone or still
+  in use, say): the old server is held stopped behind its gate, the message
+  says so, and the new server takes requests again. Do not start the old
+  installation then. `varlatch migrate --resume` puts it back once the cause
+  is gone, and until then neither `--rollback` nor `--finish` begins.
 
 Coolify 4.7.6's own Docker cleanup leaves an
 application's stopped containers, and the images they use; with **Delete

@@ -162,6 +162,7 @@ type fakeTarget struct {
 	info      TargetInfo
 	running   bool
 	gate      bool
+	barrier   string
 	human     bool // an image's service: the operator starts and stops it
 	failOpen  error
 	bundles   []string
@@ -177,7 +178,7 @@ func (t *fakeTarget) call(name string) error {
 func (t *fakeTarget) Describe(context.Context) (TargetInfo, TargetState, error) {
 	info := t.info
 	info.Config, info.DataDir = "/etc/varlatch/varlatchd.conf", t.dataDir
-	return info, TargetState{Journal: t.journal, Database: t.database, Gate: t.gate, Running: t.running, ImportRefusal: t.importRefusal}, t.call("describe")
+	return info, TargetState{Journal: t.journal, Database: t.database, Gate: t.gate, Barrier: t.barrier, Running: t.running, ImportRefusal: t.importRefusal}, t.call("describe")
 }
 func (t *fakeTarget) Start(context.Context) error {
 	if err := t.call("start"); err != nil {

@@ -159,7 +159,7 @@ func TestNothingChangesOnAnotherInstallation(t *testing.T) {
 		"convex":        func(ctx context.Context, c *Compose) error { return c.ResetConvex(ctx) },
 		"serve":         func(ctx context.Context, c *Compose) error { return c.StartServing(ctx, Coolify) },
 		"stop serving":  func(ctx context.Context, c *Compose) error { return c.StopServing(ctx, Coolify) },
-		"undo":          func(ctx context.Context, c *Compose) error { return c.UndoRebuild(ctx, plan, gate1, ungated) },
+		"undo":          func(ctx context.Context, c *Compose) error { return c.UndoRebuild(ctx, plan, gate1, true) },
 		"check gate":    func(ctx context.Context, c *Compose) error { return c.CheckGate(ctx, gate1) },
 		"check rebuilt": func(ctx context.Context, c *Compose) error { return c.CheckRebuilt(ctx, plan, true) },
 		"check data":    func(ctx context.Context, c *Compose) error { return c.CheckData(ctx, Coolify, &plan, nil, Removals{}) },
@@ -472,7 +472,7 @@ func TestTheReverseRecordsTheRetainedVolumes(t *testing.T) {
 				t.Errorf("rebuilt: %q", b)
 			}
 		}
-		_ = cmp.UndoRebuild(t.Context(), plan, gate1, ungated)
+		_ = cmp.UndoRebuild(t.Context(), plan, gate1, true)
 		b, _ = os.ReadFile(filepath.Join(cmp.Directory, OverrideFile))
 		if env, _ := os.ReadFile(cmp.envPath()); string(b) != "# the first\n" || string(env) != plan.ComposeFileLine || isFile(filepath.Join(cmp.Directory, plan.OverrideWas)) {
 			t.Errorf("rebuilt %v, put back: %q, %q", rebuild, b, env)
@@ -489,7 +489,7 @@ func rolledWorld(t *testing.T, phase Phase, kind Ingress) (*world, *reverseFake,
 	j := &Journal{Format: 1, ID: "mig_aaaaaaaaaaaaaaaaaaaaaaaaaa", Phase: phase, Source: w.src.info, Ingress: kind, Transfer: &TransferRecord{Origin: "https://vault.example.test"},
 		Rollback: &RollbackRecord{Rebuild: &RebuildRecord{Override: OverrideFile, Volumes: []string{"p_postgres-data-abcdefgh", "p_convex-data-abcdefgh"}}, Export: &CopyRecord{InstallationID: "inst_fake"}},
 		History:  []Step{{Phase: Switched, At: w.eng.now().Format(time.RFC3339Nano)}},
-		Barrier:  &BarrierRecord{GateID: "gate-1"}}
+		Barrier:  &BarrierRecord{GateID: "gate-1", AuditPosition: "46"}}
 	j.Source.State = &stateVol
 	if err := writeJournal(w.src.dir, j); err != nil {
 		t.Fatal(err)
@@ -514,7 +514,7 @@ func TestTheReverseTransferChecksTheVolumes(t *testing.T) {
 	t.Run("before it begins: undone", func(t *testing.T) {
 		w, src, j := rolledWorld(t, RollbackChecked, Coolify)
 		src.checkErr = retained
-		if err := w.eng.reverseTransfer(t.Context(), j); !errors.Is(err, retained) || !slices.Equal(src.did, []string{both, "undo p_postgres-data-abcdefgh"}) || !w.tgt.running || j.Phase != Open {
+		if err := w.eng.reverseTransfer(t.Context(), j); !errors.Is(err, retained) || !slices.Equal(apart(src.did), []string{both, "undo p_postgres-data-abcdefgh"}) || !w.tgt.running || j.Phase != Open {
 			t.Errorf("%v: %v, phase %s", err, src.did, j.Phase)
 		}
 	})
@@ -753,7 +753,7 @@ func TestTheUndoRemovesOnlyVolumesOfTheMigration(t *testing.T) {
 	} {
 		cmp, host, plan := newPlan(t)
 		c.do(t, cmp, host, &plan)
-		if err := cmp.UndoRebuild(t.Context(), plan, gate1, ungated); err != nil || !slices.Equal(host.removed, c.removed) {
+		if err := cmp.UndoRebuild(t.Context(), plan, gate1, true); err != nil || !slices.Equal(host.removed, c.removed) {
 			t.Errorf("%s: %v, removed %v, want %v", c.name, err, host.removed, c.removed)
 		}
 	}
@@ -1127,7 +1127,7 @@ func TestTheWayBackIsCheckedBeforeTheReverse(t *testing.T) {
 			}
 			continue
 		}
-		if after.Phase != Open || after.ID != j.ID || len(src.did) != did || !w.tgt.running || !w.src.ingressDown || w.tgt.gate {
+		if after.Phase != Open || after.ID != j.ID || len(apart(src.did)) != did || !w.tgt.running || !w.src.ingressDown || w.tgt.gate {
 			t.Errorf("%s: phase %s, %v, Go running %v, the dashboard down %v", c.name, after.Phase, src.did, w.tgt.running, w.src.ingressDown)
 		}
 	}
@@ -1163,7 +1163,7 @@ func TestTheWayBackStartsTheSidecar(t *testing.T) {
 	// It does not answer: the sidecar stops again.
 	src.did, fs.deaf = nil, true
 	p.route = func() string { return "file: nothing" }
-	if _, err := w.eng.Rollback(t.Context()); err == nil || !slices.Equal(src.did, []string{"serve gated, the sidecar true"}) || up || !fs.stopped {
+	if _, err := w.eng.Rollback(t.Context()); err == nil || !slices.Equal(apart(src.did), []string{"serve gated, the sidecar true"}) || up || !fs.stopped {
 		t.Errorf("%v: %v, the sidecar %v", err, src.did, up)
 	}
 	// A rebuild that could not be planned: told before anything.

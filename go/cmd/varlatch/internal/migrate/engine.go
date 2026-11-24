@@ -1245,6 +1245,11 @@ func (e *Engine) finishOpen(ctx context.Context, j *Journal) error {
 		// lifted now, through the running varlatchd or, stopped, on its
 		// data directory (varlatchd's release works offline too).
 		if rt, ok := e.Target.(ReverseTarget); ok {
+			if rs, ok := e.Source.(ReverseSource); ok {
+				if err := rs.CheckHeld(ctx, sourceGate(j)); err != nil {
+					return notHeld(fmt.Errorf("the reverse of the migration %s was undone, but Go's barrier stands", j.ID), j, "it is not lifted", err)
+				}
+			}
 			e.say("The reverse of the migration %s was undone, but Go's barrier stands: it is lifted.", j.ID)
 			if err := rt.ReleaseBarrier(ctx, j.ID); err != nil {
 				return err
