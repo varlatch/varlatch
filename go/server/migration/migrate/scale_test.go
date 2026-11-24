@@ -131,7 +131,15 @@ func TestScale(t *testing.T) {
 		return err
 	})
 	_ = db.Close()
-	step("snapshot, default pace", func() error { return scaleSnapshot(ctx, database, filepath.Join(dir, "a.db"), storage.SnapshotOptions{}) })
+	// Kept for server/backups' TestScaleBackup.
+	if keep := os.Getenv("VARLATCH_SCALE_KEEP"); keep != "" {
+		if err := copyFile(database, filepath.Join(keep, config.DatabaseFile)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	step("snapshot, default pace", func() error {
+		return scaleSnapshot(ctx, database, filepath.Join(dir, "a.db"), storage.SnapshotOptions{})
+	})
 	step("snapshot, unpaced", func() error {
 		return scaleSnapshot(ctx, database, filepath.Join(dir, "b.db"), storage.SnapshotOptions{StepPages: 4096, Pause: time.Nanosecond})
 	})

@@ -85,6 +85,12 @@ type Options struct {
 	// import, whose tables refer to each other in cycles. Off, as every
 	// other opener has it, a job's every PRAGMA assignment is refused.
 	DeferForeignKeys bool
+	// WriterCacheKiB is the writer's page cache in KiB (0: SQLite's own
+	// default, 2,000). A larger one is for a job that builds a whole
+	// database, the migration's import: its indexes on random ids would
+	// otherwise be read back, and written to the WAL, over and over. It
+	// changes nothing a commit promises.
+	WriterCacheKiB int
 }
 
 func (o *Options) setDefaults() {
@@ -300,6 +306,9 @@ func (db *DB) dsn(writer, reader bool) string {
 	}
 	if writer {
 		p = append([]string{"_pragma=journal_mode(WAL)"}, p...)
+		if n := db.opts.WriterCacheKiB; n > 0 {
+			p = append(p, fmt.Sprintf("_pragma=cache_size(-%d)", n))
+		}
 	}
 	if reader {
 		p = append(p, "_pragma=query_only(1)")

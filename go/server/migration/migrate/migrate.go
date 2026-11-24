@@ -141,13 +141,14 @@ func targetTable(t manifest.Table) string {
 // ident quotes an SQLite identifier.
 func ident(s string) string { return `"` + strings.ReplaceAll(s, `"`, `""`) + `"` }
 
-func insertSQL(table string, names []string) string {
+func insertSQL(table string, names []string, rows int) string {
 	q := make([]string, len(names))
 	quoted := make([]string, len(names))
 	for i, n := range names {
 		q[i], quoted[i] = "?", ident(n)
 	}
-	return "INSERT INTO " + ident(table) + " (" + strings.Join(quoted, ", ") + ") VALUES (" + strings.Join(q, ", ") + ")"
+	return "INSERT INTO " + ident(table) + " (" + strings.Join(quoted, ", ") + ") VALUES " +
+		strings.TrimSuffix(strings.Repeat("("+strings.Join(q, ", ")+"), ", rows), ", ")
 }
 
 // staleTemp is what an import or a reverse export that was killed leaves
@@ -213,6 +214,10 @@ func freshEntries(dir string, ignore, keepDirs []string, remove bool) error {
 // later import removes when an interrupted one left it (fresh).
 const importPrefix = ".migrate-import-"
 
+// importCacheKiB is the import's page cache, 64 MiB: the audit log's
+// indexes at several hundred thousand events.
+const importCacheKiB = 64 << 10
+
 // Import builds a fresh database in o.DataDir from the forward bundle in.
 // The bundle is read twice: first whole, its counts and SHA-256 checked
 // (bundle.Verify), so a stream cut short or damaged is refused as such
@@ -258,7 +263,7 @@ func Import(ctx context.Context, in io.ReadSeeker, o Options) (res Result, err e
 			removeTemp()
 		}
 	}()
-	store, err := storage.Open(ctx, storage.Options{Path: temp, DeferForeignKeys: true})
+	store, err := storage.Open(ctx, storage.Options{Path: temp, DeferForeignKeys: true, WriterCacheKiB: importCacheKiB})
 	if err != nil {
 		return res, err
 	}
@@ -372,8 +377,7 @@ func importTable(ctx context.Context, tx *storage.Tx, r *bundle.Reader, t manife
 			return err
 		}
 	}
-	stmt := insertSQL(targetTable(t), cols.names)
-	args := make([]any, len(cols.from))
+	in := inserter{table: targetTable(t), names: cols.names}
 	for i := 0; i < n; i++ {
 		row, err := r.Row()
 		if err != nil {
@@ -383,14 +387,64 @@ func importTable(ctx context.Context, tx *storage.Tx, r *bundle.Reader, t manife
 		if err != nil {
 			return fmt.Errorf("row %d: %w", i+1, err)
 		}
-		for j, k := range cols.from {
-			args[j] = values[k]
+		for _, k := range cols.from {
+			in.args = append(in.args, values[k])
 		}
-		if _, err := tx.ExecContext(ctx, stmt, args...); err != nil {
-			return fmt.Errorf("row %d: %w", i+1, err)
+		in.rows, in.bytes = in.rows+1, in.bytes+len(row)
+		if in.full() || i == n-1 {
+			if err := in.flush(ctx, tx, i+1); err != nil {
+				return err
+			}
 		}
 		res.Rows++
 	}
+	return nil
+}
+
+// inserter inserts a table's rows, several to a statement. A job's
+// statements are not prepared (storage.Tx), so one row to a statement
+// compiles the insert, and with it the table's triggers, for every row:
+// most of the import's time on a long audit log. Rows, and the triggers
+// on each, run in the order given, as one statement each would run them.
+type inserter struct {
+	table string
+	names []string
+	args  []any
+	rows  int
+	bytes int
+	// stmt is the last statement, of stmtRows rows.
+	stmt     string
+	stmtRows int
+}
+
+const (
+	// insertArgs is the most values one statement binds (SQLite takes
+	// 32,766), and insertBytes the most bytes of rows it is given.
+	insertArgs  = 4000
+	insertBytes = 1 << 20
+)
+
+func (in *inserter) full() bool {
+	return len(in.args)+len(in.names) > insertArgs || in.bytes >= insertBytes
+}
+
+// flush inserts the rows held, the last of them the table's row last. A
+// statement that fails left nothing: its rows are inserted one by one then,
+// so that the error is the failing row's own, and names it.
+func (in *inserter) flush(ctx context.Context, tx *storage.Tx, last int) error {
+	if in.stmtRows != in.rows {
+		in.stmt, in.stmtRows = insertSQL(in.table, in.names, in.rows), in.rows
+	}
+	if _, err := tx.ExecContext(ctx, in.stmt, in.args...); err != nil {
+		one, w := insertSQL(in.table, in.names, 1), len(in.names)
+		for i := range in.rows {
+			if _, err := tx.ExecContext(ctx, one, in.args[i*w:(i+1)*w]...); err != nil {
+				return fmt.Errorf("row %d: %w", last-in.rows+i+1, err)
+			}
+		}
+		return fmt.Errorf("rows %d to %d: %w", last-in.rows+1, last, err)
+	}
+	in.args, in.rows, in.bytes = in.args[:0], 0, 0
 	return nil
 }
 
@@ -409,7 +463,7 @@ func endSessions(ctx context.Context, tx *storage.Tx, r *bundle.Reader, t manife
 		return errors.New("the manifest's session table has no left-out token")
 	}
 	names := append(slices.Clone(cols.names), "token_hash")
-	stmt := insertSQL(targetTable(t), names)
+	stmt := insertSQL(targetTable(t), names, 1)
 	idAt := slices.Index(cols.names, "id")
 	if idAt < 0 {
 		return errors.New("the manifest's session table has no id")
