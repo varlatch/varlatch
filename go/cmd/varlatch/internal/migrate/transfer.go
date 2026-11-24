@@ -27,8 +27,13 @@ import (
 //     its certificate on the same name over ACME and binds 80 and 443;
 //   - own proxy: the source's dashboard stops, freeing the loopback port
 //     the operator's proxy targets, and the target starts on it;
-//   - Coolify: the target starts; migrate stops with the exact domain move
-//     to make by hand (O3, no Coolify adapter), and --resume checks it.
+//   - Coolify: the source's dashboard stops, and migrate with it, saying
+//     the exact domain move to make by hand (O3, no Coolify adapter);
+//     --resume checks it. A container keeps the router its labels give it
+//     until it is made again, whatever Coolify's domain setting says, and
+//     of two that name one domain the proxy picks either, anew at each
+//     container that starts or stops on the host (Coolify 4.7.6, Traefik
+//     3.6, measured): so one of the two is stopped, and the other serves.
 //
 // Then the public URL must answer with the migrated installation's id and
 // the target's release. If it does not, the address goes back: the target
@@ -128,17 +133,21 @@ func (e *Engine) transfer(ctx context.Context, j *Journal) error {
 	if j.Transfer == nil {
 		return e.undo(ctx, j, errors.New("the journal records no address to transfer"))
 	}
+	// Before the address moves, in every shape (Coolify's asks nothing of
+	// the source here): still the installation that was copied. --resume
+	// checked it (Resume).
+	if err := e.checkProject(ctx); err != nil {
+		return e.undo(ctx, j, err)
+	}
 	if j.Phase != Transfer {
 		if err := e.enter(ctx, j, Transfer); err != nil {
 			return e.undo(ctx, j, err)
 		}
 	}
 	kind := j.Ingress
-	if kind != Coolify {
-		e.say("Address transfer: the source's %s stops; the target starts on the same address.", ingressPart(kind))
-		if err := e.Source.StopIngress(ctx, kind); err != nil {
-			return e.undo(ctx, j, fmt.Errorf("stopping the source's %s: %w", ingressPart(kind), err))
-		}
+	e.say("Address transfer: the source's %s stops; the target starts on the same address.", ingressPart(kind))
+	if err := e.Source.StopIngress(ctx, kind); err != nil {
+		return e.undo(ctx, j, fmt.Errorf("stopping the source's %s: %w", ingressPart(kind), err))
 	}
 	startErr := e.Target.Start(ctx)
 	if startErr == nil {
@@ -157,6 +166,13 @@ func (e *Engine) transfer(ctx context.Context, j *Journal) error {
 			return err
 		}
 		n := 1
+		if kind == Coolify {
+			// Before the target's container is made: its labels are the
+			// domain setting's then.
+			e.say("Address transfer, by hand, step %d: in Coolify, move the domain of %s from the TypeScript application to the Go one (its domain setting; Save only). "+
+				"Do not Deploy, Restart or Stop the TypeScript application: its stopped dashboard is the way back.", n, j.Transfer.Origin)
+			n++
+		}
 		if human != nil {
 			publish := ""
 			if kind == Proxy && j.Transfer.Publish != "" {
@@ -167,19 +183,14 @@ func (e *Engine) transfer(ctx context.Context, j *Journal) error {
 					orNone(j.Target.Listen), j.Transfer.Publish)
 			}
 			e.say("Address transfer, by hand, step %d: %s%s", n, human.Instruction, publish)
-			n++
-		}
-		if kind == Coolify {
-			e.say("Address transfer, by hand, step %d: in Coolify, move the domain of %s from the TypeScript application to the Go one (its domain setting), "+
-				"and redeploy the proxy if Coolify asks.", n, j.Transfer.Origin)
 		}
 		e.say("Then run varlatch migrate --resume, which checks %s/v1/meta answers from the target; or varlatch migrate --abort, which undoes the migration "+
-			"(the address back first).", j.Transfer.Origin)
+			"(the target stops first, then the source's %s starts again and is waited for).", j.Transfer.Origin, ingressPart(kind))
 		return ErrAwaitingOperator
 	}
 	if err := e.waitForTarget(ctx, j); err != nil {
 		if kind == Coolify {
-			return fmt.Errorf("%w; once the domain is moved, varlatch migrate --resume checks again; varlatch migrate --abort undoes (move the domain back first)", err)
+			return fmt.Errorf("%w; once the domain is moved, varlatch migrate --resume checks again; varlatch migrate --abort undoes the migration: stop the Go service first when it asks, then it starts the TypeScript dashboard, which routes the domain itself, and waits for it; set the domain back in Coolify after that", err)
 		}
 		return e.undo(ctx, j, err)
 	}
@@ -249,26 +260,82 @@ func (e *Engine) stopTargetForUndo(ctx context.Context) []error {
 }
 
 // returnAddress gives the address back during an undo, once the source's
-// barrier is lifted: its ingress starts again; the Coolify shape says how
-// to move the domain back. Started behind the barrier, the ingress would
+// barrier is lifted: its ingress starts again (in the Coolify shape too,
+// which says what to set back in Coolify). Started behind the barrier, the ingress would
 // not come up: Compose starts the dashboard's one-off dependency
 // (varlatch-migrate, service_completed_successfully) again with it, and
 // that refuses while the source is behind a gate (run r8 of the 7.8b
 // rehearsal). What it could not do is returned.
 func (e *Engine) returnAddress(ctx context.Context, j *Journal) []error {
-	switch j.Ingress {
-	case Coolify:
+	if j.Ingress == Coolify {
+		// Its stopped container has its router still; only Coolify's own
+		// setting is the operator's.
 		origin := "the installation's address"
 		if j.Transfer != nil {
 			origin = j.Transfer.Origin
 		}
-		e.say("The address goes back by hand: in Coolify, move the domain of %s back to the TypeScript application.", origin)
-	default:
-		if err := e.Source.StartIngress(ctx, j.Ingress, j.UndoUnanswered); err != nil {
-			return []error{fmt.Errorf("starting the source's %s again: %w", ingressPart(j.Ingress), err)}
-		}
+		e.say("The dashboard's container still routes the domain, and starts again. By hand, for later deploys: in Coolify, move the domain of %s back to the TypeScript application (its domain setting; Save only, do not Deploy it for this).", origin)
+	}
+	if err := e.Source.StartIngress(ctx, j.Ingress, j.UndoUnanswered); err != nil {
+		return []error{fmt.Errorf("starting the source's %s again: %w", ingressPart(j.Ingress), err)}
 	}
 	return nil
+}
+
+// GateProber is a Prober that also asks which gate answers, and by which
+// route.
+type GateProber interface {
+	ProbeGate(ctx context.Context, origin string) (GateAnswer, error)
+}
+
+// GateAnswer is an answer at an address: the route header its proxy put on
+// it ("" for none), and the state of the gate that answers ("" for none, or
+// when what answers is not a Varlatch server, as a proxy's own error).
+type GateAnswer struct {
+	Status int
+	Route  string
+	Server bool
+	Ready  bool
+	State  string
+}
+
+// migratedOut is the TypeScript release's answer behind its migrated-out
+// gate.
+func (a GateAnswer) migratedOut() bool {
+	return a.Server && a.Status == http.StatusServiceUnavailable && !a.Ready && a.State == "migrated-out"
+}
+
+func (a GateAnswer) String() string {
+	switch {
+	case !a.Server:
+		return fmt.Sprintf("not a Varlatch server (HTTP %d)", a.Status)
+	case a.State == "":
+		return fmt.Sprintf("a Varlatch server, ready or not saying (HTTP %d, ready %t)", a.Status, a.Ready)
+	}
+	return fmt.Sprintf("a Varlatch server in the state %s (HTTP %d, ready %t)", a.State, a.Status, a.Ready)
+}
+
+// routeHeader is what the operator's route (RouteFile) puts on each answer
+// through it, a proxy's own error among them: the migration's id. It is the
+// proof of which router answered: the containers' own name the same host.
+const routeHeader = "X-Varlatch-Rollback"
+
+// ProbeGate is GET <origin>/readyz: the TypeScript release names its gate
+// there (503, "state": "migrated-out").
+func (p HTTPProber) ProbeGate(ctx context.Context, origin string) (GateAnswer, error) {
+	status, header, body, err := p.get(ctx, origin+"/readyz")
+	if err != nil {
+		return GateAnswer{}, err
+	}
+	a := GateAnswer{Status: status, Route: header.Get(routeHeader)}
+	var r struct {
+		Ready *bool  `json:"ready"`
+		State string `json:"state"`
+	}
+	if json.Unmarshal(body, &r) == nil && r.Ready != nil {
+		a.Server, a.Ready, a.State = true, *r.Ready, r.State
+	}
+	return a, nil
 }
 
 // HTTPProber asks over HTTP(S), certificates verified as any client
@@ -279,26 +346,12 @@ type HTTPProber struct {
 
 // Probe is GET <origin>/v1/meta.
 func (p HTTPProber) Probe(ctx context.Context, origin string) (string, string, error) {
-	c := p.Client
-	if c == nil {
-		c = &http.Client{Timeout: 10 * time.Second}
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, origin+"/v1/meta", nil)
+	status, _, body, err := p.get(ctx, origin+"/v1/meta")
 	if err != nil {
 		return "", "", err
 	}
-	// An operator's proxy or CDN must not answer from a cached /v1/meta:
-	// the pre-migration answer has the same installation id.
-	req.Header.Set("Cache-Control", "no-cache")
-	req.Header.Set("Pragma", "no-cache")
-	res, err := c.Do(req)
-	if err != nil {
-		return "", "", err
-	}
-	defer res.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
-	if res.StatusCode != http.StatusOK {
-		return "", "", fmt.Errorf("GET /v1/meta answered %d", res.StatusCode)
+	if status != http.StatusOK {
+		return "", "", fmt.Errorf("GET /v1/meta answered %d", status)
 	}
 	var meta struct {
 		InstallationID string `json:"installationId"`
@@ -308,4 +361,42 @@ func (p HTTPProber) Probe(ctx context.Context, origin string) (string, string, e
 		return "", "", errors.New("GET /v1/meta did not answer in JSON")
 	}
 	return meta.InstallationID, meta.ServerVersion, nil
+}
+
+func (p HTTPProber) get(ctx context.Context, url string) (int, http.Header, []byte, error) {
+	c := p.Client
+	if c == nil {
+		c = &http.Client{Timeout: 10 * time.Second}
+	}
+	// What answers at the origin itself: a redirect away from it is its
+	// answer, never followed to another's.
+	own, followed := *c, c.CheckRedirect
+	own.CheckRedirect = func(next *http.Request, via []*http.Request) error {
+		if next.URL.Scheme != via[0].URL.Scheme || next.URL.Host != via[0].URL.Host {
+			return http.ErrUseLastResponse
+		}
+		if followed != nil {
+			return followed(next, via)
+		}
+		if len(via) >= 10 {
+			return errors.New("stopped after 10 redirects")
+		}
+		return nil
+	}
+	c = &own
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	// An operator's proxy or CDN must not answer from a cached one: the
+	// pre-migration answer has the same installation id.
+	req.Header.Set("Cache-Control", "no-cache")
+	req.Header.Set("Pragma", "no-cache")
+	res, err := c.Do(req)
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	defer res.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+	return res.StatusCode, res.Header, body, nil
 }

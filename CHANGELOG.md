@@ -68,6 +68,74 @@ fixes.
 
 ### CLI
 
+- **`varlatch migrate` finds a Coolify installation's Compose project.** A
+  directory Coolify deploys from can hold the repository's
+  `docker-compose.yml` beside the file that runs, and plain `docker compose`
+  reads the wrong one there, possibly another installation's project on the
+  same host; a directory with Coolify's `docker-compose.yaml` only was
+  refused. `migrate` now takes the project, its directory and its files
+  from the containers' labels, names them in every `docker compose` command
+  (the TypeScript CLI's backup included), keeps them in the journal, and
+  refuses what does not agree instead of guessing. `--rollback` gives a
+  Coolify installation its fresh volumes by the names its rendered file
+  uses, and reaches Postgres on its network; before, the fresh volumes were
+  not used there. It refuses, before the import, before the address moves,
+  before Go stops and on every `--resume`, an installation that is not on
+  its fresh volumes (one deployed again from Coolify meanwhile is not), and
+  says how to put it back. After a rollback, `--finish --delete-old-data`
+  removes the volumes recorded when the rollback began, each checked to be
+  the same, the project's and unused, and discards Go's copy only after
+  them. A container of the same project from another directory on the host
+  is refused before every command that changes something. Its
+  containers must all be made from the same list of files. `.env` is read
+  as Compose reads it (quotes, comments, `export`). `--finish` removes only
+  the volumes the installation's containers were on when it began, each
+  checked to be the same one right before. `--rollback` makes its fresh
+  volumes under names no volume has, labelled, and its undo removes only
+  those.
+- **`varlatch migrate` on Coolify no longer depends on a domain set back in
+  Coolify.** Coolify applies a domain when containers are made, so a domain
+  moved without a deploy does nothing, and after a deploy of the new
+  application both containers answered for it, at random. The migration now
+  stops the TypeScript dashboard's container for the transfer, and starts it
+  again when it is undone. `--rollback` begins only once a route you put in
+  Coolify's proxy, which it prints, reaches the TypeScript installation, and
+  starts what answers behind it first, the old Tailscale sidecar included.
+- **`varlatch migrate --rollback` with the old containers or images gone.**
+  It pulls the images it needs before anything is done, and makes the
+  containers again from the journal, the Compose files and the volumes the
+  migration now records when it begins; another volume is refused. On
+  Coolify, where the TypeScript server starts before Go's barrier, it starts
+  only behind the migration's own gate, read from its state volume before
+  anything starts: without that gate (its volume or file lost) it would take
+  requests again. The container whose gate was read is the one that starts. A
+  migration is refused in its preflight where that gate could not be held
+  (the state directory not on a named volume, whole). An undo stops the services the rollback started, and no
+  others. The route's check follows no redirect to another address.
+- **`varlatch migrate` needs Docker Compose 2.32.0 or later**, and refuses an
+  earlier one before anything is done. An earlier one left PostgreSQL on its
+  old volume when a rollback gave it a fresh one, which the rollback
+  noticed, and undid, only then. An undo does not depend on it.
+- **An undone rollback never leaves both servers taking requests.** It puts
+  the TypeScript installation's gate back before anything else, and lifts Go's
+  barrier last, only while that gate is there. With the gate back, Go takes
+  requests again also when the rest of the TypeScript installation cannot be
+  put back yet (`varlatch migrate --resume` does, later); without it, Go stays
+  behind its barrier and the message says what to do.
+- **`varlatch migrate --rollback` and the tailnet certificate.** The old node
+  is asked for a certificate only once it has heard of its name again, not
+  three times in a row right after the rename.
+- **`varlatch migrate` into the image: no surprises in the downtime.** The
+  image's user's programs get an environment of their own (a temporary
+  directory it can write in, checked before anything), and the tailnet's
+  reach check that cannot be made on this host (a missing program, a
+  permission) is undone at once, not tried again until the transfer's timeout.
+- **Coolify: the Go service's host paths are the defaults.** The README said
+  `VARLATCH_DATA_DIR`, `VARLATCH_KEYS_DIR` and `VARLATCH_CONFIG_FILE` change
+  them; Coolify ignores those.
+- **`varlatch migrate --rollback` makes the dashboard again** once the
+  rebuilt server starts. Its nginx resolves the server's address once, and
+  one that kept running could answer 502 when the address had changed.
 - **`install.sh` updates an existing Go install again.** In 0.50.0-rc.2 it
   refused to replace any Go varlatch already installed, a run over its own
   fresh install included, with "varlatch is installed with Homebrew; update

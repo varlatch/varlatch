@@ -147,6 +147,10 @@ func newTailnetWorld(t *testing.T) (*world, *tailnetEnv) {
 	if err := startSidecar(); err != nil {
 		t.Fatal(err)
 	}
+	// The dashboard started after it, as Compose starts them.
+	if err := readdress("varlatch-web"); err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() {
 		_ = os.Setenv("G5_STATE", w.stateDir)
 		_ = stopSidecar()
@@ -341,6 +345,9 @@ func startSidecar() error {
 	}
 	for deadline := time.Now().Add(60 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
 		if _, err := os.Stat(state("sidecar.up")); err == nil {
+			if err := readdress("tailscale"); err != nil {
+				return err
+			}
 			return setStopped("tailscale", false)
 		}
 		if !alive(cmd.Process.Pid) {
@@ -393,11 +400,10 @@ func fakeDockerTailnet(args []string) (int, bool) {
 			// The operator's override: the sidecar logs in to Headscale.
 			sidecarEnv = append(sidecarEnv, "TS_EXTRA_ARGS=--login-server="+u)
 		}
-		out, _ := json.Marshal(map[string]any{"name": composeProject(), "services": map[string]any{
-			"varlatchd": map[string]any{"network_mode": "service:tailscale"},
-			"tailscale": map[string]any{"environment": sidecarEnv},
-		}})
-		fmt.Println(string(out))
+		printConfig(map[string]map[string]any{
+			"varlatchd": {"network_mode": "service:tailscale"},
+			"tailscale": {"environment": sidecarEnv},
+		})
 		return 0, true
 	case j == "compose stop tailscale":
 		logCall(j)
@@ -405,21 +411,36 @@ func fakeDockerTailnet(args []string) (int, bool) {
 			return fail("%v", err)
 		}
 		return 0, true
-	case j == "compose start tailscale":
+	case j == "compose start tailscale" && !containerGone("tailscale"):
 		logCall(j)
+		if err := startSidecar(); err != nil {
+			return fail("%v", err)
+		}
+		return 0, true
+	case j == "compose up -d --no-deps tailscale":
+		// Made again: varlatchd's container is of the one that is gone.
+		logCall(j)
+		if containerGone("tailscale") {
+			if err := os.WriteFile(state("sidecar-remade"), nil, 0o600); err != nil {
+				return fail("%v", err)
+			}
+		}
 		if err := startSidecar(); err != nil {
 			return fail("%v", err)
 		}
 		return 0, true
 	case j == "compose restart varlatchd":
 		logCall(j)
+		if _, err := os.Stat(state("sidecar-remade")); err == nil {
+			return fail("Error response from daemon: Cannot restart container: joining network namespace of container: No such container")
+		}
 		if stopped("tailscale") {
 			return fail("Error response from daemon: cannot join network namespace of a non running container: g5-installation-tailscale-1")
 		}
 		if err := setStopped("varlatchd", false); err != nil {
 			return fail("%v", err)
 		}
-		return 0, true
+		return okOr(readdress("varlatchd")), true
 	case strings.HasPrefix(j, "compose run --rm --no-deps -T --entrypoint cat tailscale /var/lib/tailscale/certs/"):
 		logCall(j)
 		fmt.Fprintf(os.Stderr, "cat: %s: No such file or directory\n", args[len(args)-1])
@@ -430,6 +451,7 @@ func fakeDockerTailnet(args []string) (int, bool) {
 		// as Docker, fails in a stopped sidecar's namespace: the reverse's
 		// stand-in refuses it, sharedNetworkDown). The rest is the
 		// reverse's stand-in's.
+		_ = os.Remove(state("sidecar-remade"))
 		if slices.Contains(args, "--no-deps") {
 			return 0, false
 		}
@@ -979,4 +1001,163 @@ func TestG5TailnetMigrateAgainAfterARollback(t *testing.T) {
 	w.expect("migrated again", "open", "open", "target-open", "migrated-out")
 	w.tailnetAt(t, tn, sidecar, "target")
 	w.noSecrets()
+}
+
+// Coolify and the tailnet's sidecar together (production's topology): the
+// forward handoff stops the sidecar, and varlatchd, in its network, with
+// it. --rollback's check of the way back starts both before Go's barrier,
+// with the containers there or removed; killed there it is undone, the
+// sidecar stopped again; a route that does not work too. Then it runs to
+// its end, the name the sidecar's again. --finish --delete-old-data after
+// the migration is refused before its archive, which would need the old
+// node.
+func TestG5CoolifyTailnet(t *testing.T) {
+	migrated := func(t *testing.T) (*world, *tailnetEnv, string) {
+		w, tn := newTailnetWorld(t)
+		w.coolify = true
+		w.coolifyLayout()
+		sidecar := sidecarID(t)
+		if code := w.run(""); code != 75 {
+			t.Fatalf("the migration: %d\n%s", code, w.outputs[len(w.outputs)-1])
+		}
+		w.domainToGo()
+		if code := w.run("", "--resume"); code != 0 {
+			t.Fatalf("--resume: %d\n%s", code, w.outputs[len(w.outputs)-1])
+		}
+		w.useState()
+		w.expect("migrated", "open", "open", "target-open", "migrated-out")
+		w.tailnetAt(t, tn, sidecar, "target")
+		if sidecarRunning() || !w.stopped("varlatchd") {
+			t.Fatalf("after the handoff the sidecar runs %v, varlatchd stopped %v", sidecarRunning(), w.stopped("varlatchd"))
+		}
+		return w, tn, sidecar
+	}
+	still := func(t *testing.T, w *world, tn *tailnetEnv, sidecar, when string) {
+		t.Helper()
+		w.useState()
+		if s, d := w.phases(); s != "open" || d != "open" || !w.goRuns() || sidecarRunning() || !w.has("web-stopped") {
+			t.Fatalf("%s: the journals %s / %s, Go runs %v, the sidecar %v, the dashboard stopped %v", when, s, d, w.goRuns(), sidecarRunning(), w.has("web-stopped"))
+		}
+		w.tailnetAt(t, tn, sidecar, "target")
+	}
+	for _, gone := range []bool{false, true} {
+		t.Run(map[bool]string{false: "containers there", true: "containers gone"}[gone], func(t *testing.T) {
+			w, tn, sidecar := migrated(t)
+			if gone {
+				w.removeContainers()
+			}
+			// No route yet: asked for, nothing begun.
+			if code := w.rollback("", "--rollback"); code != 75 {
+				t.Fatalf("--rollback without a route: %d\n%s", code, w.outputs[len(w.outputs)-1])
+			}
+			still(t, w, tn, sidecar, "no route")
+			w.routeBack()
+			if code := w.rollback("", "--rollback"); code != 0 {
+				t.Fatalf("--rollback: %d\n%s", code, w.outputs[len(w.outputs)-1])
+			}
+			if out := string(w.outputs[len(w.outputs)-1]); !strings.Contains(out, "the TypeScript release's sidecar starts with it") || !strings.Contains(out, "the way back works") {
+				t.Errorf("the check:\n%s", out)
+			}
+			w.useState()
+			w.expectReverse("rolled back", rolledBackState)
+			w.tailnetAt(t, tn, sidecar, "source")
+			w.routeAway()
+			w.expectReverse("the route removed", rolledBackState)
+			w.noSecrets()
+		})
+	}
+	for _, point := range []string{"entered rollback", "rollback route checked", "rollback barrier held"} {
+		for _, how := range []string{"--resume", "--abort"} {
+			t.Run(point+", "+how, func(t *testing.T) {
+				w, tn, sidecar := migrated(t)
+				w.routeBack()
+				if code := w.rollback(point, "--rollback"); code != -1 {
+					t.Fatalf("not killed: %d\n%s", code, w.outputs[len(w.outputs)-1])
+				}
+				if code := w.rollback("", how); (how == "--abort") != (code == 0) {
+					t.Fatalf("%s: %d\n%s", how, code, w.outputs[len(w.outputs)-1])
+				}
+				w.routeAway()
+				still(t, w, tn, sidecar, how)
+				w.expect(how, "open", "open", "target-open", "migrated-out")
+				w.noSecrets()
+			})
+		}
+	}
+	t.Run("a route that does not work", func(t *testing.T) {
+		w, tn, sidecar := migrated(t)
+		w.routeBack()
+		w.flag("route-elsewhere")
+		code := w.rollback("", "--rollback", "--transfer-timeout", "3s")
+		out := string(w.outputs[len(w.outputs)-1])
+		if code != 1 || !strings.Contains(out, "did not reach the TypeScript installation") || !strings.Contains(out, "the address reaches it once the route is out of the proxy") {
+			t.Fatalf("--rollback: %d\n%s", code, out)
+		}
+		w.routeAway()
+		still(t, w, tn, sidecar, "undone")
+		w.expect("undone", "open", "open", "target-open", "migrated-out")
+	})
+	for _, gone := range []bool{false, true} {
+		for _, how := range gatesLost {
+			t.Run(fmt.Sprintf("the gate lost: %s, containers gone %v", how, gone), func(t *testing.T) {
+				w, tn, sidecar := migrated(t)
+				if gone {
+					w.removeContainers()
+				}
+				w.routeBack()
+				w.loseGate(how)
+				before := len(w.calls("docker-calls"))
+				if code := w.rollback("", "--rollback"); code != 1 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "nothing was started") {
+					t.Fatalf("--rollback: %d\n%s", code, w.outputs[len(w.outputs)-1])
+				}
+				w.startedNothing("refused", before)
+				w.routeAway()
+				still(t, w, tn, sidecar, "refused")
+			})
+		}
+	}
+	t.Run("the barrier lost before the mark", func(t *testing.T) {
+		w, _ := newTailnetWorld(t)
+		w.coolify = true
+		w.coolifyLayout()
+		if code := w.run(""); code != 75 {
+			t.Fatalf("the migration: %d\n%s", code, w.outputs[len(w.outputs)-1])
+		}
+		w.domainToGo()
+		if code := w.run("entered switched", "--resume"); code != -1 {
+			t.Fatalf("not killed: %d\n%s", code, w.outputs[len(w.outputs)-1])
+		}
+		w.removeContainers()
+		back := w.loseGate("volume")
+		before := len(w.calls("docker-calls"))
+		if code := w.run("", "--resume"); code != 1 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "is not behind the migration's barrier") {
+			t.Fatalf("--resume: %d\n%s", code, w.outputs[len(w.outputs)-1])
+		}
+		w.startedNothing("refused", before)
+		if s, _ := w.phases(); s != "switched" || sidecarRunning() || !w.stopped("varlatchd") {
+			t.Errorf("phase %s, the sidecar runs %v", s, sidecarRunning())
+		}
+		back()
+		if code := w.run("", "--resume"); code != 0 {
+			t.Fatalf("--resume, the barrier back: %d\n%s", code, w.outputs[len(w.outputs)-1])
+		}
+	})
+	t.Run("finish", func(t *testing.T) {
+		w, tn, sidecar := migrated(t)
+		given := w.extraArgs
+		w.extraArgs = nil
+		before := len(w.calls("ts-calls"))
+		code := w.runArgs("", w.finishArgs("--delete-old-data"))
+		w.extraArgs = given
+		out := string(w.outputs[len(w.outputs)-1])
+		if code != 1 || !strings.Contains(out, "would bring the old Tailscale node back") || !strings.Contains(out, "on Coolify instead: delete the TypeScript application") {
+			t.Fatalf("--finish --delete-old-data: %d\n%s", code, out)
+		}
+		for _, c := range w.calls("ts-calls")[before:] {
+			if strings.HasPrefix(c, "admin backup create") {
+				t.Errorf("an archive was begun: %q", c)
+			}
+		}
+		still(t, w, tn, sidecar, "refused")
+	})
 }

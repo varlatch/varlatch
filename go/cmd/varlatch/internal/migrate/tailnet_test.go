@@ -7,6 +7,7 @@ package migrate
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -418,6 +419,34 @@ func TestAStuckSwitchIsResumed(t *testing.T) {
 	})
 }
 
+// gatedTnSource says whether it is behind its barrier.
+type gatedTnSource struct {
+	*tnSource
+	// err is every check's after the first ones; checks counts them.
+	err            error
+	after, checks  int
+	stateErr       error
+	asked, started GateRef
+}
+
+func (s *gatedTnSource) CheckGate(_ context.Context, g GateRef) error {
+	s.asked = g
+	if s.checks++; s.err != nil && s.checks > s.after {
+		return s.err
+	}
+	return nil
+}
+func (s *gatedTnSource) CheckState(context.Context) (*VolumeRecord, error) {
+	if s.stateErr != nil {
+		return nil, s.stateErr
+	}
+	return &stateVol, nil
+}
+func (s *gatedTnSource) StartTailnetGated(ctx context.Context, g GateRef) error {
+	s.started = g
+	return s.StartTailnet(ctx)
+}
+
 // The switch's sidecar (#413's review): a start that runs the sidecar but
 // fails to restart varlatchd stops the sidecar again; a varlatchd with its
 // own network is marked without the sidecar; a varlatchd restarted with
@@ -435,6 +464,55 @@ func TestTheSwitchsSidecar(t *testing.T) {
 		w.src.halfStart = nil
 		if j, err := w.eng.Resume(ctx); err != nil || j.Phase != Open || w.src.running || w.src.gate.Kind != "migrated-out" {
 			t.Fatalf("resume: %v %+v, sidecar running %v", err, j, w.src.running)
+		}
+	})
+	t.Run("the barrier is gone", func(t *testing.T) {
+		w := newTailnetWorld(t)
+		// The barrier's own check, and the one before the switch, pass.
+		src := &gatedTnSource{tnSource: w.src, after: 2, err: errors.New("the volume holds no gate")}
+		w.eng.Source = src
+		j, err := w.eng.Run(ctx, false)
+		if err == nil || j.Phase != Switched || !errors.Is(err, src.err) || !strings.Contains(err.Error(), "--resume goes on") || w.src.running ||
+			len(afterSwitch(w.src.calls, j.Barrier.GateID)) != 0 || src.asked.ID != j.Barrier.GateID || !src.asked.Barrier || j.Source.State == nil || *j.Source.State != stateVol {
+			t.Fatalf("%v %+v, sidecar running %v, asked %+v: %q", err, j.Phase, w.src.running, src.asked, w.src.calls)
+		}
+		src.err = nil
+		if j, err := w.eng.Resume(ctx); err != nil || j.Phase != Open || w.src.running || w.src.gate.Kind != "migrated-out" || src.started.ID != j.Barrier.GateID || !src.started.Barrier {
+			t.Fatalf("resume: %v %+v, sidecar running %v", err, j, w.src.running)
+		}
+	})
+	// Where an undo is still possible it is undone: at the barrier, and at
+	// the last moment before the switch, the name back with the source.
+	for after, calls := range map[int]string{0: "export", 1: "migrated-out"} {
+		t.Run(fmt.Sprintf("the barrier is gone after %d checks", after), func(t *testing.T) {
+			w := newTailnetWorld(t)
+			src := &gatedTnSource{tnSource: w.src, after: after, err: errors.New("the volume holds no gate")}
+			w.eng.Source = src
+			j, err := w.eng.Run(ctx, false)
+			if !errors.Is(err, src.err) || j.Phase != Released || w.src.gate != nil || !w.src.running || w.names()["old"] != "vault" {
+				t.Fatalf("%v %+v, gate %v, sidecar running %v, names %v", err, j.Phase, w.src.gate, w.src.running, w.names())
+			}
+			for _, c := range w.src.calls {
+				if strings.HasPrefix(c, calls) && (after > 0 || c == "export false") {
+					t.Errorf("called %q", c)
+				}
+			}
+		})
+	}
+	// A state directory whose gate cannot be held: refused in the preflight,
+	// before the backup, the barrier and the name.
+	t.Run("the state cannot be held", func(t *testing.T) {
+		w := newTailnetWorld(t)
+		src := &gatedTnSource{tnSource: w.src, stateErr: errors.New("mounts no named volume at /var/lib/varlatch")}
+		w.eng.Source = src
+		j, err := w.eng.Run(ctx, false)
+		if !errors.Is(err, src.stateErr) || !strings.Contains(err.Error(), "preflight: ") || !strings.Contains(err.Error(), "docker compose up -d varlatchd") || !strings.Contains(err.Error(), "nothing was done") ||
+			!slices.Contains([]Phase{Started, Preflight}, j.Phase) || containsCall(w.src.calls, "backup") || containsCall(w.src.calls, "barrier") || w.src.gate != nil {
+			t.Fatalf("%v %+v: %q", err, j.Phase, w.src.calls)
+		}
+		src.stateErr = nil
+		if j, err := w.eng.Run(ctx, false); err != nil || j.Phase != Open || *j.Source.State != stateVol {
+			t.Fatalf("once it can: %v %+v", err, j.Phase)
 		}
 	})
 	t.Run("varlatchd on its own network", func(t *testing.T) {

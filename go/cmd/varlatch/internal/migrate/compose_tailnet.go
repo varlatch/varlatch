@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -79,12 +80,70 @@ func (c *Compose) StopTailnet(ctx context.Context) error {
 
 // StartTailnet starts the sidecar, then restarts varlatchd, which shares
 // its network (a restart keeps the migration's barrier, which a start
-// never clears).
+// never clears), and a running dashboard, which resolved them before.
 func (c *Compose) StartTailnet(ctx context.Context) error {
-	if err := c.compose(ctx, "docker compose start tailscale", "start", tailscaleService); err != nil {
+	made, err := c.startOwner(ctx, tailscaleService)
+	if err != nil {
 		return err
 	}
-	return c.compose(ctx, "docker compose restart varlatchd", "restart", "varlatchd")
+	if err := c.restartDaemon(ctx, made); err != nil {
+		return err
+	}
+	return c.refreshDashboard(ctx)
+}
+
+// StartTailnetGated is StartTailnet, varlatchd's container started, by its
+// id, only behind g.
+func (c *Compose) StartTailnetGated(ctx context.Context, g GateRef) error {
+	made, err := c.startOwner(ctx, tailscaleService)
+	if err != nil {
+		return err
+	}
+	if err := c.startGated(ctx, g, made); err != nil {
+		return err
+	}
+	return c.refreshDashboard(ctx)
+}
+
+// startOwner starts the service varlatchd shares its network with, without
+// its dependencies: its container, or a new one when it is gone (`docker
+// compose start` then does nothing, and exits 0). made is the latter.
+func (c *Compose) startOwner(ctx context.Context, owner string) (made bool, err error) {
+	has, err := c.hasContainer(ctx, owner)
+	if err != nil {
+		return false, err
+	}
+	if has {
+		return false, c.compose(ctx, "docker compose start "+owner, "start", owner)
+	}
+	return true, c.compose(ctx, "docker compose up -d --no-deps "+owner, "up", "-d", "--no-deps", owner)
+}
+
+// restartDaemon puts varlatchd in its network owner's network again, once
+// that started: a restart, or, when its container is gone or of an owner
+// that is (which a restart cannot join), `up --no-deps`, which makes it
+// again. Without its dependencies: the one-off varlatch-migrate refuses
+// behind a gate.
+func (c *Compose) restartDaemon(ctx context.Context, made bool) error {
+	has, err := c.hasContainer(ctx, service)
+	if err != nil {
+		return err
+	}
+	if has && !made {
+		return c.compose(ctx, "docker compose restart varlatchd", "restart", service)
+	}
+	return c.compose(ctx, "docker compose up -d --no-deps varlatchd", "up", "-d", "--no-deps", service)
+}
+
+// hasContainer is whether the service has a container, running or not.
+func (c *Compose) hasContainer(ctx context.Context, svc string) (bool, error) {
+	p, all, err := c.verified(ctx)
+	if err != nil {
+		return false, err
+	}
+	return slices.ContainsFunc(all, func(l composeContainer) bool {
+		return l.project == p.Name && l.service == svc && !l.isOneOff()
+	}), nil
 }
 
 // TailnetCertExpiry reads the sidecar's cached certificate for domain from
@@ -108,6 +167,9 @@ func (c *Compose) TailnetCertExpiry(ctx context.Context, domain string) (time.Ti
 	return leafNotAfter(r.Answer)
 }
 
+// certNameWait is how many seconds the sidecar is given to hear of its name.
+var certNameWait = 30
+
 // RenewTailnetCert asks the running sidecar for a certificate for domain
 // valid at least minValidity (tailscale cert --min-validity), written in
 // the container's temporary directory and removed there: the key never
@@ -117,7 +179,10 @@ func (c *Compose) RenewTailnetCert(ctx context.Context, domain string, minValidi
 	if !certDomain.MatchString(domain) {
 		return fmt.Errorf("%q is not a tailnet domain", domain)
 	}
-	script := fmt.Sprintf("set -e; d=$(mktemp -d); trap 'rm -rf \"$d\"' EXIT; tailscale cert --min-validity %s --cert-file \"$d/c\" --key-file \"$d/k\" %s",
+	// The node's own certificate domain first: right after a rename it may
+	// not have heard of its name, and refuses it, try after try.
+	wait := fmt.Sprintf(`i=0; until tailscale status --json --peers=false | grep -qF '"%s"'; do i=$((i+1)); [ $i -lt %d ] || { echo "the node is not named %s yet" >&2; exit 1; }; sleep 1; done; `, domain, certNameWait, domain)
+	script := fmt.Sprintf("set -e; "+wait+"d=$(mktemp -d); trap 'rm -rf \"$d\"' EXIT; tailscale cert --min-validity %s --cert-file \"$d/c\" --key-file \"$d/k\" %s",
 		minValidity.Truncate(time.Second).String(), domain)
 	r, err := c.docker(ctx, []string{"compose", "exec", "-T", tailscaleService, "sh", "-c", script}, nil)
 	if err != nil {

@@ -8,8 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"os"
 	"os/exec"
+	"slices"
 	"strings"
+	"syscall"
 )
 
 // Runner runs a program and gives back what it wrote: the sides' only way
@@ -17,6 +21,12 @@ import (
 // key, the journal), never an argument; nil gives it none.
 type Runner interface {
 	Run(ctx context.Context, dir, name string, args []string, stdin []byte) (Ran, error)
+}
+
+// EnvRunner is a Runner that also runs a program with variables added to
+// its environment (never a secret).
+type EnvRunner interface {
+	RunEnv(ctx context.Context, dir, name string, args []string, stdin []byte, env []string) (Ran, error)
 }
 
 // Streamer is a Runner that also runs a program on streams, for what is
@@ -84,11 +94,51 @@ type Owner struct {
 	UID, GID uint32
 }
 
+// StartError is a program that could not be started.
+type StartError struct {
+	Name string
+	Err  error
+}
+
+func (e *StartError) Error() string { return fmt.Sprintf("%s could not be started: %v", e.Name, e.Err) }
+func (e *StartError) Unwrap() error { return e.Err }
+
+// permanent is a failure that waiting does not change: a program that is
+// not there, not to be executed or not executable, or an installation that
+// is another's now. A network's failure is never one.
+func permanent(err error) bool {
+	var start *StartError
+	if errors.As(err, &start) {
+		return errors.Is(start.Err, fs.ErrNotExist) || errors.Is(start.Err, fs.ErrPermission) || errors.Is(start.Err, syscall.ENOEXEC) || errors.Is(start.Err, exec.ErrNotFound) || errors.Is(start.Err, exec.ErrDot)
+	}
+	var changed *ProjectChangedError
+	return errors.As(err, &changed)
+}
+
+// userDir is the directory a program that runs as another user is run in:
+// not this process's own, which that user may not pass through.
+func (x ExecRunner) userDir(dir string) string {
+	if dir == "" && x.As != nil {
+		return "/"
+	}
+	return dir
+}
+
+// RunEnv is Run with env added to the programs' environment.
+func (x ExecRunner) RunEnv(ctx context.Context, dir, name string, args []string, stdin []byte, env []string) (Ran, error) {
+	base := x.Env
+	if base == nil {
+		base = os.Environ()
+	}
+	x.Env = append(slices.Clone(base), env...)
+	return x.Run(ctx, dir, name, args, stdin)
+}
+
 // Run runs name with args in dir. A program that could not be started is
 // the error; one that ran and failed is its Ran's Code.
 func (x ExecRunner) Run(ctx context.Context, dir, name string, args []string, stdin []byte) (Ran, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Dir = dir
+	cmd.Dir = x.userDir(dir)
 	cmd.Env = x.Env
 	if x.As != nil {
 		if err := runAs(cmd, *x.As); err != nil {
@@ -107,7 +157,7 @@ func (x ExecRunner) Run(ctx context.Context, dir, name string, args []string, st
 		return Ran{}, err
 	}
 	if err := cmd.Start(); err != nil {
-		return Ran{}, fmt.Errorf("%s could not be started: %w", name, err)
+		return Ran{}, &StartError{Name: name, Err: err}
 	}
 	done := make(chan []byte, 1)
 	go func() {
@@ -139,7 +189,7 @@ func (x ExecRunner) Run(ctx context.Context, dir, name string, args []string, st
 // nobody reads.
 func (x ExecRunner) Stream(ctx context.Context, dir, name string, args []string, in io.Reader, out io.Writer) (Ran, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Dir = dir
+	cmd.Dir = x.userDir(dir)
 	cmd.Env = x.Env
 	if x.As != nil {
 		if err := runAs(cmd, *x.As); err != nil {
@@ -156,7 +206,7 @@ func (x ExecRunner) Stream(ctx context.Context, dir, name string, args []string,
 		return Ran{}, err
 	}
 	if err := cmd.Start(); err != nil {
-		return Ran{}, fmt.Errorf("%s could not be started: %w", name, err)
+		return Ran{}, &StartError{Name: name, Err: err}
 	}
 	said := &tail{n: saidLimit}
 	saidDone := make(chan struct{})
