@@ -80,6 +80,10 @@ The Environment-specific content of a Config Item. All Values, sensitive or not,
 A Config Item whose effective Contract metadata marks it sensitive. `secret.reveal`/`secret.use` policy language applies to Secrets; non-sensitive Config Items stay boring.
 _Avoid_: calling every configuration value a secret
 
+**One-time Code**:
+The short code (TOTP, RFC 6238) an item gives when its Value is a *Seed*: the secret an issuer shares once, as an `otpauth://` URI, from which codes are made. Such an item is always a Secret and is used like one, but use yields the code of the moment, never the Seed: exercising a Capability gives it, every path that delivers Values leaves the item out, and only a Reveal that asks for Seeds discloses one. The issuer and account in the URI are metadata. A code is a bearer secret until its period ends; a *fresh* one is one this Installation has not given before.
+_Avoid_: 2FA token (ambiguous with credentials), OTP secret (say Seed)
+
 **Value Reference**:
 A `${NAME}` token inside a Value that reuses another Config Item's Value from the same Effective Configuration. Expanded strictly server-side and never authority-expanding: read paths leave what the caller may not read literal, while capability exercise resolves every reference or denies. `$${NAME}` escapes to literal text.
 _Avoid_: interpolation, templating (suggests a general expression language; it is name substitution only)

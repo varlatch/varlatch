@@ -181,6 +181,9 @@ release. CI routes by path: `.github/workflows/go.yml` checks `go/`, and
   their names for it (`lib/sync/json.go`). `testdata/ts-vectors.json` holds
   what Node.js makes of a set of JSON texts (written by
   `apps/cli/test/go-vectors-framework.test.ts`).
+- `lib/totp/`: one-time codes (RFC 6238; ADR-0061): the seed in an
+  `otpauth://` URI, parsed and normalized, and a step's code. Its tests pin
+  the vectors of RFC 6238's appendix B and RFC 4226's appendix D.
 - `lib/whatwg/`: what the TypeScript code gets from Node.js's URL
   parser, `url.domainToASCII`, `net.isIP` and string functions, as far as
   audit redaction, Destination Selectors and url Config Items use them. Domain to ASCII is
@@ -1031,6 +1034,7 @@ it to the recording.
 | Runtime error wording: the code in `Cannot reach the Varlatch server (<code>)` | the first code in the `fetch failed` error's causes that `exitCodes.ts` names, else "network error" | the same codes from Go's errors: refused, reset, timed out, unreachable host or network by their errno; NXDOMAIN `ENOTFOUND`; a temporary DNS failure `EAI_AGAIN`; a connect or TLS handshake timeout `UND_ERR_CONNECT_TIMEOUT`; a connection closed before the answer `UND_ERR_SOCKET`; anything else "network error" | Decision 2: the exit status (69) is the same; the code is Node.js's own wording, mapped where Go can tell |
 | Request headers decision 2 does not compare | `accept-language: *`, `sec-fetch-mode: cors`, `accept-encoding: gzip, deflate` | none of the first two; `accept-encoding: gzip` (Go decompresses it) | Neither the server nor any consumer reads them |
 | `self-update` (slice 6.7a of internal docs/design/go-step6.md) | replaces its `.cjs` with `varlatch-cli-<version>.cjs`; the newest release is GitHub's latest; the signature is checked only when cosign is installed and the release carries one, and `--allow-unverified` (with `--yes`) installs without it; `--repo` and `VARLATCH_RELEASE_REPO` choose another repository | replaces its own binary with the release's `varlatch-<version>-<os>-<arch>[.exe]`, always verifying SHA256SUMS's signature with the embedded verifier first (`--allow-unverified` changes nothing); the newest release is the newest of the Go line (0.50.0 or later), a prerelease only from a prerelease or with `--prerelease`; an older release only with `--allow-downgrade` (64 otherwise); `--repo` and `VARLATCH_RELEASE_REPO` other than `varlatch/varlatch` are refused (64); a Homebrew or winget copy is refused (1) with that package manager's command; `--check --json` reports `install` as `release`, `homebrew` or `winget`; 69 when GitHub cannot be reached, 1 for a release that does not verify | Decision 11: the Go CLI is a native binary from the Go line's releases, and fails closed (Decision 8). Pinned by `internal/selfupdate`'s tests and `TestSelfUpdateReplacesItself`, `TestSelfUpdateRefuses` |
+| `values-totp` (ADR-0061) | `values set` and `values rotate` have no `--totp` ("unknown option") | `--totp` takes the seed of one-time codes from a hidden prompt, `--stdin` or `--from-file`, never from the command line nor `--generate`, and sends it as `otpauth`; only a command line with `--totp` prints a usage that names it. `values list` names an item that holds a seed (`one-time code, issuer …, account …`, `totp` in `--json`), `run` says one is not delivered, and a strict run's violation says why | Go only. Pinned by `TestValuesSetTOTP`, `TestValuesSetTOTPRefuses`, `TestASeedIsListedAndNotDelivered` |
 | `self-update-usage` | `varlatch help self-update`, `self-update --help` and `self-update -h` print the TypeScript CLI's form | the Go CLI's: `[<version>] [--check [--json]] [--yes] [--prerelease] [--allow-downgrade]`, with what it checks; `varlatch --help` has it too (`host-usage`) | `self-update`. Transcript cases `help.self-update`, `help.self-update.option` and `help.self-update.short` name it; pinned by `TestHelpIsTheUsageText` |
 | `host-usage` | `varlatch`, `--help`, `-h`, `help`, and an unknown command print the whole usage with a Compose installation's host commands (`admin` with `--dir`, `setup`, `adopt`, `move`, `doctor`, `self-update`, `upgrade`) | the same text, its title without the dash, with a Go installation's in their place (`setup`, `move`, `doctor`, `admin`; `self-update`, `upgrade`, `migrate`), as each command's own help prints them, without `adopt`, and with `tailnet repin`; `varlatch help migrate` prints `migrate`'s | A release whose help names commands it refuses, and not the ones it has, sends people to the wrong ones (the audit of 2026-11-24). Transcript cases of area 5.1a name it; the text is made from the TypeScript one (`hostUsage`), and `TestUsageIsAGoInstallations` holds the rest to it |
 | `tailnet-usage` | `varlatch help tailnet`, `tailnet --help` and `tailnet -h` print `require`, `requirements` and `remove` | the same, and `repin` | Only the Go CLI has `tailnet repin`. Transcript cases `help.tailnet`, `help.tailnet.option` and `help.tailnet.short` name it |
@@ -1901,6 +1905,35 @@ may use; it never adds to the Agent's Grants.
     gives the use back, never touching `revoked_at`; any other failure leaves
     it spent. An older server matches no secret against any prefixed hash.
   - `server/capabilities` `delegation_test.go` covers all of it over HTTP.
+- **One-time codes** (ADR-0061, `server/values/seeds.go`, `lib/totp`; Go
+  only, capability `values.totp`).
+  - `lib/totp` (Apache-2.0) reads an `otpauth://` URI, normalizes it and makes
+    the code of a step; its errors are fixed texts, and a `Seed` formats as
+    `totp.Seed(hidden)`.
+  - A seed is a `value_versions` row: the normalized URI sealed under the
+    version's DEK for a seed's purpose (`totp-seed`, with what may be read of
+    it in the associated data), that envelope sealed as a value is, and a
+    member `totp` beside the outer envelope's in `payload`: the readable part.
+    Opened as a value by anyone, it is an envelope, not the seed. Its `env_values` row has `current_version_id` **and**
+    `deleted_at`, which nothing else leaves: a server that does not know
+    seeds reads it as deleted, in every path. The outer sealing is a value's
+    on purpose: the TypeScript export opens every stored version and refuses
+    as a whole when one does not open, so a purpose of its own there would
+    end reverse migrations.
+  - A retrieval resolves seeds apart (`State.Codes`, never `State.Items`),
+    so a path that delivers values has none to deliver, and `decrypt` and
+    `OpenForSync` refuse a version whose payload says it is a seed. Only an
+    exercise and a disclosure with `totpSeeds` open one (`openSeeds`).
+  - Written with `otpauth` in `value`'s place, so an older server refuses the
+    body. `value` and `otpauth` exclude each other; a value is refused where a
+    seed is, a seed for an item the Contract marks not sensitive, and a
+    rotation between the two.
+  - Which step's code is given is decided in `capability.exercised`'s own job
+    (`giveCodes`) and recorded in `one_time_codes_given` (schema version 3),
+    so two exercises that ask for a fresh code never get the same. The
+    current step or the next one, never later; nothing waits. Rows are kept
+    an hour past their step's end and pruned by later exercises.
+  - `server/capabilities` `totp_test.go` covers every path over HTTP.
 - **Parity.** `capabilities-v0.22.0.json`
   (go-capabilities-fixture.test.ts) replays 154 requests: issuance in
   every form and refusal (every target rule, every zod issue, the

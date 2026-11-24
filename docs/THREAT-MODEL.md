@@ -105,6 +105,9 @@ replay or a suite named here does not exist.
 | A Capability issued for another Broker (Go server) widens nothing: issuing needs an explicit `capability.issue` Grant in scope (no built-in role holds it; it counts for service, workload, ci and broker identities only), the named identity must be a live Broker of the same Organization, only that Broker can exercise it, the Agent's `secret.use` is still evaluated at exercise, and so is the issuer's `capability.issue`; callers without the right are told `Not found`. Issuer and Broker are both in the audit events | **SHIPPED GUARANTEE** | `server/capabilities.TestIssueForAnotherBroker`, `server/capabilities.TestIssuingForAnotherWidensNothing`, `server/capabilities.TestWhoMayNotIssueForAnother`, `server/capabilities.TestTheIssuersRightIsEvaluatedAtExercise`, `server/capabilities.TestRevokeOfRetiredEndsAnIssuersCapability`, `server/capabilities.TestListAndRevokeWhatWasIssued` |
 | An exercise-only credential (Go server) exercises Capabilities issued for its Broker, of its run when its binding names one, and is refused every other `/v1` operation, reads included: one check at authentication lets through one route pattern, so a route added later refuses it too | **SHIPPED GUARANTEE** | `server/capabilities.TestEveryOtherOperationRefusesAnExerciseOnlyCredential` (every operation), `server/capabilities.TestExerciseOnlyCredential`, `server/capabilities.TestRunIDClaim` |
 | A token exchanged under a binding with `singleExchange` (always on for exercise-only bindings) is exchanged once, across restarts and concurrent requests; a single-use Capability is exercised once, likewise | **SHIPPED GUARANTEE** | `server/capabilities.TestATokenIsExchangedOnce`, `server/capabilities.TestATokenIsExchangedOnceUnderConcurrency`, `server/capabilities.TestSingleUse`, `server/capabilities.TestSingleUseUnderConcurrency`, `server/capabilities.TestARevocationHoldsThroughARefusedSingleUse` |
+| A seed of one-time codes (Go server) is delivered by no path but an explicit disclosure that names its item and asks for seeds (`secret.reveal`, audited): retrievals, runs, effective configuration, bulk and named disclosures, exports, scans, sync targets, references, search, events, audit and logs leave it out, and a version marked as a seed is refused by the code that opens values | **SHIPPED GUARANTEE** | `server/capabilities.TestNoOtherPathDeliversASeed`, `server/capabilities.TestNoOperationAnswersWithASeed` (every GET and POST), `server/capabilities.TestASeedAndTheContract`, `server/capabilities.TestTamperedSeedsFailClosed`; `server/syncs.TestSeedsAreNeverPushed`; `cmd/varlatch/internal/cli.TestASeedIsListedAndNotDelivered`, `cmd/varlatch/internal/cli.TestValuesSetTOTP`; `apps/web` `oneTimeCodes.test.tsx` |
+| A code asked for as `fresh` is of a period for which this server gave none under the stored seed, across restarts and concurrent requests, until the seed is written again or a backup restored | **SHIPPED GUARANTEE** | `server/capabilities.TestFresh`, `server/capabilities.TestFreshUnderConcurrency` |
+| On a server that does not know seeds (an earlier release after a rollback, the TypeScript server after a reverse migration) an item that holds one has no value, and a write meant as a seed is refused, never stored as a value | **SHIPPED GUARANTEE** | `server/capabilities.TestAnOlderServerReadsNoSeed`; `server/migration/check.TestTheReverseChecksWithSeeds` |
 | These limits fail closed on a server that does not know them (an earlier release after a rollback, the TypeScript server after a reverse migration): it accepts neither the credential, nor an exchange under the binding, nor the Capability | **SHIPPED GUARANTEE** | `server/capabilities.TestLimitsFailClosedOnAnOlderServer`; `server/migration/check.TestTheReverseChecksWithLimits` |
 | Reference expansion at exercise is strict and capability-bound: referenced Secrets must be named in the Capability, non-sensitive pull-ins require the Agent's `config.value.read` and are audited before use, and any unresolvable reference denies the exercise rather than sending literal `${NAME}` upstream | **SHIPPED GUARANTEE** | replay `capabilities`; `server/values.TestExpandReferences`; suite `broker` |
 | Destination constraints are canonical host+port; wildcards never match the apex; every hop is independently checked and successful exercise is audited (host+port + `item@versionId`) before decryption | **SHIPPED GUARANTEE** | `server/authz.TestDestinationVectors`; replay `capabilities`; suite `broker` |
@@ -229,6 +232,47 @@ And the honest limits, stated with the same discipline:
   Agent. Start agent-safe runs from a clean environment.
 - **Plain `varlatch run` (without `--agent-safe`) still injects plaintext**
   into the child environment (§5); agent safety is opt-in per run.
+
+**One-time codes** (TOTP seeds; the Go server) put a second factor behind the
+same boundary as the first, and change what it proves: a sign-in whose
+password and code both come from Varlatch rests on Varlatch alone. The
+limits:
+
+- **A code is a bearer secret** for its period (30 or 60 seconds), and for as
+  long as the site accepts late ones. Asked for ahead (`minValiditySeconds`,
+  `fresh`), the next period's code is out up to one period early, never
+  earlier. Varlatch cannot see whether a code was used, nor take one back.
+- **A compromised broker machine** can get a code for every live Capability
+  it was given the secret of, as often as the Capability allows, and with a
+  password from the same Capability it can sign in. It never gets the seed,
+  so it cannot make codes once the Capability is revoked or expired.
+  Single-use Capabilities per job keep that to one sign-in. Exercising often
+  enough it can also use up the codes `fresh` has left, so others are told to
+  retry.
+- **A compromised orchestrator** can issue Capabilities for seeds as for any
+  item (above), and gets neither codes nor seeds itself.
+- **Whoever holds `secret.reveal`** in the environment can disclose the seed,
+  audited, and then makes codes anywhere until it is replaced at the issuer.
+  Where a person should not be able to, do not grant it there: a role that
+  uses Secrets does not need it.
+- **A stolen database** holds the seed encrypted under the installation's
+  Root KEK, as every value, and the issuer and account in plaintext, as item
+  names. With the Root KEK, or a stolen backup archive with its key and the
+  Root KEK, every seed in it can be read: replace the seeds at their issuers,
+  as any value. A code in itself is nowhere stored.
+- **A changed database row** gives no seed: what is sealed as the value is
+  another envelope, for a seed's purpose, so a row made to look like a value
+  opens to that envelope; and a seed whose readable part was changed gives
+  no code.
+  Like every value, a whole version can be replaced by an older one of the
+  same item by whoever can write the database.
+- **The issuer** knows the seed. A leak there is outside Varlatch; so is a
+  copy on a phone, whose codes `fresh` does not know of.
+- **`fresh` is this installation's memory**, per stored seed: it survives a
+  restart, not a restored backup (codes given since it, at most two periods'
+  worth, can be given once more), nor writing the seed again.
+- **Response scrubbing does not cover codes**: they are shorter than the 8
+  bytes it needs.
 
 A setup where an orchestrator issues Capabilities for brokers on other
 machines (`capability.issue`, exercise-only OIDC bindings; the Go server)

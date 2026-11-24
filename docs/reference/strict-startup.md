@@ -48,6 +48,8 @@ For each Contract item, the first rule that applies decides:
 - **Every value the command will receive is validated exactly as it will
   receive it**, whether it was delivered, inherited, or a default, using the
   Contract's semantics version. An invalid value is a violation.
+- **A [one-time code](one-time-codes.md) is always withheld**, since its seed
+  is delivered to nobody. Make such an item optional in the Contract.
 - **A Contract default never replaces a withheld value.** The real value
   exists; a default could silently change behaviour.
 - **`--allow-inherited NAME`** lets one named Contract item take its value

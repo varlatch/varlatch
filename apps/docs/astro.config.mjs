@@ -63,6 +63,7 @@ export default defineConfig({
             { label: "Members and access", slug: "reference/members" },
             { label: "Passkeys and sessions", slug: "reference/passkeys-and-sessions" },
             { label: "CI and other machines", slug: "reference/ci-and-machines" },
+            { label: "One-time codes", slug: "reference/one-time-codes" },
             { label: "Integrations (GitHub, Coolify, Convex)", slug: "reference/integrations" },
             { label: "Checking sync drift", slug: "reference/sync-check" },
             { label: "Scripting the CLI", slug: "reference/scripting" },

@@ -354,6 +354,7 @@ varlatch values set TLS_KEY --from-file key.pem        # a file's content
 op read op://vault/item/key | varlatch values set API_KEY --stdin
 varlatch values set API_KEY                            # in a terminal: a hidden prompt
 varlatch values rotate API_KEY --stdin --grace 3600 < new-key.txt
+varlatch values set PORTAL_OTP --totp                  # the seed of a one-time code: prompt, --stdin or --from-file
 op read op://vault/varlatch/token | varlatch login --server https://varlatch.example.com --token-stdin
 ```
 

@@ -39,6 +39,33 @@ fixes.
     on an earlier release, as after a reverse migration to 0.23, an
     exercise-only credential, a limited binding, a delegated Capability and a
     single-use Capability are refused, never unlimited.
+- **One-time codes (TOTP) from a stored seed (#417, the Go server only).** An
+  item can hold the seed of one-time codes, given as an `otpauth://` URI;
+  exercising a Capability that names it gives the code and how long it is
+  valid, never the seed. Existing calls are unchanged; `/v1/meta` lists
+  `values.totp`. [One-time codes](docs/reference/one-time-codes.md) shows the
+  calls.
+  - `otpauth` goes where `value` would, when setting a value, in a change set
+    and when starting a rotation (which then gives the codes of both seeds):
+    an earlier server refuses the request. `value` is no longer a required
+    member of those requests in the document; one of the two is.
+  - An exercise takes `minValiditySeconds` (else the next code, with its
+    start) and `fresh` (a code not given before, else 429), and its items
+    carry `kind`, `expiresAt`, `expiresInSeconds`, `notBefore` and
+    `startsInSeconds` for a code.
+  - No retrieval, run, export, scan, integration or reference delivers a
+    seed. Items that hold one are listed with `totp` (issuer, account,
+    digits, period, algorithm). A disclosure that names one and says
+    `totpSeeds` discloses it to whoever holds `secret.reveal`, audited.
+  - `callerView.withheld` gains the reason `one-time-code` with `requires:
+    secret.use` (strict retrieval): both were closed enums, so a client
+    generated from the earlier document that rejects unknown values needs
+    regenerating.
+  - `varlatch values set` and `values rotate` take `--totp`; the dashboard
+    adds, replaces and reveals seeds.
+  - The database schema is version 5 (one new table). On an earlier
+    release, as after a reverse migration to 0.23, an item that holds a seed
+    has no value.
 
 ### Server
 

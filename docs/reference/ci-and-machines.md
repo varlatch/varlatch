@@ -173,6 +173,10 @@ unlimited one after a rollback), no token of that issuer exchanges as that
 identity (`mixed-bindings` in the audit log) until the bindings of one kind
 are revoked.
 
+A machine that has to pass a site's two-factor sign-in gets the code the same
+way: the Capability names an item that holds a
+[one-time code](one-time-codes.md)'s seed, and the exercise gives the code.
+
 `singleExchange` on its own, without `exerciseOnly`, makes each token of an
 ordinary binding exchange once. It is off by default: a CI job that runs
 `varlatch login --oidc` more than once with one token needs it off.
