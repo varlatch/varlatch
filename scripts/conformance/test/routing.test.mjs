@@ -213,7 +213,11 @@ test("go-image's patterns select every file the image's build and check read, an
   for (const f of readFileSync(join(REPO, "go/image/check-image.mjs"), "utf8").matchAll(/from "(\.{1,2}\/[^"]+)"/g)) {
     files.push(relative(REPO, resolve(REPO, "go/image", f[1])).split("\\").join("/"));
   }
-  for (const dir of [...goClosure("lib/keyenv"), "server/config", "server/daemon", "cmd/varlatchd"]) files.push(...goFiles(dir));
+  // And the repository's files it names by path (its COMPOSE).
+  const compose = /^const COMPOSE = "([^"]+)";$/m.exec(readFileSync(join(REPO, "go/image/check-image.mjs"), "utf8"));
+  assert.ok(compose, "check-image.mjs names the Compose file it runs");
+  files.push(compose[1]);
+  for (const dir of [...goClosure("lib/keyenv"), "lib/storage", "server/config", "server/daemon", "cmd/varlatchd"]) files.push(...goFiles(dir));
   files.push("go/cmd/varlatch/main.go");
   const unselected = files.filter((f) => !selects(IMAGE_PATTERNS, f)).sort();
   assert.deepEqual(unselected, [], `files go-image reads that do not select it:\n${unselected.join("\n")}`);

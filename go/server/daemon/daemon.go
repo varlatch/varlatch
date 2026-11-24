@@ -254,6 +254,14 @@ func serve(opts Options, h *hooks) int {
 		return fail(ExitFailure, "the data directory changed while varlatchd took its lock", "error", err)
 	}
 
+	// Before SQLite is first used: without a place for its temporary files
+	// the first larger write would fail, in a varlatchd that looks healthy.
+	temp, err := storage.PrepareTemp(cfg.DataDir)
+	if err != nil {
+		return fail(ExitFailure, "varlatchd does not start: "+err.Error())
+	}
+	log.Info("SQLite's temporary files", "dir", temp)
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	// The dashboard's live updates: woken by every commit (ADR-0059
