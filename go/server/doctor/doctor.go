@@ -28,6 +28,7 @@ import (
 	"io/fs"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -234,6 +235,9 @@ func Run(ctx context.Context, in Inputs) Report {
 	if cfg.Tailnet != nil {
 		add(tailnetPin(in.Live))
 		add(tailnetControl(in))
+	}
+	if c, held := restoreHold(in); held {
+		add(c)
 	}
 	add(backupsStatus(in))
 	add(custodyCheck(in))
@@ -750,6 +754,27 @@ func backupsStatus(in Inputs) Check {
 	}
 	c.Status, c.Detail = Pass, "no archive yet"
 	return c
+}
+
+// restoreHold is the restore's hold, when one stands (backup.Hold): read
+// from the data directory, so doctor says so with varlatchd stopped too. A
+// directory this user cannot read says nothing.
+func restoreHold(in Inputs) (Check, bool) {
+	if _, err := in.Stat(filepath.Join(in.Config.DataDir, backup.HoldFile)); err != nil {
+		return Check{}, false
+	}
+	c := Check{ID: "restore.hold", Title: "Restored, not resumed yet", Status: Fail, Class: Advisory,
+		Remedy: "Put right what changed since the archive was made (revoked credentials, removed people, rotated values, cancelled deletions), then run `varlatchd admin restore resume`"}
+	const off = "no sync, webhook, audit export or organization deletion runs"
+	switch h, err := backup.ReadHold(in.Config.DataDir); {
+	case err != nil:
+		c.Detail = "the restore hold cannot be read, so the installation stays held: " + off
+	case h == nil:
+		return Check{}, false
+	default:
+		c.Detail = fmt.Sprintf("restored from the archive %s at %s and held: %s", h.ArchiveID, h.RestoredAt, off)
+	}
+	return c, true
 }
 
 func custodyCheck(in Inputs) Check {

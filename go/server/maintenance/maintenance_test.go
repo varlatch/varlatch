@@ -141,6 +141,96 @@ func TestUnreadableAndRestoreGates(t *testing.T) {
 	}
 }
 
+// A restore's hold (backup.Hold): requests are admitted, background work
+// that leaves the host or destroys is not, and no migration barrier opens;
+// a restart stays held; Resume records first, then ends it; a hold that
+// cannot be read holds, and can be ended.
+func TestRestoreHold(t *testing.T) {
+	dir := t.TempDir()
+	a := Open(dir, nil)
+	if a.Held() {
+		t.Fatal("held without a hold")
+	}
+	if leave, ok := a.EnterWork(); !ok || a.Busy() != 1 {
+		t.Fatal("work not admitted")
+	} else {
+		leave()
+	}
+	if err := a.Resume(func(*backup.Hold) error { t.Error("recorded"); return nil }); !errors.Is(err, ErrNotHeld) {
+		t.Errorf("resume without a hold: %v", err)
+	}
+	if err := backup.WriteHold(dir, backup.Hold{ArchiveID: "archive-1", RestoredAt: "2026-11-24T08:00:00.000Z"}); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 { // a restart stays held
+		a = Open(dir, nil)
+		if _, ok := a.EnterWork(); ok || a.Busy() != 0 || !a.Held() {
+			t.Fatal("work admitted while held")
+		}
+		if leave, ok := a.Enter(); !ok {
+			t.Fatal("a request refused while held")
+		} else {
+			leave()
+		}
+		if h, err := a.Hold(); err != nil || h.ArchiveID != "archive-1" {
+			t.Errorf("%+v %v", h, err)
+		}
+		if _, err := a.BeginBarrier("mig_aaaaaaaaaaaaaaaaaaaaaaaaaa"); !errors.Is(err, ErrHeld) {
+			t.Errorf("a barrier while held: %v", err)
+		}
+	}
+	// A maintenance lease and the hold each stand on their own.
+	g, err := a.Begin(time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := a.Enter(); ok {
+		t.Error("admitted under a lease")
+	}
+	if err := a.End(g.ID); err != nil || !a.Held() {
+		t.Errorf("the lease's end: %v, held %v", err, a.Held())
+	}
+	// Not recorded, not resumed.
+	failed := errors.New("no event")
+	if err := a.Resume(func(*backup.Hold) error { return failed }); !errors.Is(err, failed) || !a.Held() || !Open(dir, nil).Held() {
+		t.Errorf("a resume whose event failed: %v, held %v", err, a.Held())
+	}
+	recorded := ""
+	if err := a.Resume(func(h *backup.Hold) error {
+		recorded = h.ArchiveID
+		if !a.Held() {
+			t.Error("resumed before the event")
+		}
+		return nil
+	}); err != nil || recorded != "archive-1" || a.Held() || Open(dir, nil).Held() {
+		t.Errorf("resume: %v, %q, held %v", err, recorded, a.Held())
+	}
+	if leave, ok := a.EnterWork(); !ok {
+		t.Error("work refused once resumed")
+	} else {
+		leave()
+	}
+	// Unreadable: held, and resumable.
+	if err := os.WriteFile(filepath.Join(dir, backup.HoldFile), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a = Open(dir, nil)
+	if _, ok := a.EnterWork(); ok {
+		t.Error("work admitted behind an unreadable hold")
+	}
+	if _, err := a.Hold(); !errors.Is(err, backup.ErrHoldUnreadable) {
+		t.Errorf("an unreadable hold: %v", err)
+	}
+	if err := a.Resume(func(h *backup.Hold) error {
+		if h != nil {
+			t.Errorf("%+v", h)
+		}
+		return nil
+	}); err != nil || Open(dir, nil).Held() {
+		t.Errorf("resume of an unreadable hold: %v", err)
+	}
+}
+
 // The reverse migration's barrier (go-step7 decision 6, Go's half): opened
 // draining, nothing admitted from then but what ran; the same migration's
 // barrier continued, another gate refused; paused with its frozen point;

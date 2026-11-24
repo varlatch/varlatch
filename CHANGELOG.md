@@ -159,6 +159,17 @@ fixes.
 
 ### Server
 
+- **A restored installation is held until you resume it.** An archive brings
+  back what was changed since it was made: a deletion cancelled since, a
+  webhook removed since, an old value. After every restore (`varlatch setup
+  --restore`, `varlatch admin backup restore`, in the image too) `varlatchd`
+  serves, but runs no sync, webhook, audit export or organization deletion,
+  and removes no local backup, until `varlatch admin restore resume`
+  (audited as `installation.restore_resumed`). `varlatch admin restore
+  status`, `varlatch doctor`, `/readyz` (`"held":true`) and the log say so.
+  `varlatch upgrade` and a migration's rollback are refused until then.
+  People and credentials in the archive can still read: keep clients away
+  until you put right what changed.
 - **A stop during a certificate issuance ends `varlatchd`.** With
   `listen_https`, the Go server kept trying again without end after a stop
   interrupted an issuance or a renewal, until it was killed (after the 30

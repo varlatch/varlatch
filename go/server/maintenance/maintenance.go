@@ -41,6 +41,10 @@ type Admission struct {
 	// admitted until an operator repairs it.
 	unreadable bool
 	busy       int
+	// hold: a restore's hold stands (backup.Hold), or one that cannot be
+	// read (holdUnreadable), until Resume.
+	hold           *backup.Hold
+	holdUnreadable bool
 }
 
 // Open reads the gate in dir, the data directory.
@@ -51,6 +55,8 @@ func Open(dir string, now func() time.Time) *Admission {
 	a := &Admission{dir: dir, now: now}
 	g, err := backup.ReadGate(dir)
 	a.gate, a.unreadable = g, err != nil
+	h, err := backup.ReadHold(dir)
+	a.hold, a.holdUnreadable = h, err != nil
 	return a
 }
 
@@ -75,6 +81,11 @@ func (a *Admission) Isolated() bool {
 func (a *Admission) Enter() (leave func(), ok bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	return a.enter()
+}
+
+// enter is Enter, under the lock.
+func (a *Admission) enter() (leave func(), ok bool) {
 	if a.unreadable || a.active() != nil {
 		return nil, false
 	}
@@ -143,6 +154,9 @@ func (a *Admission) BeginBarrier(id string) (backup.Gate, error) {
 			return *g, nil
 		}
 		return backup.Gate{}, ErrBarrier
+	}
+	if a.held() {
+		return backup.Gate{}, ErrHeld
 	}
 	// A lease that expired while varlatchd was stopped.
 	if err := os.Remove(filepath.Join(a.dir, backup.GateFile)); err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -267,5 +281,68 @@ func (a *Admission) End(id string) error {
 		return err
 	}
 	a.gate = nil
+	return nil
+}
+
+// The restore hold (backup.Hold). Requests and host commands are admitted
+// while it stands; background work that leaves the host or destroys is not.
+
+// ErrHeld refuses what a held installation must not do.
+var ErrHeld = errors.New("the installation was restored from an archive and is held: put right what changed since, then run `varlatchd admin restore resume`")
+
+// ErrNotHeld is Resume's answer on an installation that is not held.
+var ErrNotHeld = errors.New("the installation is not held: there is nothing to resume")
+
+func (a *Admission) held() bool { return a.hold != nil || a.holdUnreadable }
+
+// Held is whether a restore's hold stands.
+func (a *Admission) Held() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.held()
+}
+
+// Hold is the hold that stands: nil when there is none,
+// backup.ErrHoldUnreadable for one that cannot be read.
+func (a *Admission) Hold() (*backup.Hold, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.holdUnreadable {
+		return nil, backup.ErrHoldUnreadable
+	}
+	if a.hold == nil {
+		return nil, nil
+	}
+	h := *a.hold
+	return &h, nil
+}
+
+// EnterWork is Enter for background work that leaves the host or destroys:
+// refused while a restore's hold stands.
+func (a *Admission) EnterWork() (leave func(), ok bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.held() {
+		return nil, false
+	}
+	return a.enter()
+}
+
+// Resume ends the hold, once record (its audit event) has committed: killed
+// in between, the hold stands and Resume again records and ends it.
+func (a *Admission) Resume(record func(*backup.Hold) error) error {
+	h, err := a.Hold()
+	if h == nil && err == nil {
+		return ErrNotHeld
+	}
+	if err := record(h); err != nil {
+		return err
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if err := backup.RemoveHold(a.dir); err != nil {
+		return err
+	}
+	a.hold, a.holdUnreadable = nil, false
 	return nil
 }

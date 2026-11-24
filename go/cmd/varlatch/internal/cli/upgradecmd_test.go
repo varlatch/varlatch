@@ -23,6 +23,7 @@ import (
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/selfupdate"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/selfupdate/fakerelease"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/upgrade"
+	"github.com/varlatch/varlatch/go/lib/backup"
 	"github.com/varlatch/varlatch/go/lib/release"
 )
 
@@ -118,6 +119,16 @@ func TestUpgradeCommandOnAHost(t *testing.T) {
 	// Not rollback-safe: refused without --accept-not-rollback-safe.
 	h := newCLIHost(t, from)
 	publish(unsafe, release.Declaration{SchemaVersion: toSchema, CompatibleFrom: toSchema, Previous: prev, ReversibleTo: &reversible})
+	// Held after a restore: refused before anything is fetched.
+	if err := backup.WriteHold(h.data, backup.Hold{ArchiveID: "a", RestoredAt: "t"}); err != nil {
+		t.Fatal(err)
+	}
+	if code, out, errs := runUpgrade(t, MapEnv{"PATH": h.bin}, "--yes", "--accept-not-rollback-safe", "--config", h.conf); code != ExitFailure || out != "" || !strings.Contains(errs, "run varlatch admin restore resume, then upgrade. Nothing was changed.") {
+		t.Fatalf("held: %d %q %q", code, out, errs)
+	}
+	if err := backup.RemoveHold(h.data); err != nil {
+		t.Fatal(err)
+	}
 	code, out, errs := runUpgrade(t, MapEnv{"PATH": h.bin}, "--yes", "--config", h.conf)
 	if code != ExitFailure || !strings.Contains(out, "rollback:  NOT safe") || !strings.Contains(errs, "pass --accept-not-rollback-safe") {
 		t.Fatalf("not rollback-safe: %d %q %q", code, out, errs)

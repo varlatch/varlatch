@@ -37,6 +37,8 @@ const adminUsage = `Usage:
   varlatch admin backup status
   varlatch admin backup test-bucket [--json]
   varlatch admin backup restore --in <archive> [--backup-key-file <file>]
+  varlatch admin restore status
+  varlatch admin restore resume
   varlatch admin security reset --org <organization> (--control <name>... | --all) [--json]
   varlatch admin unfreeze --org <slug> --confirm <slug> [--json]
   varlatch admin outbound check [--allow <value>] [--org <organization>] [--json]
@@ -65,6 +67,8 @@ var adminForms = []adminForm{
 	{words: []string{"backup", "status"}, json: true},
 	{words: []string{"backup", "test-bucket"}, options: map[string]bool{"--json": false}},
 	{words: []string{"backup", "restore"}, options: map[string]bool{"--in": true, "--backup-key-file": true}},
+	{words: []string{"restore", "status"}, json: true},
+	{words: []string{"restore", "resume"}},
 	{words: []string{"security", "reset"}, options: map[string]bool{"--org": true, "--control": true, "--all": false, "--json": false}},
 	{words: []string{"unfreeze"}, options: map[string]bool{"--org": true, "--confirm": true, "--json": false}},
 	{words: []string{"outbound", "check"}, options: map[string]bool{"--allow": true, "--org": true, "--json": false}},

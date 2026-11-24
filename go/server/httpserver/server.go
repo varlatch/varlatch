@@ -71,6 +71,9 @@ type Options struct {
 	// Maintenance, when set, is the maintenance admission (ADR-0036 D6):
 	// while it admits nothing, the API answers 503 MAINTENANCE.
 	Maintenance Admission
+	// Held, when set, is whether a restore's hold stands (backup.Hold):
+	// /readyz says so. A held installation is ready.
+	Held func() bool
 	// Backups, when set, is the backup status getInstallationBackups
 	// answers (ADR-0059 step 4.14).
 	Backups BackupStatus
@@ -786,12 +789,15 @@ type readiness struct {
 		KEK          bool `json:"kek"`
 		Installation bool `json:"installation"`
 	} `json:"checks"`
+	// Held is whether the installation was restored and not resumed yet.
+	Held bool `json:"held,omitempty"`
 }
 
 func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 	var out readiness
 	out.Checks.Schema, out.Checks.KEK, out.Checks.Installation = s.opts.Backend.Ready(r.Context())
 	out.Ready = out.Checks.Schema && out.Checks.KEK && out.Checks.Installation
+	out.Held = s.opts.Held != nil && s.opts.Held()
 	status := http.StatusOK
 	if !out.Ready {
 		status = http.StatusServiceUnavailable

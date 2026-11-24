@@ -919,3 +919,34 @@ func TestVerifyRemote(t *testing.T) {
 		}
 	}
 }
+
+// While a restore's hold stands, a backup is made and nothing is removed
+// from this host; once resumed, backup_keep holds again.
+func TestHeldKeepsEveryArchive(t *testing.T) {
+	f := newFixture(t)
+	if err := backup.WriteHold(f.dir, backup.Hold{ArchiveID: "archive-1", RestoredAt: "t"}); err != nil {
+		t.Fatal(err)
+	}
+	admission := maintenance.Open(f.dir, nil)
+	svc := f.service(func(o *Options) { o.Admission = admission })
+	run := func() []string {
+		t.Helper()
+		f.now = f.now.Add(time.Hour)
+		res, err := svc.Run(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res.Removed
+	}
+	for range 4 { // backup_keep is 2
+		if removed := run(); removed == nil || len(removed) != 0 {
+			t.Fatalf("removed %v while held", removed)
+		}
+	}
+	if err := admission.Resume(func(*backup.Hold) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if removed := run(); len(removed) != 3 {
+		t.Errorf("removed %v once resumed, want 3", removed)
+	}
+}

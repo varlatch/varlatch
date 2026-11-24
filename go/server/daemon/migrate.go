@@ -17,10 +17,12 @@ import (
 
 	"golang.org/x/term"
 
+	"github.com/varlatch/varlatch/go/lib/backup"
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
 	"github.com/varlatch/varlatch/go/lib/envelope"
 	"github.com/varlatch/varlatch/go/server/backups"
 	"github.com/varlatch/varlatch/go/server/config"
+	"github.com/varlatch/varlatch/go/server/maintenance"
 	"github.com/varlatch/varlatch/go/server/migration/check"
 	"github.com/varlatch/varlatch/go/server/migration/migrate"
 	"github.com/varlatch/varlatch/go/server/tailnet"
@@ -236,6 +238,11 @@ func runMigrate(cfg *config.Config, rest []string, stdin io.Reader, stdout, stde
 			return fail(ExitFailure, "%v; nothing was written", err)
 		}
 		frozen = f
+		// A restored installation goes nowhere before it is resumed (the
+		// barrier is refused too: BeginBarrier).
+		if h, err := backup.ReadHold(cfg.DataDir); err != nil || h != nil {
+			return fail(ExitFailure, "%v; nothing was written", maintenance.ErrHeld)
+		}
 	}
 	if frozen != nil || (a.sub == "check" || a.sub == "import") && a.scratch != "" {
 		return migrateWork(cfg, a, frozen, stdin, stdout, fail)
