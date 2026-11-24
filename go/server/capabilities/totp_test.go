@@ -302,6 +302,21 @@ func TestFresh(t *testing.T) {
 	}
 }
 
+// Once the next period's code was given, for minValiditySeconds here, fresh
+// does not go back to the current one, and the refusal does not say that that
+// one was given.
+func TestFreshAfterMinValidityAhead(t *testing.T) {
+	w := newWorld(t)
+	w.want("set", w.setSeed(otpItem, uriA), 200, "")
+	c := w.otpCapability("broker", nil)
+	w.into(3 * time.Second)
+	w.code("ahead", w.exerciseOTP("broker", c, with{"minValiditySeconds": 30}))
+	a := w.want("fresh after ahead", w.exerciseOTP("broker", c, with{"fresh": true}), 429, "RATE_LIMITED")
+	if !strings.Contains(a.raw, "A code of PORTAL_OTP for the next period or a later one was given before: a fresh one can be asked for in ") {
+		t.Errorf("%s", a.raw)
+	}
+}
+
 // A Secret whose reference does not resolve refuses the exercise, the code
 // beside it included: no code is used up, whoever else got it meanwhile, and
 // no event says one was given. Nor does an exercise without a fresh code

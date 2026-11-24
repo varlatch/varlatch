@@ -812,7 +812,7 @@ func exerciseRefusal(reason string, detail jsvalue.Object, tailnet bool) error {
 	case "no-fresh-code":
 		after, _ := detail.Get("retryAfterSeconds")
 		return &domainerr.Error{Code: "RATE_LIMITED", Details: details,
-			Message: "The codes of " + get("item") + " for now and for the next period were given before: a fresh one can be asked for in " + seconds(after.(int64))}
+			Message: "A code of " + get("item") + " for the next period or a later one was given before: a fresh one can be asked for in " + seconds(after.(int64))}
 	case "unresolved-reference":
 		reference, has := detail.Get("reference")
 		if !has {

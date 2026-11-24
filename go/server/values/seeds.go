@@ -201,7 +201,7 @@ func codesWanted(st *State, selected []Item) ([]codeWanted, error) {
 }
 
 // notFresh is an exercise that asks for a code not given before while the
-// current step's and the next one's were.
+// next step's, or a later one's, was.
 type notFresh struct {
 	item  string
 	after time.Duration
@@ -227,10 +227,11 @@ const MaxMinValiditySeconds = 86_400
 // the next one:
 //
 //   - when the current one ends in less than minValidity;
-//   - when fresh, and the current one's code was given before.
+//   - when fresh, and the current one's code or a later one was given
+//     before: the newest given is all that is kept.
 //
 // The next one's code is given with its start, so nobody waits here: whoever
-// asked does. When fresh and the next one's was given too, *notFresh: only
+// asked does. When fresh and the next one's was given too (or a later one's), *notFresh: only
 // these two are ever given, since a code is a secret for as long as it can
 // still be used. The newest step given is kept as long as its seed's
 // version (one row each): the clock may move back, however far, and a step

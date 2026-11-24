@@ -86,11 +86,13 @@ affected):
   `startsInSeconds`: wait that long before using it. The server does not
   wait. Asking for more than the period is refused
   (`min-validity-too-long`).
-- **`fresh: true`**: a code this server has not given before. The first such
-  exercise in a period gets the current code, unless it was given already,
-  and the next one gets the next code, with `notBefore`. After that the
-  exercise is refused: 429 `RATE_LIMITED`, reason `no-fresh-code`, with
-  `retryAfterSeconds` and `Retry-After`.
+- **`fresh: true`**: a code of a later period than any this server has given.
+  The first such exercise in a period gets the current code, and the next one
+  gets the next code, with `notBefore`. Once a code of the next period (or a
+  later one, when the clock moved back) was given, the exercise is refused:
+  429 `RATE_LIMITED`, reason `no-fresh-code`, with `retryAfterSeconds` and
+  `Retry-After`. That is so as well when `minValiditySeconds` skipped the
+  current code: the server keeps only the newest period it gave a code of.
 
 Use `fresh` for every sign-in when several run at once: most sites accept a
 code once. Every code given counts, also one given without `fresh`, through

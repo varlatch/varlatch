@@ -6704,7 +6704,7 @@ type ExerciseCapabilityJSONBody struct {
 		Port int    `json:"port"`
 	} `json:"destination"`
 
-	// Fresh Only codes this server has not given before (capability values.totp): the current period's, else the next one's. When both were given the exercise is refused with RATE_LIMITED (429, Retry-After), reason no-fresh-code and retryAfterSeconds, and uses up nothing. Every code given counts, asked for as fresh or not; one made from a copy of the seed elsewhere is not known here. Other items are not affected.
+	// Fresh Only codes of a later period than any this server has given (capability values.totp): the current period's, else the next one's. Once one of the next period or a later one was given (minValiditySeconds may have skipped the current one), the exercise is refused with RATE_LIMITED (429, Retry-After), reason no-fresh-code and retryAfterSeconds, and uses up nothing. Every code given counts, asked for as fresh or not; one made from a copy of the seed elsewhere is not known here. Other items are not affected.
 	Fresh *bool `json:"fresh,omitempty"`
 
 	// MinValiditySeconds How long the one-time codes among the items must still be valid (capability values.totp). When the current code ends sooner, the next one is answered, with the time it starts (notBefore, startsInSeconds): the caller waits for it, the server does not. More than an item's period is refused with VALIDATION_FAILED, reason min-validity-too-long, and uses up nothing. Other items are not affected.
