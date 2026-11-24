@@ -246,14 +246,16 @@ Changes since 0.50.0-rc.2, by pull request:
   binary in its place during the waits; before, it failed at once. When the
   old binary cannot be put back, the message says where it is.
 <!-- END SLOT #448 -->
-<!-- SLOT #332 (draft, head 056eb810, to be restacked; recheck against the merged PR, then remove both markers; or drop) -->
-- **`varlatch upgrade --rollback` (#332).** On a Linux host install, as root,
-  it returns to the release the last upgrade came from, with the binaries
-  that upgrade kept. The database stays when the upgraded release's manifest
-  declares itself rollback-safe for that release and the old varlatchd opens
-  the database as it is; otherwise the snapshot from before the upgrade is
-  restored, after a list of what is lost and a confirmation
-  (`--accept-data-loss`). `varlatch doctor` says when an upgrade is pending.
+<!-- SLOT #332 (to be restacked by 5.3a; text from 5.3a 2026-11-24; recheck against the merged PR, then remove both markers; or drop) -->
+- **`varlatch upgrade --rollback` (#332)** returns to the release the last
+  upgrade came from (0.50.0-rc.3 or later). When that upgrade's release
+  declared itself rollback-safe for it, and it opens the database as it is,
+  only the binaries go back and every change stays. Otherwise the pre-upgrade
+  snapshot is restored, after listing what is lost, and only with
+  `--accept-data-loss` or a yes. It refuses while a migration is under way,
+  and for an upgrade made before the migration. `varlatch doctor` now fails
+  on an upgrade or rollback left pending. An undone upgrade no longer gives
+  the previous database the write-ahead log of a server that was killed.
 <!-- END SLOT #332 -->
 - **`varlatch migrate --to-image`, refused clearly (#435).** A reference
   without a tag, or otherwise not pinned, was refused with a message whose
