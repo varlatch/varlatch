@@ -284,11 +284,31 @@ func TestFresh(t *testing.T) {
 		t.Errorf("%s", back.raw)
 	}
 	w.code("not fresh, the clock moved back", w.exerciseOTP("broker", c, nil))
-	// The rows are kept an hour, no longer.
+	// One row per seed version is kept (never pruned, so a clock excursion
+	// forward and back cannot erase what was given).
 	w.ahead.Add(int64(2 * time.Hour))
 	w.code("two hours later", w.exerciseOTP("broker", c, nil))
-	if n := w.text("SELECT count(*) FROM one_time_codes_given"); n != "1" {
-		t.Errorf("%s rows kept", n)
+	if n := w.text("SELECT count(*) FROM one_time_codes_given"); n != "2" {
+		t.Errorf("%s rows kept, want 2 (one per seed version)", n)
+	}
+}
+
+// A temporary clock jump forward and back must not erase one_time_codes_given
+// and give the same code twice as fresh.
+func TestClockExcursionDoesNotRepeatFreshCode(t *testing.T) {
+	w := newWorld(t)
+	w.want("set", w.setSeed(otpItem, uriA), 200, "")
+	w.want("set other", w.setSeed("OTHER_OTP", uriB), 200, "")
+	c := w.otpCapability("broker", nil)
+	w.into(3 * time.Second)
+	first := w.code("first", w.exerciseOTP("broker", c, with{"fresh": true}))["value"]
+	w.ahead.Add(int64(2 * time.Hour))
+	o := w.issue("broker", with{"items": []string{"OTHER_OTP"}, "targets": map[string]any{"OTHER_OTP": []string{"header:x-o"}}})
+	w.want("other", w.exercise("broker", o, with{"placements": []any{map[string]any{"item": "OTHER_OTP", "target": "header:x-o"}}}), 200, "")
+	w.ahead.Add(-int64(2 * time.Hour))
+	second := w.code("second", w.exerciseOTP("broker", c, with{"fresh": true}))["value"]
+	if first == second {
+		t.Fatalf("the same code was given twice as fresh after a clock excursion: %v", first)
 	}
 }
 

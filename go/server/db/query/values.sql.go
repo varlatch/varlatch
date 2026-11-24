@@ -407,15 +407,6 @@ func (q *Queries) ProjectFreshness(ctx context.Context, id string) (ProjectFresh
 	return i, err
 }
 
-const pruneOneTimeCodesGiven = `-- name: PruneOneTimeCodesGiven :exec
-DELETE FROM one_time_codes_given WHERE ends_at < ?
-`
-
-func (q *Queries) PruneOneTimeCodesGiven(ctx context.Context, endsAt int64) error {
-	_, err := q.db.ExecContext(ctx, pruneOneTimeCodesGiven, endsAt)
-	return err
-}
-
 const retrievalOrganization = `-- name: RetrievalOrganization :one
 
 SELECT id, wrapped_org_kek FROM organizations WHERE id = ?

@@ -232,14 +232,11 @@ const MaxMinValiditySeconds = 86_400
 // The next one's code is given with its start, so nobody waits here: whoever
 // asked does. When fresh and the next one's was given too, *notFresh: only
 // these two are ever given, since a code is a secret for as long as it can
-// still be used. The steps given are kept for an hour after their end (the
-// clock may move back); a step recorded that this clock has not reached yet
-// counts as given.
+// still be used. The newest step given is kept as long as its seed's
+// version (one row each): the clock may move back, however far, and a step
+// recorded that this clock has not reached yet counts as given.
 func giveCodes(ctx context.Context, tx *storage.Tx, wanted []codeWanted, minValidity time.Duration, fresh bool, now time.Time) (map[string]int64, jsvalue.Object, error) {
 	q := query.New(tx)
-	if err := q.PruneOneTimeCodesGiven(ctx, now.Add(-time.Hour).UnixMicro()); err != nil {
-		return nil, nil, err
-	}
 	steps := make(map[string]int64, len(wanted))
 	given := make([]string, 0, len(wanted))
 	for _, w := range wanted {

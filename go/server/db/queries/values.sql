@@ -40,9 +40,6 @@ SELECT step FROM one_time_codes_given WHERE version_id = ?;
 INSERT INTO one_time_codes_given (version_id, step, ends_at) VALUES (?, ?, ?)
 ON CONFLICT (version_id) DO UPDATE SET step = max(one_time_codes_given.step, excluded.step), ends_at = max(one_time_codes_given.ends_at, excluded.ends_at);
 
--- name: PruneOneTimeCodesGiven :exec
-DELETE FROM one_time_codes_given WHERE ends_at < ?;
-
 -- name: CapturedCiphertext :many
 -- domain/retrieval.ts captureState: an erased version has nothing to capture.
 SELECT id, payload, wrapped_dek FROM value_versions WHERE id IN (sqlc.slice(ids)) AND erased_at IS NULL;
