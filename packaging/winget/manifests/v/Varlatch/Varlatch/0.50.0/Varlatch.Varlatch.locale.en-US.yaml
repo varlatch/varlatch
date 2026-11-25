@@ -1,0 +1,26 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.28.0.schema.json
+
+PackageIdentifier: Varlatch.Varlatch
+PackageVersion: 0.50.0
+PackageLocale: en-US
+Publisher: Varlatch
+PublisherUrl: https://varlatch.com
+PublisherSupportUrl: https://github.com/varlatch/varlatch/issues
+PackageName: Varlatch
+PackageUrl: https://github.com/varlatch/varlatch
+License: Apache-2.0
+LicenseUrl: https://github.com/varlatch/varlatch/blob/main/LICENSES/Apache-2.0.txt
+ShortDescription: The CLI of Varlatch, the self-host-first secrets and configuration manager.
+Description: |-
+  varlatch is the command-line client of Varlatch: it signs in to your Varlatch server, runs your
+  programs with their environment's values, and manages Organizations, Projects, Contracts and access.
+  It is one native binary; Varlatch is self-hosted, so it needs a server of your own to sign in to.
+Moniker: varlatch
+Tags:
+- cli
+- configuration
+- secrets
+- self-hosted
+ReleaseNotesUrl: https://github.com/varlatch/varlatch/releases/tag/v0.50.0
+ManifestType: defaultLocale
+ManifestVersion: 1.28.0
