@@ -4622,7 +4622,7 @@
       "script": "scripts/test-backup-upgrade.mjs",
       "kind": "ts-stack",
       "replacement": {
-        "open": "Built, with what proves it: G6 (go.yml), the upgrade engine's tests (go/cmd/varlatch/internal/upgrade: a failed check undone, a kill and a power cut after every change, --rollback to the pre-upgrade snapshot) and go/install/test-upgrade.sh on systemd (upgrade-systemd.yml, by hand). Still open: recovery from the pre-migration archive on a restored copy of production, the step 8 rehearsal B6 (session 2)."
+        "none": "An upgrade, its undo and an archive as the way back have Go counterparts: in the step 'Test' of go.yml, go/cmd/varlatch/internal/upgrade.TestAFailedHealthCheckIsUndone, go/cmd/varlatch/internal/upgrade.TestAKilledUpgradeIsFinishedOrUndone, go/cmd/varlatch/internal/upgrade.TestARollbackFromTheSnapshotListsWhatIsLost and go/cmd/varlatch/internal/upgrade.TestAFullDiskIsUndone, and the G6 steps of go.yml (the released schema and binary); go/install/test-upgrade.sh on systemd (upgrade-systemd.yml, run 45505154993 at 526fac1b and run 45542620862 at 05eeb638). Recovery from an archive taken before the migration, on a fresh host: the step 8 rehearsal B6, item 14, which restored the production archive with the release CLI before migrating it, then converted and restored it into a fresh Go data directory (2026-11-25, v0.50.0-rc.4 at 526fac1b, internal docs/evidence/step8-rehearsals/2026-11-25-b6/)."
       }
     },
     "backup-v0100-restore": {
@@ -4630,7 +4630,7 @@
       "script": "scripts/test-backup-v0100-restore.mjs",
       "kind": "ts-stack",
       "replacement": {
-        "open": "The backup converter (varlatch migrate --from-archive, varlatch/varlatch#362) is merged, and go.yml's nightly job converter converts and restores archives of formats 1 and 2, one of a published 0.7.0 installation among them (TestConvertArchives). Not in them: the environment-name mapping that a 0.10.0 archive holds and migration 21 removes, which the TypeScript suite covers (ci.yml). Still open: the converter on the production archive, the step 8 rehearsal B6 (session 2)."
+        "none": "The converter (varlatch migrate --from-archive, varlatch/varlatch#362): the nightly job converter of go.yml converts archives of formats 1 and 2, one of a published 0.7.0 installation among them, and restores the converted archives (go/cmd/varlatch/internal/migrate.TestConvertArchives, run 45505151102 at 526fac1b), and the step 8 rehearsal B6 converted the production archive (all rows, all checks true) and restored the converted format 3 archive into a fresh data directory with canary and row counts verified (2026-11-25, v0.50.0-rc.4 at 526fac1b, internal docs/evidence/step8-rehearsals/2026-11-25-b6/). Not in either: the environment-name mapping of a 0.10.0 archive, which the migration of schema 21 removes: the TypeScript suite covers it (ci.yml), and no Go archive has it."
       }
     },
     "prod-shape": {
@@ -4638,7 +4638,7 @@
       "script": "scripts/test-prod-shape.mjs",
       "kind": "ts-stack",
       "replacement": {
-        "open": "B3 is done (2026-11-24, internal docs/evidence/step8-rehearsals/2026-11-24-b3-combined/): the Coolify shape with the tailnet sidecar, on the 0.23.0 Compose files, migrated, rolled back through a kill at each step, migrated again and finished, on an empty installation: 108 of 108 checks at b3adad45 and 107 of 108 at 7a4e45d9, where one check of the harness ran 0.7 s before Coolify wrote its file. Still open: B6 (a restored copy of production, session 2)."
+        "none": "The step 8 rehearsals: B3 (production topology, 2026-11-24, 108 of 108 checks at b3adad45 and 107 of 108 at 7a4e45d9, where one check of the harness ran 0.7 s before Coolify wrote its file; internal docs/evidence/step8-rehearsals/2026-11-24-b3-combined/) and B6 (a restored copy of production migrated, rolled back after a day of changes, migrated again and finished; 2026-11-25, v0.50.0-rc.4 at 526fac1b, internal docs/evidence/step8-rehearsals/2026-11-25-b6/, 55 of 56 checks, where the one harness failure was forward parity arithmetic comparing copied rows against exported rows without adding the browser sessions the migration ended under browser-sessions-end, while migrate checks all passed)."
       }
     },
     "sidecar-restart": {
