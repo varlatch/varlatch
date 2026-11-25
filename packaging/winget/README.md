@@ -13,14 +13,13 @@ anything** (internal docs/design/go-step6.md, decision O4).
 - **Installer:** `portable`: winget downloads the release's
   `varlatch-<version>-windows-<amd64|arm64>.exe` and puts it on `PATH` as
   `varlatch`. No installer runs and nothing is elevated.
-- **The version here is `0.50.0-rc.1`.** Its two `InstallerSha256` are
-  those files' lines in that release's `SHA256SUMS`, taken after
-  `varlatch verify-release` checked its signature for the release workflow
-  at `v0.50.0-rc.1`, and checked against the files as GitHub serves them.
+- **The stable manifest is for `0.50.0`.** Both installer checksums match
+  the signed `SHA256SUMS` for the `v0.50.0` release and the binaries
+  downloaded from the manifest URLs.
 
 ## For a release
 
-For the version `X.Y.Z` to submit (0.50.0 first):
+For the version `X.Y.Z` to submit:
 
 1. Download the release's checksums, their signature, and a CLI for this
    machine, then check the signature (or check it with cosign, as
