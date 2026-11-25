@@ -86,6 +86,8 @@ type tailnetWorld struct {
 	nodeKeyFile string // the sidecars' and targets' reusable tagged key
 	oauthFile   string // the owner's OAuth client (Tailscale)
 	client      string // the client node's container
+	clientID    string // the client node (its StableID)
+	gateway     string // the host's address on the run's network
 	runs        int
 }
 
@@ -458,7 +460,11 @@ func (w *tailnetWorld) startClient(key string) {
 		}
 		w.docker("rm", "-fv", w.client)
 	})
-	if !pollUntil(120*time.Second, time.Second, func() bool { st, ok := w.status(); return ok && st.BackendState == "Running" }) {
+	if !pollUntil(120*time.Second, time.Second, func() bool {
+		st, ok := w.status()
+		w.clientID = st.Self.ID
+		return ok && st.BackendState == "Running"
+	}) {
 		t.Fatalf("the client node did not join: %s", lastLines(w.docker("logs", "--tail", "20", w.client).stderr, 20))
 	}
 }
@@ -621,6 +627,9 @@ func (w *tailnetWorld) extra(name string) installExtra {
 		bundleFiles: []string{"docker-compose.tailscale.yml"},
 		conf:        tailnetConf(machine, w.url),
 	}
+	if prof.browser && name == "tailnet" {
+		w.browserExtra(&x, machine)
+	}
 	if w.headscale {
 		roots, err := goRoots(w.dir, "/etc/ssl/certs/ca-certificates.crt")
 		if err != nil {
@@ -681,6 +690,12 @@ func tailnetCase(t *testing.T, rel release, s3 *s3Server) {
 		measure("item 14: the nodes before", w.nodeNames())
 		return
 	}
+	var b *browserStep
+	if prof.browser {
+		if b = w.startBrowser(in, machine); b == nil || !b.step("before the handoff, on TypeScript", isSource, true) {
+			return
+		}
+	}
 	r := in.migrateEnv(rel, true, rel.pin(), w.authority()...)
 	record(t, item, "the migration with the name handoff opens", r.code == 0, r.String()+" "+lastLines(r.stdout, 6))
 	if r.code != 0 {
@@ -689,7 +704,7 @@ func tailnetCase(t *testing.T, rel release, s3 *s3Server) {
 		measure("item 14: the source's containers after the failed migration", strings.TrimSpace(in.compose("ps", "-a", "--format", "{{.Service}} {{.State}} {{.Status}}").stdout))
 		measure("item 14: the source's varlatchd log after the failed migration", lastLines(in.compose("logs", "--no-color", "--tail", "15", "varlatchd").stdout, 15))
 	} else {
-		forwardAndBack(t, w, in, rel, machine, sidecar)
+		forwardAndBack(t, w, in, rel, machine, sidecar, b)
 	}
 	// The first installation's containers and target go before the
 	// second starts (its cleanup runs again, finding nothing).
@@ -698,7 +713,7 @@ func tailnetCase(t *testing.T, rel release, s3 *s3Server) {
 }
 
 // forwardAndBack checks the name after the switch, then rolls back.
-func forwardAndBack(t *testing.T, w *tailnetWorld, in *installation, rel release, machine, sidecar string) {
+func forwardAndBack(t *testing.T, w *tailnetWorld, in *installation, rel release, machine, sidecar string, b *browserStep) {
 	const item = tailnetItem
 	id, meta, ok := w.served(machine, 180*time.Second, func(id, meta string) bool { return id != "" && id != sidecar && isTarget(in, meta) })
 	record(t, item, "after the switch: the name is the target's node, and the client reaches the Go server", ok,
@@ -709,6 +724,10 @@ func forwardAndBack(t *testing.T, w *tailnetWorld, in *installation, rel release
 	measure("item 14: the nodes after the switch", w.nodeNames())
 	if w.headscale {
 		record(t, item, "the forward run's Headscale API key expired when it ended", w.liveAPIKeys() == 0, fmt.Sprintf("%d live", w.liveAPIKeys()))
+	}
+	if b != nil {
+		// Whatever it finds, the rollback runs: the name goes back.
+		b.step("after the handoff, on Go", isTarget, false)
 	}
 	target := id
 	rb := run(in.dir, in.migrateEnvVars(rel, true, rel.pin()), nil, filepath.Join(binDir, "varlatch"), in.rollbackArgs(w.authority()...)...)
@@ -722,6 +741,9 @@ func forwardAndBack(t *testing.T, w *tailnetWorld, in *installation, rel release
 		code, pub := in.get("/v1/meta")
 		record(t, item, "the public URL answers from the TypeScript server again", code == 200 && isSource(in, pub), fmt.Sprintf("%d %s", code, trim(pub)))
 		measure("item 14: the nodes after the rollback", w.nodeNames())
+		if b != nil {
+			b.step("after the rollback, on TypeScript", isSource, false)
+		}
 	} else {
 		measure("item 14: the rollback's stdout", lastLines(rb.stdout, 20))
 		measure("item 14: the nodes", w.nodeNames())

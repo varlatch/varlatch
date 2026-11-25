@@ -19,7 +19,8 @@
 # VL_RH_RESTORE_BEK and VL_RH_RESTORE_KEK (its keys, files of mode 0600),
 # instead of seeding; the three are files the operator copied to this host,
 # mounted read-only into the runner. VL_RH_ONLY=bundle makes a synthetic
-# production-shaped archive and its keys in VL_RH_BUNDLE_OUT (an empty
+# production-shaped archive (VL_RH_AUDIT_ROWS: with so many audit events more)
+# and its keys in VL_RH_BUNDLE_OUT (an empty
 # directory), for B6 without production's. With VL_RH_KEEP=1 a restored
 # installation is kept whole, the Root KEK's copy in its Compose
 # directory's secrets/ included: remove it by hand (shred -u) when done.
@@ -112,6 +113,18 @@
 # node logs out at the end: the sidecars' and targets' devices
 # (vl-rh-<run>-tailnet, vl-rh-<run>-tailnet-abort and their -vl-<op>-o and -n
 # renames) stay in the tailnet; delete vl-rh-<run>-* in its admin console.
+#
+# VL_RH_TAILNET_BROWSER=1 (the tailnet case, on the workstation a person is
+# at): the first installation's public URL is on localhost, and the run waits
+# three times for that person's browser: a passkey enrolled and a protected
+# value read before the handoff; a sign-in with that passkey and the same read
+# after it; and both again after the rollback. The run prints one command, and
+# goes on by itself when the server has seen each (VL_RH_PAUSE_TIMEOUT at most,
+# 30m is enough). On Tailscale the read is the dashboard's, over the tailnet
+# browser endpoint at the name that moves, so the owner's VL_RH_TAILSCALE_* are
+# accepted on a workstation too; the workstation itself joins nothing. On
+# Headscale, which issues no certificates, there is no such endpoint: the run
+# reads over the tailnet listener itself, which tests this step's own parts.
 set -euo pipefail
 [ $# -ge 2 ] || { echo "usage: run.sh <typescript-checkout> <run> [<release-dir>]" >&2; exit 64; }
 profile=${VL_RH_PROFILE:-workstation}
@@ -130,6 +143,9 @@ duration_seconds() {
   echo $(( ${BASH_REMATCH[2]:-0} * 3600 + ${BASH_REMATCH[4]:-0} * 60 + ${BASH_REMATCH[6]:-0} ))
 }
 pause_budget=0
+# The tailnet case's browser step (VL_RH_TAILNET_BROWSER=1): three waits for
+# the person at the browser, each VL_RH_PAUSE_TIMEOUT at most.
+[ "${VL_RH_TAILNET_BROWSER:-}" != 1 ] || pause_budget=3
 [ "${VL_RH_INGRESS:-proxy}" != coolify ] || pause_budget=8
 [ "${VL_RH_INGRESS:-proxy}" != combined ] || pause_budget=14
 pause_seconds=$(duration_seconds "${VL_RH_PAUSE_TIMEOUT:-2h}") || {
@@ -143,6 +159,7 @@ if [ "$pause_seconds" -le 0 ]; then
   exit 64
 fi
 test_timeout=$(( 6 * 3600 + pause_budget * pause_seconds ))s
+workstation_timeout=$(( 90 * 60 + pause_budget * pause_seconds ))s
 if [ "$profile" = box ] && [ -z "${SUDO_UID:-}" ]; then
   echo "warning: SUDO_UID is not set (a root shell from su, not sudo -i): the run's files, its report" >&2
   echo "  included, stay root-owned under ${VL_RH_ROOT:-$PWD/rehearsal-runs}/$2; before fetch-report.sh can" >&2
@@ -208,6 +225,9 @@ if [ "${VL_RH_ONLY:-}" = bundle ] && [ -n "${VL_RH_BUNDLE_OUT:-}" ]; then
   bundle_out=$(cd "$VL_RH_BUNDLE_OUT" && pwd)
   mounts+=(-v "$bundle_out:$bundle_out")
 fi
+for f in "${VL_RH_TAILSCALE_OAUTH_FILE:-}" "${VL_RH_TAILSCALE_AUTH_KEY_FILE:-}"; do
+  if [ "$profile" != box ] && [ -n "$f" ] && [ -f "$f" ]; then mounts+=(-v "$f:$f:ro"); fi
+done
 if [[ ${VL_RH_SOURCE:-} == restore:* ]]; then
   for f in "${VL_RH_SOURCE#restore:}" "${VL_RH_RESTORE_BEK:-}" "${VL_RH_RESTORE_KEK:-}"; do
     if [ -n "$f" ] && [ -f "$f" ]; then mounts+=(-v "$f:$f:ro"); fi
@@ -227,6 +247,8 @@ cleanup() {
     "$root/work/tailnet-net/client.env" "$root"/work/tailnet-net/api-key-* 2>/dev/null || true
   # The tailnet installations' .env carry the nodes' auth key (on Tailscale
   # the owner's reusable one): the line goes, VL_RH_KEEP or not.
+  # The browser step's link and profile.
+  rm -rf "$root/work/browser" 2>/dev/null || true
   for f in "$root"/work/tailnet/compose/.env "$root"/work/tailnet-abort/compose/.env; do
     [ -f "$f" ] && sed -i '/^TS_AUTHKEY=/d' "$f" 2>/dev/null || true
   done
@@ -281,18 +303,30 @@ if [ ! -f "$release/images.json" ]; then
   "$here/images.sh" "$ts" "$run" "$release"
 fi
 # The Go caches: the workstation's (the module cache read-only, as the
-# repository's other builds use it), or on the box (or when absent), the
-# run's own writable cache.
-if [ "$profile" = box ] || [ ! -d "$HOME/.cache/varlatch-gomod" ]; then
+# repository's other builds use it; VL_RH_GOMODCACHE names another, which must
+# hold the checkout's modules), or on the box (or when absent), the run's own
+# writable cache.
+gomodshared=${VL_RH_GOMODCACHE:-$HOME/.cache/varlatch-gomod}
+if [ "$profile" = box ] || [ ! -d "$gomodshared" ]; then
   mkdir -p "$root/cache/go" "$root/cache/mod"
   gocache=$root/cache/go gomodcache=$root/cache/mod:/gomod
 else
   mkdir -p "$HOME/.cache/varlatch-go-nr"
-  gocache=$HOME/.cache/varlatch-go-nr gomodcache=$HOME/.cache/varlatch-gomod:/gomod:ro
+  gocache=$HOME/.cache/varlatch-go-nr gomodcache=$gomodshared:/gomod:ro
 fi
 # -buildvcs=false: the checkout may be a Git one owned by the user who
 # ran sudo, which Git refuses to read as root ("dubious ownership"), and a
 # rehearsal build needs no VCS stamp.
+# The browser step's person signs in on the dashboard, which the other cases
+# never open: built in, as go generate ./server/web does (its generator here,
+# with this checkout's pnpm).
+if [ "${VL_RH_TAILNET_BROWSER:-}" = 1 ]; then
+  docker run --rm --name "vl-rh-$run-webgen" -u "$(id -u):$(id -g)" -e HOME=/tmp -e CGO_ENABLED=0 \
+    -e GOCACHE=/gocache -e GOMODCACHE=/gomod -v "$gocache:/gocache" -v "$gomodcache" \
+    -v "$gomod/..:/src" -v "$root/bin:/out" -w /src/go golang:1.27.4 go build -buildvcs=false -o /out/webgen ./server/web/build
+  (cd "$gomod/server/web" && "$root/bin/webgen")
+  rm -f "$root/bin/webgen"
+fi
 docker run --rm --name "vl-rh-$run-build" -u "$(id -u):$(id -g)" -e HOME=/tmp -e CGO_ENABLED=0 \
   -e GOCACHE=/gocache -e GOMODCACHE=/gomod -v "$gocache:/gocache" -v "$gomodcache" \
   -v "$gomod/..:/src" -v "$root/bin:/out" -w /src/go golang:1.27.4 sh -c '
@@ -307,7 +341,7 @@ release=$(cd "$release" && pwd)
 pass=(VL_RH_PROFILE VL_RH_TARGET VL_RH_INGRESS VL_RH_PUBLIC_NAME VL_RH_PUBLIC_BIND VL_RH_SOURCE VL_RH_KILL VL_RH_SYNC
   VL_RH_CONTINUE_DIR VL_RH_GO_IMAGE VL_RH_COOLIFY_SOURCE_DIR VL_RH_PAUSE_TIMEOUT VL_RH_SEED VL_RH_SEED_VALUES
   VL_RH_KEEP VL_RH_ONLY VL_RH_MEMORY VL_RH_MEMORY_MARGIN_MIB VL_RH_RESTORE_BEK VL_RH_RESTORE_KEK VL_RH_BUNDLE_OUT VL_RH_RESTORE_READ
-  VL_RH_TAILSCALE_OAUTH_FILE VL_RH_TAILSCALE_AUTH_KEY_FILE VL_RH_TAILSCALE_TAILNET VL_RH_COOLIFY_TARGET VL_RH_GIT_NAME)
+  VL_RH_AUDIT_ROWS VL_RH_AUDIT_RANDOM VL_RH_NAMES VL_RH_TAILSCALE_OAUTH_FILE VL_RH_TAILSCALE_AUTH_KEY_FILE VL_RH_TAILSCALE_TAILNET VL_RH_TAILNET_BROWSER VL_RH_COOLIFY_TARGET VL_RH_GIT_NAME)
 if [ "$profile" = box ]; then
   # On the box: as root on the host, real systemd, the target under a
   # root-owned path; the run's files handed back to the sudo user after.
@@ -326,8 +360,18 @@ docker build -q -t "$runner" -f "$here/runner.Dockerfile" "$here" >/dev/null
 runner_built=1
 envs=()
 for v in "${pass[@]}"; do envs+=(-e "$v"); done
+# The runner's image has no CA certificates. Against Tailscale's own control
+# plane migrate calls its API, so it gets this host's; every other case trusts
+# the run's CA alone (SSL_CERT_FILE), as before.
+roots=()
+system_roots=$(readlink -f /etc/ssl/certs/ca-certificates.crt 2>/dev/null || true)
+if [ -n "${VL_RH_TAILSCALE_OAUTH_FILE:-}" ]; then
+  [ -f "$system_roots" ] || { echo "no /etc/ssl/certs/ca-certificates.crt on this host: the Tailscale API cannot be reached" >&2; exit 1; }
+  roots=(-v "$system_roots:/etc/ssl/certs/ca-certificates.crt:ro")
+fi
 docker run --rm --name "vl-rh-$run-test" --network host -u 0 -v /var/run/docker.sock:/var/run/docker.sock \
+  ${roots[@]+"${roots[@]}"} \
   -v "$root:$root" -v "$release:$release:ro" -v "$ts:$ts:ro" ${mounts[@]+"${mounts[@]}"} -w "$root/work" \
   -e VL_RH_RUN="$run" -e VL_RH_RELEASE_DIR="$release" -e VL_RH_BIN="$root/bin" -e VL_RH_WORK="$root/work" \
   -e VL_RH_REPORT="$root/report" -e VL_RH_TS="$ts" -e VL_RH_TARGET_ROOT="$target_root" "${envs[@]}" \
-  "$runner" "$root/bin/rehearsal.test" -test.v -test.timeout 90m -test.run '^TestRehearsal$' 2>&1 | tee "$root/report/test.log"
+  "$runner" "$root/bin/rehearsal.test" -test.v -test.timeout "$workstation_timeout" -test.run '^TestRehearsal$' 2>&1 | tee "$root/report/test.log"

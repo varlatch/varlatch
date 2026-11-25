@@ -402,6 +402,7 @@ type installation struct {
 	kekCopy            string // a restored installation's copy of the operator's Root KEK
 	isolated           bool   // a restored copy: no sync, no audit export, no egress (isolationOverride)
 	proxy              *http.Server
+	ceremonies         ceremonies // the passkey ceremonies the public URL answered
 	installationID     string
 	ingress            string       // proxy or public
 	acme               *acmeStack   // public ingress: the run's Pebble
@@ -419,6 +420,7 @@ type installExtra struct {
 	bundleFiles              []string
 	composeFile, composeText string
 	conf                     string
+	publicHost               string // the public URL's host with the own proxy, for 127.0.0.1
 	serviceEnv               []string
 	migrateEnv               []string
 }
@@ -502,6 +504,11 @@ func prepareInstallation(t *testing.T, rel release, s3 *s3Server, name string, k
 	}
 	in.webPort, in.proxyPort = freePort(t), freePort(t)
 	in.publicURL = "http://127.0.0.1:" + in.proxyPort
+	for _, x := range extras {
+		if x.publicHost != "" {
+			in.publicURL = "http://" + net.JoinHostPort(x.publicHost, in.proxyPort)
+		}
+	}
 	if in.ingress == "public" {
 		in.acme = startACME(t, in.state)
 		in.publicURL = "https://" + prof.publicName
@@ -690,6 +697,7 @@ func (in *installation) startProxy() {
 	}
 	rp := httputil.NewSingleHostReverseProxy(target)
 	rp.ErrorHandler = func(rw http.ResponseWriter, _ *http.Request, _ error) { rw.WriteHeader(http.StatusBadGateway) }
+	rp.ModifyResponse = in.ceremonies.see
 	in.proxy = &http.Server{Handler: rp, ReadHeaderTimeout: 10 * time.Second}
 	go func() { _ = in.proxy.Serve(l) }()
 }
