@@ -382,7 +382,8 @@ for step in stopped swapped started; do
   done
   kill -KILL "$engine" 2>/dev/null || true
   wait "$engine" 2>/dev/null || true
-  check "$name: killed on the way" journal_says in-progress
+  if ! journal_says in-progress; then tail -n 8 "$work/$name.out" >&2; fi
+  must "$name: killed on the way" journal_says in-progress
   at=$(journal_step)
   echo "      at $at, $("$VARLATCH" --version) installed"
   restarted
