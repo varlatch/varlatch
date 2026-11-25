@@ -462,9 +462,13 @@ func (r *Run) showJournal(j *migrate.Journal, asJSON bool) error {
 		if d.TransferMeasured {
 			transfer = ms(d.TransferMs)
 		}
+		headroom := ""
+		if d.HeadroomMs > 0 {
+			headroom = ", with headroom " + ms(d.HeadroomMs)
+		}
 		fmt.Fprintf(&b, "Dry run: %d tables, %d rows; checks passed %v.\n", d.Copy.Tables, d.Copy.Rows, d.Checks != nil && d.Checks.Passed)
-		fmt.Fprintf(&b, "Projected downtime %s %s the budget of %s: drain up to %s, export %s, import %s, checks %s, address transfer %s.\n",
-			ms(d.ProjectedMs), verdict, ms(d.MaxDowntimeMs), ms(d.DrainMs), ms(d.ExportMs), ms(d.ImportMs), ms(d.CheckMs), transfer)
+		fmt.Fprintf(&b, "Projected downtime %s %s the budget of %s%s: drain up to %s, export %s, import %s, checks %s, address transfer %s.\n",
+			ms(d.ProjectedMs), verdict, ms(d.MaxDowntimeMs), headroom, ms(d.DrainMs), ms(d.ExportMs), ms(d.ImportMs), ms(d.CheckMs), transfer)
 	}
 	if bar := j.Barrier; bar != nil && bar.GateID != "" {
 		fmt.Fprintf(&b, "Barrier: gate %s, frozen at audit position %s.\n", bar.GateID, bar.AuditPosition)

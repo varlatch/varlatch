@@ -487,8 +487,8 @@ func TestAMigrationEndToEnd(t *testing.T) {
 	if left, _ := filepath.Glob(filepath.Join(w.src.dir, "bundle-*")); len(left) != 0 {
 		t.Errorf("bundles left: %v", left)
 	}
-	if j.DryRun == nil || !j.DryRun.Fits || j.DryRun.ExportMs != 20000 || j.DryRun.TransferMs != 65000 || j.DryRun.TransferMeasured ||
-		j.DryRun.ProjectedMs != 20000+65000+DefaultDrain.Milliseconds() {
+	if j.DryRun == nil || !j.DryRun.Fits || j.DryRun.ExportMs != 20000 || j.DryRun.HeadroomMs != 30000 || j.DryRun.TransferMs != 65000 || j.DryRun.TransferMeasured ||
+		j.DryRun.ProjectedMs != 20000+30000+65000+DefaultDrain.Milliseconds() {
 		t.Errorf("the dry run's report: %+v", j.DryRun)
 	}
 	if j.Preflight == nil || j.Preflight.ArchiveID == "" || !containsCall(w.src.calls, "verify "+j.Preflight.ArchiveID) {
@@ -583,6 +583,34 @@ func TestOverTheBudget(t *testing.T) {
 	w.eng.Options.MaxDowntime = time.Hour
 	if j, err = w.eng.Run(context.Background(), false); err != nil || j.Phase != Open {
 		t.Fatalf("with a larger budget: %v", err)
+	}
+}
+
+// Projection headroom is max(work/4, 30s) and counts toward --max-downtime.
+func TestProjectionHeadroom(t *testing.T) {
+	for _, tc := range []struct {
+		workMs, wantMs int64
+	}{
+		{-5000, 30000},
+		{0, 30000},
+		{60000, 30000},
+		{120000, 30000},
+		{124000, 31000},
+		{250000, 62500},
+	} {
+		if got := projectionHeadroom(tc.workMs); got != tc.wantMs {
+			t.Errorf("projectionHeadroom(%d) = %d, want %d", tc.workMs, got, tc.wantMs)
+		}
+	}
+	// 7m export + 1m drain + 65s public transfer = 9m5s without headroom,
+	// 10m50s with 1m45s headroom: refused against the 10m default budget.
+	w := newWorld(t)
+	w.src.exportTakes = 7 * time.Minute
+	j, err := w.eng.Run(context.Background(), false)
+	if !errors.Is(err, ErrOverBudget) || j.DryRun == nil || j.DryRun.HeadroomMs != 105000 ||
+		j.DryRun.ProjectedMs != 420000+105000+65000+DefaultDrain.Milliseconds() ||
+		!strings.Contains(err.Error(), "with headroom 1m45s") {
+		t.Fatalf("headroom over budget: %+v %v", j.DryRun, err)
 	}
 }
 
