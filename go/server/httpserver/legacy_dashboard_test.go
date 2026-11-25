@@ -24,9 +24,9 @@ import (
 func TestDashboardCacheHeaders(t *testing.T) {
 	s, _, _, _ := newTestServer(t, nil)
 	cases := []struct {
-		path      string
-		wantCC    string
-		wantHTML  bool
+		path     string
+		wantCC   string
+		wantHTML bool
 	}{
 		{"/", "no-cache", true},
 		{"/index.html", "no-cache", true},
