@@ -68,3 +68,15 @@ func writeNotFound(w http.ResponseWriter) {
 	w.WriteHeader(http.StatusNotFound)
 	_, _ = w.Write([]byte("404 Not Found"))
 }
+
+// writeLegacyNotFound answers a request only the 0.23.0 dashboard makes
+// (/convex/* or a Better Auth path under /auth/ that varlatchd does not
+// serve): 404 in the API's error envelope, never the SPA fallback, with
+// Clear-Site-Data: "cache" so a browser that loaded the old app from its
+// HTTP cache drops that cache and fetches the new app on the next load.
+// Cookies and storage are never cleared.
+func writeLegacyNotFound(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Clear-Site-Data", `"cache"`)
+	writeError(w, r, http.StatusNotFound, "RESOURCE_NOT_FOUND", "This endpoint was removed in Varlatch 0.50; reload the page")
+}

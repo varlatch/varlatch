@@ -454,6 +454,12 @@ var (
 	cliPaths  = map[string]bool{"/install.sh": true, "/install.ps1": true, "/cli/varlatch.cjs": true}
 )
 
+// isLegacyConvexPath reports whether p is /convex or under /convex/, paths
+// only the 0.23.0 dashboard calls (nginx proxied /convex/ to Convex).
+func isLegacyConvexPath(p string) bool {
+	return p == "/convex" || strings.HasPrefix(p, "/convex/")
+}
+
 // ServeHTTP answers a request.
 // Admission is the maintenance admission (server/maintenance).
 type Admission interface {
@@ -500,7 +506,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	target := requestTarget(r)
 	normalized := normalizeTarget(target)
 	front := nginxPath(target)
-	isAPI := apiPrefix.MatchString(front) || cliPaths[front] || s.opts.CLI != nil && servecli.IsPath(front)
+	isAPI := apiPrefix.MatchString(front) || cliPaths[front] || s.opts.CLI != nil && servecli.IsPath(front) || isLegacyConvexPath(front)
 	p := front
 	if s.opts.Tailnet != nil {
 		// A tailnet listener is the API alone: no nginx in front of it.
@@ -743,6 +749,8 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.apiMux.ServeHTTP(w, r)
+	case isLegacyConvexPath(p) && s.opts.Tailnet == nil:
+		writeLegacyNotFound(w, r)
 	default:
 		writeNotFound(w)
 	}
