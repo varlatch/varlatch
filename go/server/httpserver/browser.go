@@ -110,6 +110,12 @@ func (s *Server) sameOrigin(w http.ResponseWriter, r *http.Request) bool {
 	}
 	cookie, header := cookieValue(r, s.cookieName(csrfCookie)), headerValue(r, CSRFHeader)
 	if cookie == "" || subtle.ConstantTimeCompare([]byte(cookie), []byte(header)) != 1 {
+		// The 0.23.0 dashboard posts /auth/varlatch-token on start without a
+		// Varlatch-CSRF header; clear the browser's HTTP cache (never cookies)
+		// so a reload fetches the 0.50 app.
+		if r.URL.Path == "/auth/varlatch-token" && len(r.Header.Values(CSRFHeader)) == 0 {
+			w.Header().Set("Clear-Site-Data", `"cache"`)
+		}
 		writeErrorDetails(w, r, http.StatusForbidden, "PERMISSION_DENIED", "Cross-site request refused: the CSRF token is missing or does not match",
 			jsvalue.Object{{Key: "reason", Value: "csrf"}})
 		return false

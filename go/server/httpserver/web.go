@@ -71,6 +71,9 @@ func (s *Server) serveWeb(w http.ResponseWriter, r *http.Request) {
 			defer f.Close()
 			if st, err := f.Stat(); err == nil && st.Mode().IsRegular() {
 				if rs, ok := f.(io.ReadSeeker); ok {
+					if name == "varlatch-config.js" {
+						w.Header().Set("Cache-Control", "no-cache")
+					}
 					http.ServeContent(w, r, name, time.Time{}, rs)
 					return
 				}

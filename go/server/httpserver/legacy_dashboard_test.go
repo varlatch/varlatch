@@ -39,7 +39,7 @@ func TestDashboardCacheHeaders(t *testing.T) {
 		{"/device", "no-store", true},
 		{"/assets/app-1234.js", "", false},
 		{"/assets/style-5678.css", "", false},
-		{"/varlatch-config.js", "", false},
+		{"/varlatch-config.js", "no-cache", false},
 		{"/brand/favicon-32.png", "", false},
 		{"/site.webmanifest", "", false},
 	}
@@ -210,7 +210,8 @@ func TestGoDashboardPathsUnaffected(t *testing.T) {
 		{"registration bad body", "POST", "/auth/passkey/registration", map[string]any{}, map[string]string{"Origin": b.origin, CSRFHeader: token}, http.StatusUnprocessableEntity, "VALIDATION_FAILED"},
 		{"sign-out", "POST", "/auth/sign-out", nil, map[string]string{"Origin": b.origin, CSRFHeader: token}, http.StatusNoContent, ""},
 		{"varlatch-token with csrf signed out", "POST", "/auth/varlatch-token", nil, map[string]string{"Origin": b.origin, CSRFHeader: token}, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED"},
-		{"varlatch-token without csrf (0.23.0 shape)", "POST", "/auth/varlatch-token", nil, map[string]string{"Origin": b.origin}, http.StatusForbidden, "PERMISSION_DENIED"},
+		{"varlatch-token with wrong csrf", "POST", "/auth/varlatch-token", nil, map[string]string{"Origin": b.origin, CSRFHeader: token + "x"}, http.StatusForbidden, "PERMISSION_DENIED"},
+		{"varlatch-token cross-origin no csrf", "POST", "/auth/varlatch-token", nil, map[string]string{"Origin": "https://evil.example.net"}, http.StatusForbidden, "PERMISSION_DENIED"},
 		{"events signed out", "GET", "/auth/events", nil, nil, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED"},
 		{"meta", "GET", "/v1/meta", nil, nil, http.StatusOK, ""},
 		{"healthz", "GET", "/healthz", nil, nil, http.StatusOK, ""},
@@ -248,5 +249,20 @@ func TestGoDashboardPathsUnaffected(t *testing.T) {
 	w := b.post("/auth/varlatch-token", nil)
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"token":"vlt_web_`) || w.Header().Get("Clear-Site-Data") != "" {
 		t.Fatalf("signed-in varlatch-token: %d %q Clear-Site-Data=%q", w.Code, w.Body.String(), w.Header().Get("Clear-Site-Data"))
+	}
+
+	// Same-origin POST /auth/varlatch-token with no CSRF header at all (as
+	// the cached 0.23.0 dashboard sends on load) answers 403 csrf with
+	// Clear-Site-Data: "cache" and never touches cookies; a wrong header does
+	// not emit Clear-Site-Data.
+	noHdr := b.send("POST", "/auth/varlatch-token", nil, map[string]string{"Origin": b.origin})
+	if e := decode(t, noHdr); noHdr.Code != http.StatusForbidden || e.Error.Code != "PERMISSION_DENIED" || e.Error.Details["reason"] != "csrf" ||
+		noHdr.Header().Get("Clear-Site-Data") != `"cache"` || noHdr.Header().Get("Cache-Control") != "no-store" || len(noHdr.Result().Cookies()) != 0 {
+		t.Fatalf("no csrf header: %d %s headers=%v", noHdr.Code, noHdr.Body.String(), noHdr.Header())
+	}
+	wrongHdr := b.send("POST", "/auth/varlatch-token", nil, map[string]string{"Origin": b.origin, CSRFHeader: token + "x"})
+	if e := decode(t, wrongHdr); wrongHdr.Code != http.StatusForbidden || e.Error.Code != "PERMISSION_DENIED" || e.Error.Details["reason"] != "csrf" ||
+		wrongHdr.Header().Get("Clear-Site-Data") != "" {
+		t.Fatalf("wrong csrf header: %d %s headers=%v", wrongHdr.Code, wrongHdr.Body.String(), wrongHdr.Header())
 	}
 }

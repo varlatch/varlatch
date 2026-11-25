@@ -34,9 +34,11 @@ before the new server opens.
 - **Open dashboard tabs need a hard reload.** A tab that stayed open across
   the migration is still running the 0.23.0 dashboard in memory and cannot
   switch itself to 0.50. Reload it with `Ctrl+Shift+R` (`Cmd+Shift+R` on a
-  Mac) and sign in again with the same passkey. New tabs drop any cached
-  0.23.0 copy on their own and load the 0.50 dashboard. The same applies
-  after a rollback to 0.23.0.
+  Mac) and sign in again with the same passkey. A browser that opens a
+  bookmarked address from its cache of 0.23.0 has its cache cleared on the
+  old page's first call, so a plain reload or the next address opens the
+  0.50 dashboard. The same hard reload applies to open tabs after a
+  rollback to 0.23.0.
 
 Sync Targets, webhooks and audit export are drained at the barrier and
 resume on the new server from where they stopped: nothing already
