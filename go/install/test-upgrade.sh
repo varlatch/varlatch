@@ -15,7 +15,9 @@
 #    the varlatch that is installed then, as an operator would.
 #    Where the candidate has upgrade --rollback, a rollback to a release that
 #    cannot read one's journal is refused with the steps by hand, which are
-#    then taken, and it is upgraded again, by the candidate's varlatch.
+#    then taken; to a release that can, a real rollback is run (binaries only
+#    and snapshot, as far as the declarations allow). Then it is upgraded
+#    again, by the candidate's varlatch.
 # 3. The candidate to a release that never serves: undone.
 # 4. The candidate to the next release, killed at each step, then a restart
 #    as a reboot makes it, then upgrade run again: the previous release
@@ -58,17 +60,22 @@ FROM='' CANDIDATE='' NEXT='' UNSAFE='' BROKEN=''
 # shellcheck source=/dev/null
 . "$built/versions"
 
-# The published prerelease to start from: its install.sh's hash, which is in
-# its signed SHA256SUMS. install.sh checks the rest itself.
+# The published prerelease to start from: its install.sh's hash (in its signed
+# SHA256SUMS; install.sh checks the rest itself), and what that release can do:
+#   FROM_JOURNAL   reads format 2 upgrade journals and keeps root-only snapshots
+#   FROM_ROLLBACK  can be rolled back to with varlatch upgrade --rollback
+#   FROM_HELD      holds varlatchd while an upgrade is not over, and after a restore
 case "$FROM" in
-  0.50.0-rc.2) FROM_INSTALL=82ca234af771ada287d7074077afc759d3204180665edb6765ed087dd6068ed7 ;;
-  0.50.0-rc.3) FROM_INSTALL=d232caa78826a42f7b90a6ef1127fe008eff5f89412a8662d4cd50c7124927fe ;;
-  0.50.0-rc.4) FROM_INSTALL=520401ca796edc0677f1fd636064861df39e67a52f86780de325dfdcbe7d471d ;;
+  0.50.0-rc.2) FROM_INSTALL=82ca234af771ada287d7074077afc759d3204180665edb6765ed087dd6068ed7 FROM_JOURNAL=0 FROM_ROLLBACK=0 FROM_HELD=0 ;;
+  0.50.0-rc.3) FROM_INSTALL=d232caa78826a42f7b90a6ef1127fe008eff5f89412a8662d4cd50c7124927fe FROM_JOURNAL=0 FROM_ROLLBACK=0 FROM_HELD=0 ;;
+  0.50.0-rc.4) FROM_INSTALL=520401ca796edc0677f1fd636064861df39e67a52f86780de325dfdcbe7d471d FROM_JOURNAL=1 FROM_ROLLBACK=1 FROM_HELD=1 ;;
   *) echo "refusing: this script has no hash of $FROM's install.sh" >&2; exit 2 ;;
 esac
 # The same for an upgrade from $FROM with the candidate's varlatch, run from
-# elsewhere: the new varlatch is installed before anything is written down, so
-# that the installed one can always read it. Finished by "checked" alone.
+# elsewhere. When FROM_JOURNAL=0, the new varlatch is installed before anything
+# is written down (tested in from-new-first); when FROM_JOURNAL=1, it is
+# installed after keeping the original database (also tested in from-new-first).
+# Finished by "checked" alone.
 FROM_KILLS="verified snapshot stopping stop:done stopped prepared data:keep-original:link:varlatch.db kept install:$CANDIDATE:varlatchd installed data:swap:rename:varlatch.db swapped start:$CANDIDATE started"
 # Whether the candidate's varlatchd refuses to serve while an upgrade is not
 # over (its journal says it may be half done).
@@ -294,11 +301,25 @@ past() {
   journal_says in-progress || return 1
   at=$(journal_step || true)
   seen=no
-  for s in verified snapshot stopping stopped prepared swapped started checked; do
+  for s in verified snapshot stopping stopped prepared kept installed swapped started checked; do
     if [ "$s" = "$1" ]; then seen=yes; fi
     if [ "$seen $s" = "yes $at" ]; then return 0; fi
   done
   return 1
+}
+# held_mid_upgrade <name> <step>: from stopping on, a varlatchd that reads the
+# journal serves nothing until the upgrade or rollback is over.
+held_mid_upgrade() {
+  case "$2" in
+    stopping | stopped | prepared | kept | installed | swapped | started | checked)
+      if [ "$("$VARLATCHD" --version)" = "varlatchd $FROM" ]; then
+        [ "$FROM_HELD" = 1 ] || return 0
+      else
+        [ "$GATE" = 1 ] || return 0
+      fi
+      check "$1: varlatchd serves nothing until the upgrade is over" not_answering
+      ;;
+  esac
 }
 # killed_from <point> [binary]: an upgrade from $FROM by the candidate's
 # varlatch (at $tool), killed there, then the installed varlatch.
@@ -313,8 +334,13 @@ killed_from() {
     *) check "$name: killed there" [ "$status" = 137 ] ;;
   esac
   check "$name: the journal says in progress" journal_says in-progress
-  echo "      $("$VARLATCH" --version), $("$VARLATCHD" --version) installed"
+  at=$(journal_step)
+  echo "      at $at, $("$VARLATCH" --version), $("$VARLATCHD" --version) installed"
   restarted
+  case "$at" in
+    verified | snapshot) check "$name: $FROM still answers before the stop" ready ;;
+    *) held_mid_upgrade "$name" "$at" ;;
+  esac
   upgrade "$name-again" "$VARLATCH"
   if [ "$status" != 0 ]; then tail -n 8 "$work/$name-again.out" >&2; fi
   check "$name: finished by the installed varlatch: it exits 0" [ "$status" = 0 ]
@@ -323,10 +349,14 @@ killed_from() {
     check "$name: the journal says done" journal_says "done"
   else
     check "$name: undone: $FROM serves" serves "$FROM"
-    # One $FROM's varlatch cannot read is not left in its way.
-    check "$name: the journal is aside" [ ! -e /etc/varlatch/upgrade.json ]
-    # shellcheck disable=SC2012 # its own names
-    check "$name: it says undone" grep -q '^  "state": *"undone"' "$(ls -t /etc/varlatch/upgrade-*.json | head -n 1)"
+    if [ "$FROM_JOURNAL" = 1 ]; then
+      check "$name: the journal says undone" journal_says undone
+    else
+      # One $FROM's varlatch cannot read is not left in its way.
+      check "$name: the journal is aside" [ ! -e /etc/varlatch/upgrade.json ]
+      # shellcheck disable=SC2012 # its own names
+      check "$name: it says undone" grep -q '^  "state": *"undone"' "$(ls -t /etc/varlatch/upgrade-*.json | head -n 1)"
+    fi
   fi
   check "$name: the data is there" has FIRST
   check "$name: the data directory is varlatch's" data_is_varlatchs
@@ -355,14 +385,19 @@ for step in stopped swapped started; do
   at=$(journal_step)
   echo "      at $at, $("$VARLATCH" --version) installed"
   restarted
+  held_mid_upgrade "$name" "$at"
   upgrade "$name-again" "$VARLATCH"
   if [ "$status" != 0 ]; then tail -n 8 "$work/$name-again.out" >&2; fi
   check "$name: finished by the installed varlatch: it exits 0" [ "$status" = 0 ]
   if journal_says undone; then
     check "$name: undone: $FROM serves" serves "$FROM"
   else
-    # The candidate stood in the database's place, and serves it.
-    case "$at" in verified | snapshot | stopping | stopped) fail "$name: finished, and the database was not swapped" ;; esac
+    if [ "$FROM_JOURNAL" = 1 ]; then
+      if [ "$at" != checked ]; then fail "$name: finished before checked (at $at)"; fi
+    else
+      # The candidate stood in the database's place, and serves it.
+      case "$at" in verified | snapshot | stopping | stopped) fail "$name: finished, and the database was not swapped" ;; esac
+    fi
     check "$name: finished: $CANDIDATE serves" serves "$CANDIDATE"
     check "$name: the journal says done" journal_says "done"
   fi
@@ -382,67 +417,178 @@ done
 must "from-kill: $FROM serves, to go on from" serves "$FROM"
 # And the candidate's varlatch, finished by the one it installed.
 install -m 755 "$client_bin" "$tool"
-# Its first act, before there is a journal of its own: it installs itself. The
-# installed varlatch goes on from there.
-export VARLATCH_TEST_UPGRADE_KILL="install:$CANDIDATE:varlatch"
-upgrade from-new-first "$tool" "$CANDIDATE" --yes --accept-not-rollback-safe
-unset VARLATCH_TEST_UPGRADE_KILL
-check "from-new-first: killed there" [ "$status" = 137 ]
-check "from-new-first: nothing is in progress" not_in_progress
-check "from-new-first: $CANDIDATE's varlatch beside $FROM's varlatchd" [ "$("$VARLATCH" --version), $("$VARLATCHD" --version)" = "varlatch $CANDIDATE, varlatchd $FROM" ]
-restarted
-check "from-new-first: $FROM answers" ready
-check "from-new-first: the data is there" has FIRST
-if [ "$failures" -gt 0 ]; then finish; fi
-killed_from stopped "$VARLATCH"
+if [ "$FROM_JOURNAL" = 0 ]; then
+  # Its first act, before there is a journal of its own: it installs itself. The
+  # installed varlatch goes on from there.
+  export VARLATCH_TEST_UPGRADE_KILL="install:$CANDIDATE:varlatch"
+  upgrade from-new-first "$tool" "$CANDIDATE" --yes --accept-not-rollback-safe
+  unset VARLATCH_TEST_UPGRADE_KILL
+  check "from-new-first: killed there" [ "$status" = 137 ]
+  check "from-new-first: nothing is in progress" not_in_progress
+  check "from-new-first: $CANDIDATE's varlatch beside $FROM's varlatchd" [ "$("$VARLATCH" --version), $("$VARLATCHD" --version)" = "varlatch $CANDIDATE, varlatchd $FROM" ]
+  restarted
+  check "from-new-first: $FROM answers" ready
+  check "from-new-first: the data is there" has FIRST
+  if [ "$failures" -gt 0 ]; then finish; fi
+  killed_from stopped "$VARLATCH"
+else
+  # $FROM reads format 2 journals, so the candidate installs its varlatch only
+  # after keeping the original database, with the journal at kept.
+  export VARLATCH_TEST_UPGRADE_KILL="install:$CANDIDATE:varlatch"
+  upgrade from-new-first "$tool" "$CANDIDATE" --yes --accept-not-rollback-safe
+  unset VARLATCH_TEST_UPGRADE_KILL
+  check "from-new-first: killed there" [ "$status" = 137 ]
+  check "from-new-first: the journal says in progress" journal_says in-progress
+  check "from-new-first: the journal is at kept" [ "$(journal_step)" = kept ]
+  check "from-new-first: $CANDIDATE's varlatch beside $FROM's varlatchd" [ "$("$VARLATCH" --version), $("$VARLATCHD" --version)" = "varlatch $CANDIDATE, varlatchd $FROM" ]
+  restarted
+  held_mid_upgrade from-new-first kept
+  upgrade from-new-first-again "$VARLATCH"
+  if [ "$status" != 0 ]; then tail -n 8 "$work/from-new-first-again.out" >&2; fi
+  check "from-new-first: finished by the installed varlatch: it exits 0" [ "$status" = 0 ]
+  check "from-new-first: undone: $FROM serves" serves "$FROM"
+  check "from-new-first: the journal says undone" journal_says undone
+  check "from-new-first: the data is there" has FIRST
+  check "from-new-first: the data directory is varlatch's" data_is_varlatchs
+  check "from-new-first: the keys are root's" keys_are_roots
+  check "from-new-first: varlatch doctor passes" doctor
+  if [ "$failures" -gt 0 ]; then finish; fi
+fi
 for point in $FROM_KILLS; do killed_from "$point"; done
 install -m 755 "$built/from/varlatch" "$tool"
+touch "$work/now"
 upgrade to-candidate "$tool" "$CANDIDATE" --yes --accept-not-rollback-safe
 upgraded to-candidate "$CANDIDATE"
 must "to-candidate: the data is there" has FIRST
 put SECOND
-check "to-candidate: the snapshot is kept" test -n "$(find /var/lib/varlatch/upgrades -name 'snapshot*' -print -quit)"
+if [ "$FROM_JOURNAL" = 1 ]; then
+  check "to-candidate: the snapshot is root's, in a directory of its own" [ "$(find /usr/local/lib/varlatch/snapshots -name snapshot.vltbak -newer "$work/now" -exec stat -c '%a %U' {} +)" = '600 root' ]
+  check "to-candidate: the snapshot directories are root's alone" [ "$(find /usr/local/lib/varlatch/snapshots -type d -exec stat -c '%a %U' {} + | sort -u)" = '700 root' ]
+  check "to-candidate: no snapshot in the data directory" [ -z "$(find /var/lib/varlatch/upgrades -name 'snapshot*' -newer "$work/now" -print -quit)" ]
+else
+  check "to-candidate: the snapshot is kept" test -n "$(find /var/lib/varlatch/upgrades -name 'snapshot*' -print -quit)"
+fi
 
 install -m 755 "$client_bin" "$tool"
 if has_rollback; then
-  before=$(sha256sum /etc/varlatch/upgrade.json "$VARLATCH" "$VARLATCHD")
-  upgrade by-hand "$tool" --rollback --yes --accept-data-loss
-  check "by-hand: a rollback to $FROM is refused" [ "$status" != 0 ]
-  check "by-hand: it gives the steps" says by-hand "losing every change made since the pre-upgrade snapshot"
-  check "by-hand: nothing changed" [ "$before" = "$(sha256sum /etc/varlatch/upgrade.json "$VARLATCH" "$VARLATCHD")" ]
-  check "by-hand: $CANDIDATE still serves" serves "$CANDIDATE"
-  # The steps as printed, one command each, and the way back from the last.
-  sed -n 's/^  sudo //p' "$work/by-hand.out" >"$work/by-hand.sh"
-  sed -n '/^To go back on it/,$s/^  [0-9][0-9, ]*: sudo //p' "$work/by-hand.out" >"$work/way-back.sh"
-  check "by-hand: eight steps, the check first and the start last" [ "$(sed -n '1s/ --in .*//p;$p' "$work/by-hand.sh" | tr '\n' ' ')$(wc -l <"$work/by-hand.sh")" = "$VARLATCHD admin backup restore --check --opens systemctl enable --now varlatchd 8" ]
-  check "by-hand: five commands back" [ "$(wc -l <"$work/way-back.sh")" = 5 ]
-  by_hand() { # <what>
-    if ! sh -e "$work/by-hand.sh" >"$work/by-hand-steps.out" 2>&1; then
-      fail "$1: a step: $(tail -n 4 "$work/by-hand-steps.out")"
-      finish
+  if [ "$FROM_ROLLBACK" = 0 ]; then
+    before=$(sha256sum /etc/varlatch/upgrade.json "$VARLATCH" "$VARLATCHD")
+    upgrade by-hand "$tool" --rollback --yes --accept-data-loss
+    check "by-hand: a rollback to $FROM is refused" [ "$status" != 0 ]
+    check "by-hand: it gives the steps" says by-hand "losing every change made since the pre-upgrade snapshot"
+    check "by-hand: nothing changed" [ "$before" = "$(sha256sum /etc/varlatch/upgrade.json "$VARLATCH" "$VARLATCHD")" ]
+    check "by-hand: $CANDIDATE still serves" serves "$CANDIDATE"
+    # The steps as printed, one command each, and the way back from the last.
+    sed -n 's/^  sudo //p' "$work/by-hand.out" >"$work/by-hand.sh"
+    sed -n '/^To go back on it/,$s/^  [0-9][0-9, ]*: sudo //p' "$work/by-hand.out" >"$work/way-back.sh"
+    check "by-hand: eight steps, the check first and the start last" [ "$(sed -n '1s/ --in .*//p;$p' "$work/by-hand.sh" | tr '\n' ' ')$(wc -l <"$work/by-hand.sh")" = "$VARLATCHD admin backup restore --check --opens systemctl enable --now varlatchd 8" ]
+    check "by-hand: five commands back" [ "$(wc -l <"$work/way-back.sh")" = 5 ]
+    by_hand() { # <what>
+      if ! sh -e "$work/by-hand.sh" >"$work/by-hand-steps.out" 2>&1; then
+        fail "$1: a step: $(tail -n 4 "$work/by-hand-steps.out")"
+        finish
+      fi
+      check "$1: $FROM serves again" serves "$FROM"
+      check "$1: the data from before the upgrade is there" has FIRST
+      check "$1: what changed since is lost, as it says" has_not SECOND
+      check "$1: the data directory is varlatch's" data_is_varlatchs
+      check "$1: the keys are root's" keys_are_roots
+      check "$1: varlatch doctor passes" doctor
+    }
+    by_hand by-hand
+    if sh -e "$work/way-back.sh" >"$work/way-back.out" 2>&1; then
+      check "way-back: $CANDIDATE serves again" serves "$CANDIDATE"
+      check "way-back: what changed since the upgrade is there" has SECOND
+      check "way-back: the journal is the upgrade's" journal_says "done"
+      check "way-back: the data directory is varlatch's" data_is_varlatchs
+      check "way-back: varlatch doctor passes" doctor
+    else
+      fail "way-back: a command: $(tail -n 4 "$work/way-back.out")"
     fi
-    check "$1: $FROM serves again" serves "$FROM"
-    check "$1: the data from before the upgrade is there" has FIRST
-    check "$1: what changed since is lost, as it says" has_not SECOND
-    check "$1: the data directory is varlatch's" data_is_varlatchs
-    check "$1: the keys are root's" keys_are_roots
-    check "$1: varlatch doctor passes" doctor
-  }
-  by_hand by-hand
-  if sh -e "$work/way-back.sh" >"$work/way-back.out" 2>&1; then
-    check "way-back: $CANDIDATE serves again" serves "$CANDIDATE"
-    check "way-back: what changed since the upgrade is there" has SECOND
-    check "way-back: the journal is the upgrade's" journal_says "done"
-    check "way-back: the data directory is varlatch's" data_is_varlatchs
-    check "way-back: varlatch doctor passes" doctor
+    if [ "$failures" -gt 0 ]; then finish; fi
+    # It is kept, and is in the way of the same steps again.
+    rm -r /usr/local/lib/varlatch/by-hand-*
+    by_hand by-hand-again
+    if [ "$failures" -gt 0 ]; then finish; fi
   else
-    fail "way-back: a command: $(tail -n 4 "$work/way-back.out")"
+    if grep -q '^  "rollbackSafe": *true' /etc/varlatch/upgrade.json; then
+      # Interrupted once $FROM's binaries are back: $FROM's own varlatch reads
+      # the rollback's journal and undoes it.
+      export VARLATCH_TEST_UPGRADE_KILL="installed"
+      upgrade back-from-kill "$VARLATCH" --rollback --yes
+      unset VARLATCH_TEST_UPGRADE_KILL
+      check "back-from-kill: killed there" [ "$status" = 137 ]
+      check "back-from-kill: the journal says in progress" journal_says in-progress
+      check "back-from-kill: $FROM's binaries are in place" [ "$("$VARLATCH" --version), $("$VARLATCHD" --version)" = "varlatch $FROM, varlatchd $FROM" ]
+      restarted
+      held_mid_upgrade back-from-kill installed
+      upgrade back-from-kill-again "$VARLATCH"
+      if [ "$status" != 0 ]; then tail -n 8 "$work/back-from-kill-again.out" >&2; fi
+      check "back-from-kill: undone by $FROM's varlatch: it exits 0" [ "$status" = 0 ]
+      check "back-from-kill: undone: $CANDIDATE serves" serves "$CANDIDATE"
+      check "back-from-kill: the journal is the upgrade's again" sh -c '! grep -q "^  \"kind\": *\"rollback\"" "$1" && grep -q "\"lastRollback\"" "$1"' sh /etc/varlatch/upgrade.json
+      check "back-from-kill: the journal says done" journal_says "done"
+      check "back-from-kill: the data is there" has SECOND
+      check "back-from-kill: the data directory is varlatch's" data_is_varlatchs
+      check "back-from-kill: the keys are root's" keys_are_roots
+      check "back-from-kill: varlatch doctor passes" doctor
+      if [ "$failures" -gt 0 ]; then finish; fi
+
+      # Binaries only: the declaration allows keeping the database.
+      upgrade back-from "$VARLATCH" --rollback --yes
+      upgraded back-from "$FROM"
+      check "back-from: the journal is the rollback's" grep -q '^  "kind": *"rollback"' /etc/varlatch/upgrade.json
+      check "back-from: the binaries alone: a change made since is kept" has SECOND
+      if [ "$FROM_HELD" = 1 ]; then check "back-from: not held" not_held; fi
+      check "back-from: varlatch doctor passes" doctor
+      if [ "$failures" -gt 0 ]; then finish; fi
+
+      # Snapshot way back to $FROM: $NEXT declares itself rollback-safe for
+      # $CANDIDATE, not for $FROM.
+      upgrade from-to-next-refused "$tool" "$NEXT" --yes
+      check "from-to-next: refused unless accepted" [ "$status" != 0 ]
+      upgrade from-to-next "$tool" "$NEXT" --yes --accept-not-rollback-safe
+      upgraded from-to-next "$NEXT"
+      put FROM_LOSS
+      check "from-loss: change made after the upgrade is read back" has FROM_LOSS
+      upgrade from-loss-refused "$VARLATCH" --rollback --yes
+      check "from-loss: refused without --accept-data-loss" [ "$status" != 0 ]
+      check "from-loss: $NEXT still serves" serves "$NEXT"
+      check "from-loss: the change is still there" has FROM_LOSS
+      upgrade from-loss "$VARLATCH" --rollback --accept-data-loss
+      upgraded from-loss "$FROM"
+      check "from-loss: the journal is the rollback's" grep -q '^  "kind": *"rollback"' /etc/varlatch/upgrade.json
+      check "from-loss: what was there before the upgrade is there" has FIRST
+      check "from-loss: the earlier change is there too" has SECOND
+      check "from-loss: what changed since is lost, as it says" has_not FROM_LOSS
+      if [ "$FROM_HELD" = 1 ]; then
+        check "from-loss: held until it is resumed" held
+        check "from-loss: resumed" "$VARLATCH" admin restore resume --config "$CONF"
+        check "from-loss: it is held no more" not_held
+      fi
+      check "from-loss: varlatch doctor passes" doctor
+      if [ "$failures" -gt 0 ]; then finish; fi
+    else
+      # Snapshot way only: the candidate does not declare itself rollback-safe
+      # for $FROM.
+      upgrade from-loss-refused "$VARLATCH" --rollback --yes
+      check "from-loss: refused without --accept-data-loss" [ "$status" != 0 ]
+      check "from-loss: $CANDIDATE still serves" serves "$CANDIDATE"
+      check "from-loss: the change is still there" has SECOND
+      upgrade from-loss "$VARLATCH" --rollback --accept-data-loss
+      upgraded from-loss "$FROM"
+      check "from-loss: the journal is the rollback's" grep -q '^  "kind": *"rollback"' /etc/varlatch/upgrade.json
+      check "from-loss: what was there before the upgrade is there" has FIRST
+      check "from-loss: what changed since is lost, as it says" has_not SECOND
+      if [ "$FROM_HELD" = 1 ]; then
+        check "from-loss: held until it is resumed" held
+        check "from-loss: resumed" "$VARLATCH" admin restore resume --config "$CONF"
+        check "from-loss: it is held no more" not_held
+      fi
+      check "from-loss: varlatch doctor passes" doctor
+      if [ "$failures" -gt 0 ]; then finish; fi
+    fi
   fi
-  if [ "$failures" -gt 0 ]; then finish; fi
-  # It is kept, and is in the way of the same steps again.
-  rm -r /usr/local/lib/varlatch/by-hand-*
-  by_hand by-hand-again
-  if [ "$failures" -gt 0 ]; then finish; fi
   touch "$work/now"
   killed_from checked
   # The new engine's snapshot is root's, out of varlatchd's reach.
