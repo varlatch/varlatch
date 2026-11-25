@@ -234,7 +234,7 @@ func deletionLimits(organization bool) []string {
 	}
 	lines := []string{
 		"Deletion covers this installation's live database. It does not reach:",
-		"  PostgreSQL's old row versions and write-ahead log, its replicas and snapshots of its volume, which keep the data for a while;",
+		"  The database's old pages and write-ahead log, its replicas and snapshots of its volume, which keep the data for a while;",
 		"  requests already authorized: the server may still hold their keys or values in memory" + inFlight + ";",
 		"  backups taken before it completes: they keep the data until their retention removes them, and restoring one brings it back;",
 		"  values already pushed to platforms: they stay there;",

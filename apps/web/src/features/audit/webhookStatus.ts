@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { outboundRefusalOfStatus, outboundRefusalText, type Webhook } from "@varlatch/protocol";
+import { outboundRefusalOfStatus, type Webhook } from "@varlatch/protocol";
+import { outboundRefusalText } from "../../lib/outbound";
 
 /**
  * The last delivery of a webhook in words. A delivery this installation's

@@ -108,9 +108,10 @@ describe("the Settings danger zone", () => {
     const said = asked.consequences.map((c) => c.text).join("\n");
     expect(said).toContain("and another admin's approval");
     // Every limit of Decision 10.
-    for (const limit of ["write-ahead log", "replicas and volume snapshots", "in memory", "in flight", "restoring one brings it back", "pushed to platforms", "Installation tokens already issued"]) {
+    for (const limit of ["free pages and write-ahead log", "snapshots of its volume", "in memory", "in flight", "restoring one brings it back", "pushed to platforms", "Installation tokens already issued"]) {
       expect(said, limit).toContain(limit);
     }
+    expect(said).not.toContain("PostgreSQL");
     expect(fake.api.scheduleOrganizationDeletion).toHaveBeenCalledWith("acme", { afterDays: 3 });
     expect(fake.toasts).toEqual(["Deletion scheduled"]);
   });
@@ -305,9 +306,10 @@ describe("deleting a project", () => {
     const asked = fake.confirm.mock.calls[1]![0] as { typeToConfirm: string; consequences: { text: string }[] };
     expect(asked.typeToConfirm).toBe("api");
     const said = asked.consequences.map((c) => c.text).join("\n");
-    for (const limit of ["write-ahead log", "replicas and volume snapshots", "in memory", "restoring one brings them back", "pushed to platforms"]) {
+    for (const limit of ["free pages and write-ahead log", "snapshots of its volume", "in memory", "restoring one brings them back", "pushed to platforms"]) {
       expect(said, limit).toContain(limit);
     }
+    expect(said).not.toContain("PostgreSQL");
     expect(fake.api.deleteProject).toHaveBeenCalledWith("acme", "api");
     expect(left).toHaveBeenCalledOnce();
     expect(fake.toasts).toEqual(["Project api deleted"]);

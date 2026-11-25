@@ -60,7 +60,7 @@ export function organizationDeletionConsequences(approvalNeeded: boolean, auditE
     "Whoever can read the audit log then can still export it afterwards.",
     "Values pushed to platforms and copies people revealed or downloaded are not reached: rotate them at their provider.",
     "Backups taken before the deletion completes keep the data until their retention removes them, and restoring one brings it back.",
-    "PostgreSQL's old row versions and write-ahead log, its replicas and volume snapshots keep the data for a while. Requests already authorized may still hold keys or values in memory, and one in flight when the deletion runs may still complete.",
+    "The database file's free pages and write-ahead log, and snapshots of its volume, keep the data for a while. Requests already authorized may still hold keys or values in memory, and one in flight when the deletion runs may still complete.",
     "A GitHub App stays installed on GitHub: uninstall or delete it there, and revoke copies of its private key. Installation tokens already issued stay valid until they expire.",
     ...(auditExport === "unknown" ? [AUDIT_EXPORT_UNKNOWN] : auditExport ? [AUDIT_EXPORT_DRAIN] : []),
   ];

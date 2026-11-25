@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
   outboundRefusalOfStatus,
-  outboundRefusalText,
   type OutboundRefusalReason,
   type PlatformConnection,
   type SyncTarget,
   type SyncTargetNote,
 } from "@varlatch/protocol";
+import { outboundRefusalText } from "../../lib/outbound";
 import { platformMeta } from "./platform-meta";
 
 /**

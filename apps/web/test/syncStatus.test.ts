@@ -174,7 +174,8 @@ describe("a destination this installation refuses (ADR-0057)", () => {
     const s = targetStatus(target({ lastResult: "outbound_refused: private_address", needsSync: true }));
     expect(s).toMatchObject({ tone: "warn", label: "Destination refused", detail: "waiting for the host operator" });
     expect(s.error).toContain("This address is on a private network");
-    expect(s.error).toContain("VARLATCH_OUTBOUND_ALLOW");
+    expect(s.error).toContain("outbound_allow in varlatchd.conf");
+    expect(s.error).not.toContain("VARLATCH_OUTBOUND_ALLOW");
     expect(s.fix).toBeUndefined();
     // Even after earlier failures: the refusal is what holds it now.
     expect(targetStatus(target({ failureCount: 2, lastResult: "outbound_refused: scheme" })).error).toContain("Plain http");

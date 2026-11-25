@@ -2,8 +2,9 @@
 import React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowUpRight, Ban, CircleCheck, CircleHelp } from "lucide-react";
-import { OUTBOUND_HOST_NOTE, OUTBOUND_POLICY_DOCS, OUTBOUND_REFUSAL_LABELS, OUTBOUND_REFUSAL_MESSAGES } from "@varlatch/protocol";
+import { OUTBOUND_POLICY_DOCS, OUTBOUND_REFUSAL_LABELS } from "@varlatch/protocol";
 import type { RefusedDestination, RefusedDestinations } from "@varlatch/sdk";
+import { OUTBOUND_HOST_NOTE, OUTBOUND_REFUSAL_MESSAGES } from "../../lib/outbound";
 import { useSession } from "../../lib/session";
 import { formatDateTime, timeAgo, useNow } from "../../lib/time";
 import { useCapability } from "../projects/hooks";

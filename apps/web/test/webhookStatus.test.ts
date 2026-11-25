@@ -8,7 +8,8 @@ describe("deliveryStatus", () => {
     const s = deliveryStatus({ failureCount: 4, lastStatus: "outbound_refused" });
     expect(s).toMatchObject({ tone: "warn", label: "Refused by this installation" });
     expect(s.refusal).toContain("outbound policy refuses this destination");
-    expect(s.refusal).toContain("VARLATCH_OUTBOUND_ALLOW");
+    expect(s.refusal).toContain("outbound_allow in varlatchd.conf");
+    expect(s.refusal).not.toContain("VARLATCH_OUTBOUND_ALLOW");
     expect(s.refusal).toContain("some addresses can never be used");
   });
 
