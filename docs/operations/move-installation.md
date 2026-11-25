@@ -1,9 +1,5 @@
 # Moving an installation to another address
 
-> **Prerelease.** This page is for Varlatch 0.50, which is not released yet.
-> The current release, 0.23.0, runs on Docker Compose:
-> [its version of this page](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/operations/move-installation.md).
-
 An installation's public URL ([`public_url`](../self-hosting/configuration.md#public_url))
 is the address people open in the browser. Use `varlatch move` to change it,
 for example for a new domain. To move to another host at the same address,

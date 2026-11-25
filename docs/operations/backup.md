@@ -1,9 +1,5 @@
 # Installation backup and recovery
 
-> **Prerelease.** This page is for Varlatch 0.50, which is not released yet.
-> The current release, 0.23.0, runs on Docker Compose:
-> [its version of this page](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/operations/backup.md).
-
 An installation backs itself up: `varlatchd` makes an encrypted archive of
 its database every day, checks it, and uploads it when you gave it a bucket.
 You need no scheduler and no other program. The host commands below need

@@ -139,7 +139,7 @@ to `api.stripe.com` only, and `DATABASE_URL` never reaches the agent at all.
   durable before it is answered. Every change of a value, a
   contract or a grant commits with its audit event, in the same transaction. The database refuses to change or remove an audit event.
 
-This is Varlatch from 0.50, a prerelease now. 0.23.0 runs the same API on
+This is Varlatch from 0.50. 0.23.0 runs the same API on
 PostgreSQL and a self-hosted Convex backend:
 [its README](https://github.com/varlatch/varlatch/tree/v0.23.0#how-it-works).
 
@@ -152,17 +152,17 @@ where you are: [joining a team](docs/join-a-team.md) you were invited to,
 
 ### Run your own installation
 
-Varlatch runs on any Linux host, amd64 or arm64, and on Coolify. The current
-release, 0.23.0, runs with Docker Compose: follow
-[its documentation](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/run-an-installation.md). From
-0.50, a prerelease now, it is one program with its own database:
-[Run an installation](docs/run-an-installation.md).
+Varlatch runs on any Linux host, amd64 or arm64, and on Coolify. From 0.50,
+it is one program with its own database:
+[Run an installation](docs/run-an-installation.md). The previous release
+line, 0.23.0, runs with Docker Compose: follow
+[its documentation](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/run-an-installation.md).
 
 ### Use the CLI
 
-The CLI is one file attached to every release. 0.23.0's needs Node.js
-([install it](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/reference/install-the-cli.md)); from
-0.50 it needs nothing else: [Install the CLI](docs/reference/install-the-cli.md).
+The CLI is one file attached to every release. From 0.50 it needs nothing
+else: [Install the CLI](docs/reference/install-the-cli.md). 0.23.0's needs
+Node.js ([install it](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/reference/install-the-cli.md)).
 
 ```sh
 varlatch login --server https://varlatch.example.com

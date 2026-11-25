@@ -8,10 +8,6 @@ identity, its address and its keys, and every person, Organization,
 Project, value, grant, credential and audit event, checked on both sides
 before the new server opens.
 
-> **Prerelease.** This guide follows the 0.50 prereleases. The last
-> TypeScript release, 0.23.0, is published, and `varlatch migrate` starts
-> from its published image only.
-
 ## What people notice
 
 - **They sign in again, with the same passkey.** Every browser session ends

@@ -1,9 +1,5 @@
 # Run an installation
 
-> **Prerelease.** This page is for Varlatch 0.50, which is not released yet.
-> The current release, 0.23.0, runs on Docker Compose:
-> [its version of this page](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/run-an-installation.md).
-
 Varlatch is self-hosted: one person on your team runs an installation,
 once, and everyone else signs in to it. Skip this page if someone already
 runs one for you: [Join a team](join-a-team.md).

@@ -1,9 +1,5 @@
 # Install the CLI
 
-> **Prerelease.** This page is for Varlatch 0.50, which is not released yet.
-> The current release is 0.23.0, whose CLI needs Node.js:
-> [its version of this page](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/reference/install-the-cli.md).
-
 The CLI is one program, `varlatch`, for Linux, macOS and Windows, on amd64
 and arm64. It needs nothing else. Use the version your installation runs:
 the dashboard shows it under Settings, then Server.

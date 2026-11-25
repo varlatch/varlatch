@@ -1,9 +1,5 @@
 # Configuration reference
 
-> **Prerelease.** This page is for Varlatch 0.50, which is not released yet.
-> The current release, 0.23.0, is configured with environment variables:
-> [its version of this page](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/self-hosting/configuration.md).
-
 Every setting of an installation is in one file, `varlatchd.conf`. On a host
 it is `/etc/varlatch/varlatchd.conf`, and `varlatch setup` writes it. In the
 container image you mount it at the same path.
