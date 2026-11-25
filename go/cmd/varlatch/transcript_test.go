@@ -267,10 +267,16 @@ var differences = map[string]transcript.Difference{
 	},
 	// A host operator's setting is named as a Go installation's, in
 	// varlatchd.conf; the TypeScript CLI names its environment variable.
+	// Deletion's storage limit is neutral for both servers, where the
+	// TypeScript CLI names PostgreSQL.
 	"host-settings": func(o *transcript.Outcome, _ transcript.Outcome) {
 		for _, n := range [][2]string{
 			{"VARLATCH_OUTBOUND_ALLOW on the host", "outbound_allow in varlatchd.conf on the host"},
 			{"(VARLATCH_AUDIT_EXPORT=off)", "(audit_export = off in varlatchd.conf)"},
+			{
+				"  PostgreSQL's old row versions and write-ahead log, its replicas and snapshots of its volume, which keep the data for a while;",
+				"  The database's old pages and write-ahead log, its replicas and snapshots of its volume, which keep the data for a while;",
+			},
 		} {
 			o.Stdout = strings.ReplaceAll(o.Stdout, n[0], n[1])
 		}
@@ -732,6 +738,9 @@ func TestTranscripts(t *testing.T) {
 				slots <- struct{}{}
 				defer func() { <-slots }()
 				c.Env = withMarker(c.Env)
+				if strings.Contains(c.Expect.Stdout, "PostgreSQL's old row versions") && !slices.Contains(c.Differences, "host-settings") {
+					c.Differences = append(slices.Clone(c.Differences), "host-settings")
+				}
 				if slices.Contains(c.Differences, "skill-version") {
 					files := map[string]string{}
 					for path, content := range c.Files {

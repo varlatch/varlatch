@@ -16,7 +16,7 @@ export const PROJECT_DELETION_CONSEQUENCES = [
   "Its environments, Sync Targets and Capabilities stop working, and Teams lose their link to it.",
   "Values already pushed to platforms stay there, and copies people revealed or downloaded stay wherever they are: rotate them at their provider.",
   "Backups taken before now keep the values until their retention removes them, and restoring one brings them back.",
-  "PostgreSQL's old row versions and write-ahead log, its replicas and volume snapshots keep the values for a while, and requests already authorized may still hold them in memory.",
+  "The database file's free pages and write-ahead log, and snapshots of its volume, keep the values for a while, and requests already authorized may still hold them in memory.",
   "The audit log keeps the project's events. Its slug can be used again for a new, empty project.",
 ];
 

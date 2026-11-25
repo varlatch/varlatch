@@ -160,6 +160,10 @@ deliver or destroy on its own waits for `sudo varlatch admin restore resume`
   (`--dir`, `.env` variables, the Tailscale sidecar), which the Go CLI
   refuses. They name `varlatchd.conf`'s settings now, and the commands for a
   service or for the container image.
+- **Deletion notices and outbound refusal texts name SQLite and
+  `outbound_allow in varlatchd.conf`** instead of PostgreSQL and
+  `VARLATCH_OUTBOUND_ALLOW`; the CLI's deletion notice is neutral for both
+  servers.
 - **An address without a page shows a not-found page** of the dashboard,
   with its navigation and a way back, where the router's developer error
   page ("Unexpected Application Error!") showed. A page that fails shows a
