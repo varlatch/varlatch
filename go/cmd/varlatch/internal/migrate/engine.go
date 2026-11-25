@@ -132,6 +132,9 @@ type DryRunReport struct {
 	ImportMs int64  `json:"importMs"`
 	CheckMs  int64  `json:"checkMs"`
 	DrainMs  int64  `json:"drainMs"`
+	// HeadroomMs is the variance margin on the measured copy work
+	// (max(work/4, 30s)), included in ProjectedMs.
+	HeadroomMs int64 `json:"headroomMs"`
 	// TransferMs is the address transfer's share, estimated for the
 	// ingress shape (decision 19: an ACME issuance or a domain move about
 	// a minute, an own proxy's port a few seconds), and the target's
@@ -381,7 +384,7 @@ func (e *Engine) start(ctx context.Context, prev *Journal, reuse, dryRunOnly boo
 			return j, err
 		}
 		if !report.Fits {
-			return j, fmt.Errorf("%w: %s projected, %s allowed; nothing was switched", ErrOverBudget, ms(report.ProjectedMs), ms(report.MaxDowntimeMs))
+			return j, fmt.Errorf("%w: %s projected, with headroom %s (%s allowed); nothing was switched", ErrOverBudget, ms(report.ProjectedMs), ms(report.HeadroomMs), ms(report.MaxDowntimeMs))
 		}
 		return j, nil
 	}
@@ -426,6 +429,11 @@ func orNone(s string) string {
 		return "a release it does not name"
 	}
 	return s
+}
+
+// projectionHeadroom is max(work/4, 30s) in milliseconds.
+func projectionHeadroom(workMs int64) int64 {
+	return max(workMs/4, int64((30*time.Second)/time.Millisecond))
 }
 
 func ms(n int64) string { return (time.Duration(n) * time.Millisecond).Round(time.Second).String() }
@@ -626,7 +634,9 @@ func (e *Engine) dryRun(ctx context.Context, j *Journal) (*DryRunReport, error) 
 		ImportMs: imported.Sub(exportedAt).Milliseconds(), CheckMs: checked.Sub(imported).Milliseconds(),
 		DrainMs: e.drain().Milliseconds(), MaxDowntimeMs: e.maxDowntime().Milliseconds(), Copy: cp, Checks: &checks,
 		TransferMs: (transferEstimate(j.Ingress) + tailnetEstimate(j.Tailnet)).Milliseconds(), Ingress: j.Ingress}
-	r.ProjectedMs = r.DrainMs + r.ExportMs + r.ImportMs + r.CheckMs + r.TransferMs
+	workMs := r.ExportMs + r.ImportMs + r.CheckMs
+	r.HeadroomMs = projectionHeadroom(workMs)
+	r.ProjectedMs = r.DrainMs + workMs + r.HeadroomMs + r.TransferMs
 	r.Fits = r.ProjectedMs <= r.MaxDowntimeMs
 	j.DryRun = r
 	if !checks.Passed {

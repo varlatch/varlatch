@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -199,5 +200,43 @@ func TestImageRefRefusalOnStderr(t *testing.T) {
 			c.hidden != "" && strings.Contains(got, c.hidden) {
 			t.Errorf("%q: stderr %q; want %q and the form, nothing masked, %q not shown", c.ref, got, c.want, c.hidden)
 		}
+	}
+}
+
+// The dry-run report names headroom in text and JSON, stays parseable by the
+// rehearsal's "Projected downtime <d> fits" check, and omits headroom for
+// earlier journals that had none.
+func TestMigrateStatusProjectionHeadroom(t *testing.T) {
+	dir := t.TempDir()
+	j := `{"format":1,"id":"mig_h","phase":"dry-run","stopped":true,"ingress":"proxy","history":[],"dryRun":{"at":"2026-11-24T00:00:00Z","exportMs":50000,"importMs":152000,"checkMs":48000,"drainMs":20000,"headroomMs":62500,"transferMs":10000,"ingress":"proxy","projectedMs":342500,"maxDowntimeMs":600000,"fits":true,"copy":{"tables":58,"rows":375918},"checks":{"passed":true}}}`
+	if err := os.WriteFile(filepath.Join(dir, migrate.JournalFile), []byte(j), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	if code := Main([]string{"migrate", "--status", "--from", dir}, MapEnv{"VARLATCH_CONFIG_DIR": t.TempDir()}, IO{Stdin: strings.NewReader(""), Stdout: &out, Stderr: &errOut}); code != 0 {
+		t.Fatalf("--status: %d %q %q", code, out.String(), errOut.String())
+	}
+	want := "Projected downtime 5m43s fits the budget of 10m0s, with headroom 1m3s: drain up to 20s, export 50s, import 2m32s, checks 48s, address transfer 10s"
+	if !strings.Contains(out.String(), want) {
+		t.Fatalf("text report:\n%s\nwant %q", out.String(), want)
+	}
+	if m := regexp.MustCompile(`Projected downtime (\S+) fits`).FindStringSubmatch(out.String()); m == nil || m[1] != "5m43s" {
+		t.Fatalf("rehearsal regex match: %v", m)
+	}
+	out.Reset()
+	if code := Main([]string{"migrate", "--status", "--from", dir, "--json"}, MapEnv{"VARLATCH_CONFIG_DIR": t.TempDir()}, IO{Stdin: strings.NewReader(""), Stdout: &out, Stderr: &errOut}); code != 0 {
+		t.Fatalf("--status --json: %d %q", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), `"headroomMs": 62500`) || !strings.Contains(out.String(), `"projectedMs": 342500`) {
+		t.Fatalf("json report lacks headroomMs/projectedMs:\n%s", out.String())
+	}
+	// Legacy journal with no headroomMs omits the headroom clause.
+	legacy := strings.Replace(j, `"headroomMs":62500,`, "", 1)
+	if err := os.WriteFile(filepath.Join(dir, migrate.JournalFile), []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if code := Main([]string{"migrate", "--status", "--from", dir}, MapEnv{"VARLATCH_CONFIG_DIR": t.TempDir()}, IO{Stdin: strings.NewReader(""), Stdout: &out, Stderr: &errOut}); code != 0 || strings.Contains(out.String(), "with headroom") {
+		t.Fatalf("legacy report: %d %q", code, out.String())
 	}
 }

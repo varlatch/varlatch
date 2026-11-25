@@ -164,6 +164,10 @@ deliver or destroy on its own waits for `sudo varlatch admin restore resume`
 
 ### CLI
 
+- **`varlatch migrate` adds headroom to its downtime projection.** The dry
+  run adds a quarter of the measured export, import and check time (at least
+  30 seconds), shown as headroom in its report and JSON and counted against
+  `--max-downtime`.
 - **`varlatch --help` shows a Go installation's host commands.** It had a
   Compose installation's (`setup --dir`, `adopt`, `admin backup create`, the
   Compose `upgrade`), which the Go CLI refuses, and neither `migrate` nor
