@@ -361,7 +361,7 @@ test("a gate run needs its own implementation fingerprint", () => {
   assert.match(verdict.problems.join(), /recorded no implementation fingerprint/);
 });
 
-test("today no target can pass the gate: the lifecycle suites that wait for the rehearsals and the real tailnet are open", () => {
+test("every replacement is closed: the best run passes the gate on each target", () => {
   const open = replacements(inventory).filter((r) => r.replacement && typeof r.replacement === "object" && "open" in r.replacement);
   // Every check is replaced or has its Go counterpart named: doctor's are
   // the Go installation's (step 6.5), its pending upgrade the CLI's own
@@ -388,21 +388,23 @@ test("today no target can pass the gate: the lifecycle suites that wait for the 
     else if (["coolify-live", "coolify-live-expands"].includes(name)) assert.match(suite.replacement.none, /TestCoolifyLive\w+ \(build tag coolifylive/, name);
     // The Go CLI has no adopt: there is nothing to run.
     else if (name === "adopt") assert.match(suite.replacement.none, /never manages a Compose installation/);
+    // A real tailnet, the rehearsals and the production archive: run by hand,
+    // with their evidence.
+    else if (["ingress-tailnet", "tailnet-endpoint", "prod-shape"].includes(name)) assert.match(suite.replacement.none, /internal docs\/evidence\//, name);
+    else if (["backup-upgrade", "backup-v0100-restore"].includes(name)) assert.match(suite.replacement.none, /go\.yml[\s\S]*internal docs\/evidence\//, name);
     else assert.ok(open.some((r) => r.of.startsWith(`${name} (`)), name);
   }
+  assert.deepEqual(open, []);
 
   // The best a run can do on each target: every check passes (a ts-stack
   // check does not apply where the target has no TypeScript stack, nor a
   // go-server check where it is not the Go server), with a recent CLI, no
-  // expected failure and the walkthrough named. Only the open replacements
-  // stop it.
+  // expected failure and the walkthrough named.
   for (const [target, tsStack, goServer] of [["ts-source", "pass", "not-applicable"], ["ts-release:0.22.0", "pass", "not-applicable"], ["go-binary:/opt/varlatchd", "not-applicable", "pass"], ["go-container:varlatchd:test", "not-applicable", "pass"]]) {
     const outcomes = Object.fromEntries(Object.entries(inventory.checks).map(([id, c]) => [id, c.kind === "ts-stack" ? tsStack : c.kind === "go-server" ? goServer : "pass"]));
     const verdict = judgeGate({ inventory, run: run(outcomes, { target }), walkthrough });
-    assert.equal(verdict.passed, false, target);
-    assert.equal(verdict.problems.length, 1, `${target}: only the open replacements stop it: ${verdict.problems.join("\n")}`);
-    assert.match(verdict.problems[0], /replacements are still open/);
-    assert.equal(verdict.open.length, open.length);
+    assert.deepEqual(verdict.problems, [], target);
+    assert.equal(verdict.passed, true, target);
   }
 });
 

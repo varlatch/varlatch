@@ -1,9 +1,5 @@
 # Join a team
 
-> **Prerelease.** This page is for Varlatch 0.50, which is not released yet.
-> The current release, 0.23.0, has a CLI that needs Node.js:
-> [its version of this page](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/join-a-team.md).
-
 Someone on your team runs a Varlatch installation and sent you an
 invitation link. Three steps take you from that link to running your
 application with its configuration.

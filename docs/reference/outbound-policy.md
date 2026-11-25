@@ -1,9 +1,5 @@
 # Outbound policy
 
-> **Prerelease.** This page is for Varlatch 0.50, which is not released yet.
-> The current release is 0.23.0:
-> [its version of this page](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/reference/outbound-policy.md).
-
 Some of what an Organization configures makes varlatchd send requests: audit
 webhooks, Coolify and Convex Connections and their Sync Targets, GitHub
 Actions Sync Targets and the GitHub App, and OIDC issuers for machine

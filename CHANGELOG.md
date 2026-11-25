@@ -7,6 +7,8 @@ fixes.
 
 ## Unreleased
 
+## 0.50.0 (2026-11-25)
+
 ### What 0.50.0 is
 
 0.50.0 is a new Varlatch server and a new CLI (ADR-0059). The server is one
@@ -141,6 +143,12 @@ deliver or destroy on its own waits for `sudo varlatch admin restore resume`
 
 ### Dashboard
 
+- **Cached 0.23.0 dashboards clear after a migration to 0.50 (#470).** The Go
+  server's dashboard HTML and `/varlatch-config.js` now answer
+  `Cache-Control: no-cache`, and the 0.23.0-only `/convex/*` and legacy
+  Better Auth `/auth/` paths (plus `POST /auth/varlatch-token` without a
+  CSRF header) send `Clear-Site-Data: "cache"` without clearing cookies so
+  browsers drop a cached 0.23.0 page on its first call.
 - **Live updates say nothing about an Organization you may not read.** The
   Go server's stream kept sending change signals (which domains changed and
   when, never what) to members of an Organization frozen for an incident,
@@ -164,7 +172,7 @@ deliver or destroy on its own waits for `sudo varlatch admin restore resume`
 
 ### CLI
 
-- **`varlatch migrate` adds headroom to its downtime projection.** The dry
+- **`varlatch migrate` adds headroom to its downtime projection (#468).** The dry
   run adds a quarter of the measured export, import and check time (at least
   30 seconds), shown as headroom in its report and JSON and counted against
   `--max-downtime`.
@@ -267,18 +275,6 @@ deliver or destroy on its own waits for `sudo varlatch admin restore resume`
   no longer ends `varlatch migrate` half way. An undo stopped anywhere is
   finished by `--resume` or `--abort`, as before, and the tests now stop it
   between its steps.
-- **`install.sh` updates an existing Go install again.** In 0.50.0-rc.2 it
-  refused to replace any Go varlatch already installed, a run over its own
-  fresh install included, with "varlatch is installed with Homebrew; update
-  it with: brew upgrade varlatch": it took the message every Go binary
-  carries (`varlatch self-update`'s refusal for a Homebrew copy) for a sign
-  of Homebrew. It now tells a Homebrew copy as `varlatch self-update` does,
-  by two paths: the path as given, and the path with every link resolved
-  (linked directories included). Either one, compared in lower case, marks
-  a Homebrew copy when it has `/cellar/` in it or starts with
-  `/opt/homebrew/` or `/home/linuxbrew/.linuxbrew/`. It still refuses the
-  TypeScript CLI's formula's wrapper script, which says it is Homebrew's.
-  `install.ps1` was not affected.
 - **`varlatch self-update` on Windows waits for a file another process
   holds.** A virus scanner or an indexer reading the new binary made it
   fail with "The process cannot access the file because it is being used by
@@ -442,6 +438,10 @@ deliver or destroy on its own waits for `sudo varlatch admin restore resume`
   published only once the image is checked on both platforms, and its
   `varlatchd-image.txt`, listed in the signed `SHA256SUMS`, gives the
   image's digest to pin ([verifying a release](docs/operations/verify-release.md#the-go-lines-image-0500-and-later)).
+- **Release gate and upgrade verification:** `release.json` checks against
+  0.50.0-rc.4 (#467), the systemd upgrade suite adapts expectations to the
+  source release's capabilities (#469) and pins 0.50.0-rc.4's `install.sh`
+  hash (#468), and the remaining conformance inventory entries are closed.
 
 ## 0.50.0-rc.4 (2026-11-25)
 

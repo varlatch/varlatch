@@ -4622,7 +4622,7 @@
       "script": "scripts/test-backup-upgrade.mjs",
       "kind": "ts-stack",
       "replacement": {
-        "open": "Built, with what proves it: G6 (go.yml), the upgrade engine's tests (go/cmd/varlatch/internal/upgrade: a failed check undone, a kill and a power cut after every change, --rollback to the pre-upgrade snapshot) and go/install/test-upgrade.sh on systemd (upgrade-systemd.yml, by hand). Still open: recovery from the pre-migration archive on a restored copy of production, the step 8 rehearsal B6 (session 2)."
+        "none": "An upgrade, its undo and an archive as the way back have Go counterparts: in the step 'Test' of go.yml, go/cmd/varlatch/internal/upgrade.TestAFailedHealthCheckIsUndone, go/cmd/varlatch/internal/upgrade.TestAKilledUpgradeIsFinishedOrUndone, go/cmd/varlatch/internal/upgrade.TestARollbackFromTheSnapshotListsWhatIsLost and go/cmd/varlatch/internal/upgrade.TestAFullDiskIsUndone, and the G6 steps of go.yml (the released schema and binary); go/install/test-upgrade.sh on systemd (upgrade-systemd.yml, run 45505154993 at 526fac1b and run 45542620862 at 05eeb638). Recovery from an archive taken before the migration, on a fresh host: the step 8 rehearsal B6, item 14, which restored the production archive with the release CLI before migrating it, then converted and restored it into a fresh Go data directory (2026-11-25, v0.50.0-rc.4 at 526fac1b, internal docs/evidence/step8-rehearsals/2026-11-25-b6/)."
       }
     },
     "backup-v0100-restore": {
@@ -4630,7 +4630,7 @@
       "script": "scripts/test-backup-v0100-restore.mjs",
       "kind": "ts-stack",
       "replacement": {
-        "open": "The backup converter (varlatch migrate --from-archive, varlatch/varlatch#362) is merged, and go.yml's nightly job converter converts and restores archives of formats 1 and 2, one of a published 0.7.0 installation among them (TestConvertArchives). Not in them: the environment-name mapping that a 0.10.0 archive holds and migration 21 removes, which the TypeScript suite covers (ci.yml). Still open: the converter on the production archive, the step 8 rehearsal B6 (session 2)."
+        "none": "The converter (varlatch migrate --from-archive, varlatch/varlatch#362): the nightly job converter of go.yml converts archives of formats 1 and 2, one of a published 0.7.0 installation among them, and restores the converted archives (go/cmd/varlatch/internal/migrate.TestConvertArchives, run 45505151102 at 526fac1b), and the step 8 rehearsal B6 converted the production archive (all rows, all checks true) and restored the converted format 3 archive into a fresh data directory with canary and row counts verified (2026-11-25, v0.50.0-rc.4 at 526fac1b, internal docs/evidence/step8-rehearsals/2026-11-25-b6/). Not in either: the environment-name mapping of a 0.10.0 archive, which the migration of schema 21 removes: the TypeScript suite covers it (ci.yml), and no Go archive has it."
       }
     },
     "prod-shape": {
@@ -4638,7 +4638,7 @@
       "script": "scripts/test-prod-shape.mjs",
       "kind": "ts-stack",
       "replacement": {
-        "open": "B3 is done (2026-11-24, internal docs/evidence/step8-rehearsals/2026-11-24-b3-combined/): the Coolify shape with the tailnet sidecar, on the 0.23.0 Compose files, migrated, rolled back through a kill at each step, migrated again and finished, on an empty installation: 108 of 108 checks at b3adad45 and 107 of 108 at 7a4e45d9, where one check of the harness ran 0.7 s before Coolify wrote its file. Still open: B6 (a restored copy of production, session 2)."
+        "none": "The step 8 rehearsals: B3 (production topology, 2026-11-24, 108 of 108 checks at b3adad45 and 107 of 108 at 7a4e45d9, where one check of the harness ran 0.7 s before Coolify wrote its file; internal docs/evidence/step8-rehearsals/2026-11-24-b3-combined/) and B6 (a restored copy of production migrated, rolled back after a day of changes, migrated again and finished; 2026-11-25, v0.50.0-rc.4 at 526fac1b, internal docs/evidence/step8-rehearsals/2026-11-25-b6/, 55 of 56 checks, where the one harness failure was forward parity arithmetic comparing copied rows against exported rows without adding the browser sessions the migration ended under browser-sessions-end, while migrate checks all passed)."
       }
     },
     "sidecar-restart": {
@@ -4662,7 +4662,7 @@
       "script": "scripts/test-ingress-tailnet.mjs",
       "kind": "ts-stack",
       "replacement": {
-        "open": "ADR-0059 step 6.4a built setup's tailnet ingress, and its questions and settings are tested on a stand-in host (go/cmd/varlatch/internal/setup.TestTailnetSetup). No run has joined a real tailnet through setup: the rehearsals migrate, they do not set up. The real-Tailscale step of the G1 walkthrough (its Section 5.1), on a build of main, closes it."
+        "none": "Run by hand on a real tailnet, as the suite is: `varlatch setup --ingress tailnet` on 2026-11-25 at 526fac1b (the real-Tailscale step of the G1 walkthrough, its Section 5.1; record: internal docs/evidence/2026-11-25-tailscale-run/). It joined under the name and tag it was given, asked for and copied the auth key, showed the enrollment link on its configured public URL, took a phone passkey there, and ended with `varlatch doctor`; the tailnet listener and the plain one answered as they must (`./g1 tailnet check`: 16 of 16 PASS). The questions and settings are Go tests too, in the step 'Test' of go.yml: go/cmd/varlatch/internal/setup.TestTailnetSetup."
       }
     },
     "tailnet-endpoint": {
@@ -4670,7 +4670,7 @@
       "script": "scripts/test-tailnet-endpoint.mjs",
       "kind": "ts-stack",
       "replacement": {
-        "open": "Step 4's half passed on a real tailnet (the live check of 2026-11-17, internal docs/evidence/go-tailnet-live-check-2026-11-17/). The endpoint that setup turns on (tailnet_https_port) has not been seen on one: the real-Tailscale step of the G1 walkthrough (its Section 5.1), on a build of main, closes it, with the suite's cases 1, 8 and 9, the refusal of case 4 and the policy in a browser. The rest are tests of their own: case 2 (the Requirement names another device), go/server/tailnet.TestTheBrowserEndpointRefusesADeviceThatDoesNotMeetTheRequirement and, in the dashboard, tailnetConnection.test.tsx and tailnetRouting.test.tsx (apps/web/test); case 4 (the other listeners), go/server/tailnet.TestTypeScriptFixture and go/server/httpserver.TestPrivateNetworkPreflight; case 5 (forged headers, another Host, a PROXY preamble), go/server/daemon.TestForgedIdentityOnTheTailnetListeners and go/server/daemon.TestBrowserEndpoint; case 7 (the node cannot say), go/server/tailnet.TestResolve and the test of case 2; cases 9, 10 and 11 (the requirement editor), requirementThisDevice.test.tsx; the peer beside the server, go/server/daemon.TestForgedIdentityOnTheTailnetListeners (no tailnet port listens on the host) and go/server/daemon.TestTailnetListener; the policy, go/server/httpserver.TestDashboardCSPNamesTheBrowserEndpoint."
+        "none": "Run by hand on a real tailnet, as the suite is: the endpoint that setup turned on (tailnet_https_port) in the same run as ingress-tailnet (2026-11-25, 526fac1b; record: internal docs/evidence/2026-11-25-tailscale-run/): its certificate verified; case 1, the values read, revealed and exported over the tailnet by the approved device, refused with Tailscale off; case 8, the node on the Tailnet page; case 9, Add this device; the refusal of case 4 on the plain listener; no line of the content policy in the console of the browser. The rest are tests of their own: case 2 (the Requirement names another device), go/server/tailnet.TestTheBrowserEndpointRefusesADeviceThatDoesNotMeetTheRequirement and, in the dashboard, tailnetConnection.test.tsx and tailnetRouting.test.tsx (apps/web/test); case 4 (the other listeners), go/server/tailnet.TestTypeScriptFixture and go/server/httpserver.TestPrivateNetworkPreflight; case 5 (forged headers, another Host, a PROXY preamble), go/server/daemon.TestForgedIdentityOnTheTailnetListeners and go/server/daemon.TestBrowserEndpoint; case 7 (the node cannot say), go/server/tailnet.TestResolve and the test of case 2; cases 9, 10 and 11 (the requirement editor), requirementThisDevice.test.tsx; the peer beside the server, go/server/daemon.TestForgedIdentityOnTheTailnetListeners (no tailnet port listens on the host) and go/server/daemon.TestTailnetListener; the policy, go/server/httpserver.TestDashboardCSPNamesTheBrowserEndpoint."
       }
     },
     "move": {
