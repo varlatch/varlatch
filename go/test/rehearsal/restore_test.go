@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -27,6 +28,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	_ "modernc.org/sqlite"
 )
 
 // B6 (internal docs/design/go-step8-rehearsals.md; go-step8.md phase 2):
@@ -104,6 +107,10 @@ func restoredInstallation(t *testing.T, rel release, s3 *s3Server, name string) 
 		t.FailNow()
 	}
 	measure("item 14: "+name+": restore", r.took.Round(time.Millisecond).String())
+	if err := in.readNames(); err != nil {
+		record(t, restoreItem, name+": the names of the copy are read, to look for them at the end", false, err.Error())
+		t.FailNow()
+	}
 	a := answersWithin(func() (int, string) { return in.get("/readyz") }, func(code int, _ string) bool { return code == 200 }, 3*time.Minute, time.Second)
 	_, body := in.get("/v1/meta")
 	var meta struct {
@@ -247,6 +254,8 @@ func restoreCase(t *testing.T, rel release, s3 *s3Server) {
 	if !forwardAndCheck(t, in, rel, "the migration", projected, rd, before) {
 		return
 	}
+	// The migrated copy's counts, before anything is changed on it.
+	migrated := countRows(in.data)
 	// A day of changes on Go, through the CLI.
 	changes, err := rd.change()
 	if !record2(t, item, "a day of changes on Go through the CLI", err == nil, fmt.Sprintf("%d values set (%v)", changes, err)) {
@@ -296,7 +305,7 @@ func restoreCase(t *testing.T, rel release, s3 *s3Server) {
 	record(t, item, "--finish --delete-old-data after the migration again", f.code == 0, f.String()+" "+lastLines(f.stdout, 4))
 	vols := run("", nil, nil, "docker", "volume", "ls", "-q", "--filter", "label=com.docker.compose.project="+in.project)
 	measure("item 14: the source's volumes after finish", fmt.Sprint(len(strings.Fields(vols.stdout))))
-	convertArchive(t, in, rel)
+	convertArchive(t, in, rel, migrated)
 	in.memoryLogs(t, rd)
 }
 
@@ -457,8 +466,10 @@ func (w *countWriter) Write(p []byte) (int, error) { w.n += int64(len(p)); retur
 // journalCopy is what the source's journal says migrate copied and
 // checked, forward (copy) and in the reverse (rollback.export, .checks).
 type journalCopy struct {
-	Tables, Rows int64
-	Checks       *struct {
+	Tables        int64 `json:"tables"`
+	Rows          int64 `json:"rows"`
+	SessionsEnded int64 `json:"sessionsEnded"`
+	Checks        *struct {
 		Passed bool `json:"passed"`
 		Checks []struct {
 			Name    string `json:"name"`
@@ -488,7 +499,13 @@ func (in *installation) journalOf() (fwd, rev journalCopy, err error) {
 	var j struct {
 		Copy     *journalCopy `json:"copy"`
 		Rollback *struct {
-			Export *journalCopy `json:"export"`
+			// Reverse export deletes auth_sessions before writing the bundle,
+			// so 0.23.0's export already excludes ended sessions and matches
+			// rollback.export.rows directly.
+			Export *struct {
+				Tables int64 `json:"tables"`
+				Rows   int64 `json:"rows"`
+			} `json:"export"`
 			Checks *struct {
 				Passed bool `json:"passed"`
 				Checks []struct {
@@ -508,7 +525,8 @@ func (in *installation) journalOf() (fwd, rev journalCopy, err error) {
 	}
 	if j.Rollback != nil {
 		if j.Rollback.Export != nil {
-			rev = *j.Rollback.Export
+			rev.Tables = j.Rollback.Export.Tables
+			rev.Rows = j.Rollback.Export.Rows
 		}
 		rev.Checks = j.Rollback.Checks
 	}
@@ -516,6 +534,8 @@ func (in *installation) journalOf() (fwd, rev journalCopy, err error) {
 }
 
 // parity holds an export's counts against a copy's and its checks'.
+// Forward migration ends browser sessions (browser-sessions-end), so the
+// source's frozen export holds copied rows plus sessions ended.
 func parity(src exportCounts, c journalCopy) (bool, string) {
 	allPassed := c.Checks != nil && c.Checks.Passed
 	var names []string
@@ -526,10 +546,10 @@ func parity(src exportCounts, c journalCopy) (bool, string) {
 		}
 	}
 	b := src.Bundle
-	ok := allPassed && b.Tables == c.Tables && b.Rows == c.Rows && b.Rows == c.checked("rows") &&
+	ok := allPassed && b.Tables == c.Tables && c.SessionsEnded >= 0 && b.Rows == c.Rows+c.SessionsEnded && b.Rows == c.checked("rows") &&
 		b.Digests == c.checked("encryption-classes") && b.Decisions == c.checked("authorization") && b.Tables > 0 && b.Rows > 0
-	detail := fmt.Sprintf("the source's export: %d tables, %d rows, %d digests, %d decisions; the copy %d tables, %d rows; checks: %s",
-		b.Tables, b.Rows, b.Digests, b.Decisions, c.Tables, c.Rows, strings.Join(names, ", "))
+	detail := fmt.Sprintf("the source's export: %d tables, %d rows, %d digests, %d decisions; the copy %d tables, %d rows, %d sessions ended; checks: %s",
+		b.Tables, b.Rows, b.Digests, b.Decisions, c.Tables, c.Rows, c.SessionsEnded, strings.Join(names, ", "))
 	if c.Checks != nil && len(c.Checks.Faults) > 0 {
 		detail += "; faults: " + strings.Join(c.Checks.Faults, "; ")
 	}
@@ -997,7 +1017,7 @@ func (in *installation) memoryLogs(t *testing.T, rd *reader) {
 
 // --- the converter on the archive ---
 
-func convertArchive(t *testing.T, in *installation, rel release) {
+func convertArchive(t *testing.T, in *installation, rel release, migrated counted) {
 	out := filepath.Join(in.state, "converted.vltbak")
 	defer os.Remove(out)
 	// The converter's export runs as this process's user with no
@@ -1036,8 +1056,85 @@ func convertArchive(t *testing.T, in *installation, rel release) {
 		} `json:"output"`
 	}
 	_ = json.Unmarshal([]byte(strings.TrimSpace(r.stdout)), &res)
-	record(t, restoreItem, "the converter turns the archive into a format 3 archive", r.code == 0 && res.Checks.Passed && res.Copy.Rows > 0,
-		fmt.Sprintf("%s; archive format %d, release %s: %d tables, %d rows, every check passed %v, %d bytes written", r, res.Source.Format, res.Source.Release, res.Copy.Tables, res.Copy.Rows, res.Checks.Passed, res.Output.Bytes))
+	if record2(t, restoreItem, "the converter turns the archive into a format 3 archive", r.code == 0 && res.Checks.Passed && res.Copy.Rows > 0,
+		fmt.Sprintf("%s; archive format %d, release %s: %d tables, %d rows, every check passed %v, %d bytes written", r, res.Source.Format, res.Source.Release, res.Copy.Tables, res.Copy.Rows, res.Checks.Passed, res.Output.Bytes)) {
+		restoreConverted(t, in, out, kek, migrated)
+	}
+}
+
+// restoreConverted is G13's last step: the converted archive restored into a
+// fresh varlatchd data directory with the same two keys. Nothing is started:
+// what it holds is read from its database.
+func restoreConverted(t *testing.T, in *installation, archive, kek string, migrated counted) {
+	const name = "the converted archive restored into a fresh data directory"
+	dir := filepath.Join(in.targetDir, "converted")
+	defer os.RemoveAll(dir)
+	data, conf := filepath.Join(dir, "data"), filepath.Join(dir, "varlatchd.conf")
+	text := fmt.Sprintf("listen = 127.0.0.1:0\ndata_dir = %s\nroot_kek_file = %s\nbackup_key_file = %s\nbackup_interval = off\n", data, filepath.Join(dir, "root-kek"), filepath.Join(dir, "backup-key"))
+	err := errors.Join(os.Mkdir(dir, 0o700), os.Mkdir(data, 0o700), os.WriteFile(conf, []byte(text), 0o600))
+	for from, to := range map[string]string{kek: "root-kek", prof.restoreBEK: "backup-key"} {
+		b, rerr := os.ReadFile(from)
+		err = errors.Join(err, rerr, os.WriteFile(filepath.Join(dir, to), b, 0o600))
+	}
+	if err != nil {
+		record(t, restoreItem, name, false, err.Error())
+		return
+	}
+	varlatchd := func(args ...string) ran {
+		return run(dir, []string{"TMPDIR=" + dir}, nil, filepath.Join(binDir, "varlatchd"), append(args, "--config", conf)...)
+	}
+	r := varlatchd("admin", "backup", "restore", "--in", archive)
+	if !record2(t, restoreItem, name, r.code == 0 && strings.Contains(r.stdout, "its canary verified") && strings.Contains(r.stdout, in.installationID), r.String()) {
+		return
+	}
+	// Since 0.50.0-rc.4 a restored installation is held; it stays so here.
+	held, hold := true, "no hold in this release"
+	if st := varlatchd("admin", "restore", "status"); st.code != 64 {
+		_, serr := os.Stat(filepath.Join(data, "restore-hold.json"))
+		held, hold = serr == nil && !strings.Contains(st.stdout, "not held"), "restore-hold.json is there: "+fmt.Sprint(serr == nil)
+	}
+	record(t, restoreItem, "the converted archive restored: held", held, hold)
+	k := varlatchd("admin", "kek", "verify")
+	record(t, restoreItem, "the converted archive restored: the canary opens with the Root KEK", k.code == 0, k.String())
+	got := countRows(data)
+	record(t, restoreItem, "the converted archive restored: the migrated copy's Organizations, Projects, values and versions", got.err == nil && migrated.err == nil && got.people == migrated.people,
+		fmt.Sprintf("restored %s; migrated %s", got, migrated))
+}
+
+// counted is what a varlatchd database holds of what people put in it, and of
+// the rest that may differ: the archive is as old as it is, and the copy ran.
+type counted struct {
+	people, rest string
+	err          error
+}
+
+func (c counted) String() string {
+	if c.err != nil {
+		return "not read: " + c.err.Error()
+	}
+	return c.people + " (" + c.rest + ")"
+}
+
+func countRows(dataDir string) counted {
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(dataDir, "varlatch.db")+"?mode=ro")
+	if err != nil {
+		return counted{err: err}
+	}
+	defer db.Close()
+	of := func(tables ...string) string {
+		var out []string
+		for _, table := range tables {
+			var n int64
+			if qerr := db.QueryRow("SELECT count(*) FROM " + table).Scan(&n); qerr != nil {
+				err = errors.Join(err, fmt.Errorf("%s: %w", table, qerr))
+			}
+			out = append(out, fmt.Sprintf("%s %d", table, n))
+		}
+		return strings.Join(out, ", ")
+	}
+	people := of("organizations", "projects", "env_values", "value_versions")
+	rest := of("environments", "identities", "passkeys", "grants", "webhooks", "sync_targets", "platform_connections")
+	return counted{people, rest, err}
 }
 
 // --- VL_RH_ONLY=bundle: the synthetic production-shaped archive ---
@@ -1056,6 +1153,7 @@ func makeBundle(t *testing.T, rel release, s3 *s3Server) {
 	record(t, item, "seeded through the real /v1", true, fmt.Sprintf("%d values, %d versions, in %s", s.values, s.versions, s.took.Round(time.Millisecond)))
 	shape := productionShape(t, s, audit)
 	record(t, item, "production-shaped", true, shape)
+	auditRows(t, in)
 	if err := os.MkdirAll(prof.bundleOut, 0o700); err != nil {
 		t.Fatal(err)
 	}

@@ -62,7 +62,7 @@ func TestPlanDocker(t *testing.T) {
 		{"compose --unknown x up", "", "", "", "", "--unknown"},
 		{"", "", "", "", "", ""},
 	} {
-		p, err := planDocker(strings.Fields(c.in), "/m", "once", declared)
+		p, err := planDocker(strings.Fields(c.in), "/m", "once", false, declared)
 		if c.err != "" {
 			if err == nil || !strings.Contains(err.Error(), c.err) {
 				t.Errorf("%s: %v, want %q", c.in, err, c.err)
@@ -71,6 +71,19 @@ func TestPlanDocker(t *testing.T) {
 		}
 		if err != nil || strings.Join(p.args, " ") != c.want || p.mkdir != c.mkdir || strings.Join(p.look, " ") != c.look || p.oneOff != c.oneOff {
 			t.Errorf("%s:\n got %s (%+v, %v)\nwant %s", c.in, strings.Join(p.args, " "), p, err, c.want)
+		}
+	}
+}
+
+func TestPlanDockerOnDisk(t *testing.T) {
+	declared := func(string) ([]string, error) { return []string{"/var/lib/postgresql/data", "/d"}, nil }
+	for in, want := range map[string]string{
+		"run -d --name p --network none pg": "run --log-driver none --ulimit core=0 -d --name p --network none --read-only -v /m/p-var-lib-postgresql-data:/var/lib/postgresql/data -v /m/p-d:/d --tmpfs /run -v /m/p-tmp:/tmp pg",
+		"run --rm -v x:/d pg":               "run --log-driver none --ulimit core=0 -v x:/d --read-only -v /m/once-var-lib-postgresql-data:/var/lib/postgresql/data --tmpfs /run --tmpfs /tmp --name once pg",
+	} {
+		p, err := planDocker(strings.Fields(in), "/m", "once", true, declared)
+		if err != nil || strings.Join(p.args, " ") != want || len(p.dirs) == 0 {
+			t.Errorf("%s:\n got %s (%v)\nwant %s", in, strings.Join(p.args, " "), err, want)
 		}
 	}
 }
@@ -149,7 +162,10 @@ func TestSwapState(t *testing.T) {
 }
 
 func TestMemoryNeed(t *testing.T) {
-	if data, total := memoryNeed(10<<20, memoryMargin); data != (320+400)<<20 || total != data+2<<30 {
+	if data, total := memoryNeed(10<<20, memoryMargin, true); data != (320+400)<<20 || total != 2<<30 {
+		t.Errorf("on the crypt disk: %d, %d", data, total)
+	}
+	if data, total := memoryNeed(10<<20, memoryMargin, false); data != (320+400)<<20 || total != data+2<<30 {
 		t.Errorf("%d, %d", data, total)
 	}
 	for v, want := range map[string]int64{"": 2 << 30, "1024": 1 << 30, "1536": 1536 << 20, "1023": 0, "-1": 0, "x": 0, "99999999999": 0} {

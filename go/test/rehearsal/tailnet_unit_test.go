@@ -151,20 +151,27 @@ func TestTailnetPieces(t *testing.T) {
 		}
 		for _, c := range []struct {
 			profile, ingress, oauth, authKey, tailnet, kill, want string
+			browser                                               string
 		}{
-			{"", "tailnet", "", "", "", "", ""},
-			{"", "combined", "", "", "", "", "runs on the box only"},
-			{"box", "combined", "", "", "", "", "the combined case needs"},
-			{"", "tailnet", key, key, "tail1.ts.net", "", "owner's session on the box"},
-			{"box", "tailnet", key, "", "tail1.ts.net", "", "VL_RH_TAILSCALE_AUTH_KEY_FILE"},
-			{"box", "tailnet", key, key, "tail1.ts.net", "", ""},
-			{"box", "tailnet", filepath.Join(dir, "missing"), key, "tail1.ts.net", "", "no such file"},
-			{"box", "tailnet", key, open, "tail1.ts.net", "", "mode 0644"},
-			{"box", "proxy", key, key, "tail1.ts.net", "", "goes with VL_RH_INGRESS=tailnet"},
-			{"", "tailnet", "", "", "", "transfer", "leave VL_RH_KILL"},
+			{"", "tailnet", "", "", "", "", "", "1"},
+			{"", "tailnet", key, key, "tail1.ts.net", "", "", "1"},
+			{"", "tailnet", key, open, "tail1.ts.net", "", "mode 0644", "1"},
+			{"", "tailnet", key, "", "tail1.ts.net", "", "VL_RH_TAILSCALE_AUTH_KEY_FILE", "1"},
+			{"box", "tailnet", key, key, "tail1.ts.net", "", "not the box", "1"},
+			{"", "proxy", "", "", "", "", "the tailnet case's", "1"},
+			{"", "tailnet", "", "", "", "", "", ""},
+			{"", "combined", "", "", "", "", "runs on the box only", ""},
+			{"box", "combined", "", "", "", "", "the combined case needs", ""},
+			{"", "tailnet", key, key, "tail1.ts.net", "", "owner's session on the box", ""},
+			{"box", "tailnet", key, "", "tail1.ts.net", "", "VL_RH_TAILSCALE_AUTH_KEY_FILE", ""},
+			{"box", "tailnet", key, key, "tail1.ts.net", "", "", ""},
+			{"box", "tailnet", filepath.Join(dir, "missing"), key, "tail1.ts.net", "", "no such file", ""},
+			{"box", "tailnet", key, open, "tail1.ts.net", "", "mode 0644", ""},
+			{"box", "proxy", key, key, "tail1.ts.net", "", "goes with VL_RH_INGRESS=tailnet", ""},
+			{"", "tailnet", "", "", "", "transfer", "leave VL_RH_KILL", ""},
 		} {
 			for k, v := range map[string]string{"VL_RH_PROFILE": c.profile, "VL_RH_INGRESS": c.ingress, "VL_RH_TAILSCALE_OAUTH_FILE": c.oauth,
-				"VL_RH_TAILSCALE_AUTH_KEY_FILE": c.authKey, "VL_RH_TAILSCALE_TAILNET": c.tailnet, "VL_RH_KILL": c.kill, "VL_RH_ONLY": "", "VL_RH_SYNC": ""} {
+				"VL_RH_TAILSCALE_AUTH_KEY_FILE": c.authKey, "VL_RH_TAILSCALE_TAILNET": c.tailnet, "VL_RH_TAILNET_BROWSER": c.browser, "VL_RH_KILL": c.kill, "VL_RH_ONLY": "", "VL_RH_SYNC": ""} {
 				t.Setenv(k, v)
 			}
 			p, err := readProfile(0)

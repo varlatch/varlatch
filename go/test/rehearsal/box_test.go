@@ -58,6 +58,10 @@ type profileConfig struct {
 	// client's file, the nodes' reusable tagged auth key's, the tailnet's
 	// MagicDNS suffix.
 	tailscaleOAuth, tailscaleAuthKey, tailscaleTailnet string
+	// The tailnet case's browser step (VL_RH_TAILNET_BROWSER=1): a person
+	// signs in by passkey before the handoff, after it and after the
+	// rollback (browser_test.go).
+	browser bool
 	// The combined case's: the Go app's UUID, and the name the run's Git
 	// repository is served on.
 	coolifyTarget, gitName string
@@ -104,7 +108,7 @@ func readProfile(euid int) (profileConfig, error) {
 		coolifyTarget: os.Getenv("VL_RH_COOLIFY_TARGET"), gitName: os.Getenv("VL_RH_GIT_NAME"),
 		restoreBEK: os.Getenv("VL_RH_RESTORE_BEK"), restoreKEK: os.Getenv("VL_RH_RESTORE_KEK"), bundleOut: os.Getenv("VL_RH_BUNDLE_OUT"),
 		tailscaleOAuth: os.Getenv("VL_RH_TAILSCALE_OAUTH_FILE"), tailscaleAuthKey: os.Getenv("VL_RH_TAILSCALE_AUTH_KEY_FILE"),
-		tailscaleTailnet: os.Getenv("VL_RH_TAILSCALE_TAILNET"),
+		tailscaleTailnet: os.Getenv("VL_RH_TAILSCALE_TAILNET"), browser: os.Getenv("VL_RH_TAILNET_BROWSER") == "1",
 		syncReal: syncRealInputs{
 			githubTokenFile: os.Getenv("VL_RH_SYNC_GITHUB_TOKEN_FILE"), repo: os.Getenv("VL_RH_SYNC_GITHUB_REPO"),
 			coolifyURL: os.Getenv("VL_RH_SYNC_COOLIFY_URL"), coolifyTokenFile: os.Getenv("VL_RH_SYNC_COOLIFY_TOKEN_FILE"),
@@ -127,8 +131,10 @@ func readProfile(euid int) (profileConfig, error) {
 		return prof, fmt.Errorf("VL_RH_INGRESS=%s runs on the box only (VL_RH_PROFILE=box)", prof.ingress)
 	case realTailscale && prof.ingress != "tailnet":
 		return prof, errors.New("VL_RH_TAILSCALE_* goes with VL_RH_INGRESS=tailnet")
-	case realTailscale && !prof.box:
-		return prof, errors.New("VL_RH_TAILSCALE_* is the owner's session on the box (VL_RH_PROFILE=box): a workstation runs the tailnet case on the run's own Headscale")
+	case prof.browser && (prof.ingress != "tailnet" || prof.box):
+		return prof, errors.New("VL_RH_TAILNET_BROWSER=1 is the tailnet case's (VL_RH_INGRESS=tailnet) on the workstation the browser is on, not the box")
+	case realTailscale && !prof.box && !prof.browser:
+		return prof, errors.New("VL_RH_TAILSCALE_* is the owner's session on the box (VL_RH_PROFILE=box), or at the browser of a workstation (VL_RH_TAILNET_BROWSER=1): without, a workstation runs the tailnet case on the run's own Headscale")
 	case realTailscale && (prof.tailscaleOAuth == "" || prof.tailscaleAuthKey == "" || prof.tailscaleTailnet == ""):
 		return prof, errors.New("the tailnet case on Tailscale needs VL_RH_TAILSCALE_OAUTH_FILE (the OAuth client, devices:core only), VL_RH_TAILSCALE_AUTH_KEY_FILE (a reusable auth key with tag:varlatch) and VL_RH_TAILSCALE_TAILNET (its MagicDNS suffix, e.g. tail1234.ts.net)")
 	case prof.ingress == "tailnet" && (prof.kill != "" || prof.sync != "" || prof.source != "seed"):

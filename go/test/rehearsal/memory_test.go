@@ -27,7 +27,8 @@ import (
 )
 
 // VL_RH_MEMORY=1 (a restored copy only): what the copy holds stays in
-// memory. Its files (the run's work directory, the target's, the archive
+// memory, or on an encrypted disk whose key is in memory only (disk_test.go).
+// Its files (the run's work directory, the target's, the archive
 // and the keys, TMPDIR) are on a tmpfs the operator mounted, which is
 // checked, never mounted here. Docker's part (the volumes Postgres, Convex
 // and varlatchd's state are on, migrate's fresh ones, the containers' own
@@ -55,10 +56,13 @@ const (
 	memoryFactor = 40
 )
 
-// memoryNeed is the memory a run on an archive of that size needs: for the
-// data, and with the margin.
-func memoryNeed(archive, margin int64) (data, total int64) {
+// memoryNeed is what a run on an archive of that size needs: room for the
+// data, and memory, the data in it unless it is on the crypt disk.
+func memoryNeed(archive, margin int64, disk bool) (data, total int64) {
 	data = memoryBase + memoryFactor*archive
+	if disk {
+		return data, margin
+	}
 	return data, data + margin
 }
 
@@ -82,6 +86,8 @@ type memoryRun struct {
 	stop    chan struct{}
 	done    sync.WaitGroup
 	most    int64
+	// disk: the volumes and what else is large are on the crypt disk.
+	disk bool
 }
 
 var memory *memoryRun
@@ -114,12 +120,19 @@ func startMemory(t *testing.T) {
 	}
 	m := &memoryRun{dir: filepath.Join(workDir, "memory"), roots: []string{workDir, targetRoot}, stop: make(chan struct{})}
 	m.volumes = filepath.Join(m.dir, "volumes")
+	places := map[string][]string{}
 	for what, p := range map[string]string{"the run's work directory (VL_RH_WORK)": workDir, "the target's directory (VL_RH_TARGET_ROOT)": targetRoot,
 		"TMPDIR": os.TempDir(), "HOME": os.Getenv("HOME"), "the archive": prof.restore, "VL_RH_RESTORE_BEK": prof.restoreBEK, "VL_RH_RESTORE_KEK": prof.restoreKEK} {
-		ok, err := onTmpfs(p)
-		if err != nil || !ok {
-			t.Fatalf("VL_RH_MEMORY=1: %s, %s, is not on a tmpfs (%v): mount one there first (the B6 kit's b6-env.sh does), noswap where the kernel has it", what, p, err)
+		place, err := memoryPlace(p, prof.box)
+		if err != nil {
+			t.Fatalf("VL_RH_MEMORY=1: %s, %s, is neither on a tmpfs nor on the crypt disk (%v): mount one there first (the B6 kit's b6-env.sh does), noswap where the kernel has it", what, p, err)
 		}
+		places[place] = append(places[place], what)
+		m.disk = m.disk || p == workDir && place == "crypt"
+	}
+	for _, place := range slices.Sorted(maps.Keys(places)) {
+		slices.Sort(places[place])
+		measure("memory: on "+map[string]string{"tmpfs": "a tmpfs", "crypt": "the crypt disk"}[place], strings.Join(places[place], ", "))
 	}
 	st, err := os.Stat(prof.restore)
 	if err != nil {
@@ -129,21 +142,21 @@ func startMemory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, total := memoryNeed(st.Size(), margin)
+	data, total := memoryNeed(st.Size(), margin, m.disk)
 	available := memAvailable()
 	free, err := tmpfsFree(workDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	said := fmt.Sprintf("the archive is %s: %s for the copy's data (%s and %d times the archive) and %s beside it is %s; available %s, free on the tmpfs %s",
-		mib(st.Size()), mib(data), mib(memoryBase), memoryFactor, mib(margin), mib(total), mib(available), mib(free))
+	said := fmt.Sprintf("the archive is %s: %s for the copy's data (%s and %d times the archive), free there %s; memory, %s beside the data (which is on the crypt disk: %v): %s, available %s",
+		mib(st.Size()), mib(data), mib(memoryBase), memoryFactor, mib(free), mib(margin), m.disk, mib(total), mib(available))
 	t.Logf("VL_RH_MEMORY=1: %s", said)
 	measure("memory: what it needs", said)
 	if available < total {
 		t.Fatalf("VL_RH_MEMORY=1: not enough memory: %s", said)
 	}
 	if free < data {
-		t.Fatalf("VL_RH_MEMORY=1: the tmpfs is too small: %s", said)
+		t.Fatalf("VL_RH_MEMORY=1: too little room for the copy's data: %s", said)
 	}
 	swaps, safe := swapState("/")
 	measure("memory: swap", swaps)
@@ -167,7 +180,7 @@ func startMemory(t *testing.T) {
 	if err := os.Symlink(self, filepath.Join(m.dir, "bin", "docker")); err != nil {
 		t.Fatal(err)
 	}
-	for k, v := range map[string]string{"VL_RH_DOCKER": docker, "VL_RH_MEMORY_DIR": m.dir, "PATH": filepath.Join(m.dir, "bin") + ":" + os.Getenv("PATH")} {
+	for k, v := range map[string]string{"VL_RH_DOCKER": docker, "VL_RH_MEMORY_DIR": m.dir, "VL_RH_MEMORY_ON": map[bool]string{true: "crypt", false: "tmpfs"}[m.disk], "PATH": filepath.Join(m.dir, "bin") + ":" + os.Getenv("PATH")} {
 		if err := os.Setenv(k, v); err != nil {
 			t.Fatal(err)
 		}
@@ -383,9 +396,11 @@ func (in *installation) memoryVolumes() error {
 // shimPlan is what the shim makes of a docker command.
 type shimPlan struct {
 	args []string
-	// mkdir is the directory of the volume the command makes.
+	// mkdir is the directory of the volume the command makes; dirs are those
+	// its container has in place of what would be large in memory.
 	mkdir string
 	mode  os.FileMode
+	dirs  []string
 	// look says which containers to look at before: the run's ("*"), or
 	// those named.
 	look []string
@@ -477,8 +492,9 @@ func targets(opts [][]string) []string {
 
 // planDocker is the shim's: args are docker's, volumes the directory the
 // volumes are made in, once a name for a one-off container, declared the
-// volumes an image declares.
-func planDocker(args []string, volumes, once string, declared func(string) ([]string, error)) (shimPlan, error) {
+// volumes an image declares, disk whether the volumes' directory is on the crypt
+// disk (what an image declares is then a directory there, not a tmpfs).
+func planDocker(args []string, volumes, once string, disk bool, declared func(string) ([]string, error)) (shimPlan, error) {
 	plan := shimPlan{args: args}
 	if len(args) == 0 {
 		return plan, nil
@@ -513,7 +529,16 @@ func planDocker(args []string, volumes, once string, declared func(string) ([]st
 		}
 		have := targets(opts)
 		for _, p := range append(paths, "/run") {
-			if !slices.Contains(have, p) {
+			switch who, named := value(opts, "--name"); {
+			case slices.Contains(have, p):
+			case disk && p != "/run":
+				if !named {
+					who = once
+				}
+				d := filepath.Join(volumes, who+strings.ReplaceAll(p, "/", "-"))
+				plan.dirs = append(plan.dirs, d)
+				out = append(out, "-v", d+":"+p)
+			default:
 				out = append(out, "--tmpfs", p)
 			}
 		}
@@ -607,7 +632,7 @@ func dockerShim(args []string) int {
 		return 125
 	}
 	out := func(args ...string) ([]byte, error) { return exec.Command(real, args...).Output() }
-	plan, err := planDocker(args, filepath.Join(dir, "volumes"), fmt.Sprintf("vl-rh-%s-once-%d-%d", runID, os.Getpid(), time.Now().UnixNano()), func(image string) ([]string, error) {
+	plan, err := planDocker(args, filepath.Join(dir, "volumes"), fmt.Sprintf("vl-rh-%s-once-%d-%d", runID, os.Getpid(), time.Now().UnixNano()), os.Getenv("VL_RH_MEMORY_ON") == "crypt", func(image string) ([]string, error) {
 		b, err := out("image", "inspect", "--format", "{{json .Config.Volumes}}", image)
 		if err != nil {
 			return nil, fmt.Errorf("docker image inspect %s: %v (pull it first)", image, err)
@@ -628,6 +653,12 @@ func dockerShim(args []string) int {
 			err = os.Chmod(plan.mkdir, plan.mode)
 		}
 		if err != nil {
+			fmt.Fprintln(os.Stderr, "the rehearsal's docker:", err)
+			return 125
+		}
+	}
+	for _, d := range plan.dirs {
+		if err := errors.Join(os.MkdirAll(d, 0o755), os.Chmod(d, 0o777|os.ModeSticky)); err != nil {
 			fmt.Fprintln(os.Stderr, "the rehearsal's docker:", err)
 			return 125
 		}
@@ -810,7 +841,7 @@ func (m *memoryRun) finish(t *testing.T) {
 		services[cmpOr(l.Service, "other")]++
 	}
 	record(t, item, "no container kept anything of the copy outside memory", len(bad) == 0 && len(ls) > 0,
-		fmt.Sprintf("%d looks at containers before they were removed %v; %s", len(ls), services, cmpOr(strings.Join(bad, "; "), "volumes on the tmpfs, no logs, nothing of data in their own layers")))
+		fmt.Sprintf("%d looks at containers before they were removed %v; %s", len(ls), services, cmpOr(strings.Join(bad, "; "), "volumes on the tmpfs or the crypt disk, no logs, nothing of data in their own layers")))
 	left := strings.Fields(run("", nil, nil, "docker", "volume", "ls", "-q", "--filter", "name=vl-rh-"+runID+"-").stdout +
 		run("", nil, nil, "docker", "ps", "-a", "--filter", "name=^vl-rh-"+runID+"-", "--format", "{{.Names}}").stdout)
 	left = slices.DeleteFunc(left, func(n string) bool { return n == memoryRunner() })

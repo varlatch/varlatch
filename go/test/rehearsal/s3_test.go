@@ -6,6 +6,7 @@ package rehearsal_test
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -29,9 +30,30 @@ func startS3(t *testing.T) *s3Server {
 	port := freePort(t)
 	args := []string{"run", "-d", "--name", s.name, "-p", "127.0.0.1:" + port + ":9000",
 		"-e", "MINIO_ROOT_USER=" + s.user, "-e", "MINIO_ROOT_PASSWORD=" + s.secret}
+	if prof.restore != "" {
+		// A restored copy (B6): nothing of the run's is on the host's default
+		// bridge, which others are on.
+		network := "vl-rh-" + runID + "-s3"
+		must(t, run("", nil, nil, "docker", "network", "create", network), "MinIO's network")
+		t.Cleanup(func() {
+			if os.Getenv("VL_RH_KEEP") != "1" {
+				run("", nil, nil, "docker", "network", "rm", network)
+			}
+		})
+		args = append(args, "--network", network)
+	}
 	if prof.memory {
 		// The run's archives: in memory, as the copy they are of.
-		args = append(args, "--tmpfs", "/data", "--tmpfs", "/tmp")
+		if memory != nil && memory.disk {
+			// And on the crypt disk with it.
+			data := filepath.Join(memory.volumes, s.name+"-data")
+			if err := errors.Join(os.MkdirAll(data, 0o755), os.Chmod(data, 0o777|os.ModeSticky)); err != nil {
+				t.Fatal(err)
+			}
+			args = append(args, "-v", data+":/data", "--tmpfs", "/tmp")
+		} else {
+			args = append(args, "--tmpfs", "/data", "--tmpfs", "/tmp")
+		}
 	}
 	must(t, run("", nil, nil, "docker", append(args, minioImage, "server", "/data")...), "start MinIO")
 	t.Cleanup(func() {
