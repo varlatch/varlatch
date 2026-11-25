@@ -27,8 +27,8 @@ mkdir -p "$out/bin" "$out/releases" "$out/from"
 out=$(cd "$out" && pwd)
 arch=$(cd "$go" && go env GOARCH)
 
-# Above every prerelease there will be of 0.50.0, and before 0.50.0.
-CANDIDATE=0.50.0-rc.9000 NEXT=0.50.0-rc.9001 UNSAFE=0.50.0-rc.9002 BROKEN=0.50.0-rc.9003
+# Synthetic releases newer than the published 0.50.0 upgrade source.
+CANDIDATE=0.50.1-rc.9000 NEXT=0.50.1-rc.9001 UNSAFE=0.50.1-rc.9002 BROKEN=0.50.1-rc.9003
 schema=$(jq -r .schemaVersion "$go/release/release.json")
 
 # manifest <version> <previous>: its release.json, as the release makes it.
