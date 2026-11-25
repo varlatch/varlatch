@@ -388,6 +388,8 @@ test("today no target can pass the gate: the lifecycle suites that wait for the 
     else if (["coolify-live", "coolify-live-expands"].includes(name)) assert.match(suite.replacement.none, /TestCoolifyLive\w+ \(build tag coolifylive/, name);
     // The Go CLI has no adopt: there is nothing to run.
     else if (name === "adopt") assert.match(suite.replacement.none, /never manages a Compose installation/);
+    // A real tailnet: run by hand, with its evidence.
+    else if (["ingress-tailnet", "tailnet-endpoint"].includes(name)) assert.match(suite.replacement.none, /internal docs\/evidence\//, name);
     else assert.ok(open.some((r) => r.of.startsWith(`${name} (`)), name);
   }
 
