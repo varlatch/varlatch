@@ -141,6 +141,11 @@ deliver or destroy on its own waits for `sudo varlatch admin restore resume`
 
 ### Dashboard
 
+- **Cached 0.23.0 dashboards clear after a migration to 0.50.** The Go
+  server's dashboard HTML now answers `Cache-Control: no-cache`, and the
+  0.23.0-only `/convex/*` and legacy Better Auth `/auth/` endpoints answer
+  JSON `404` with `Clear-Site-Data: "cache"` instead of the SPA fallback so
+  browsers drop a cached 0.23.0 page without clearing cookies.
 - **Live updates say nothing about an Organization you may not read.** The
   Go server's stream kept sending change signals (which domains changed and
   when, never what) to members of an Organization frozen for an incident,

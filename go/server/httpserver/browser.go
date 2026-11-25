@@ -117,6 +117,18 @@ func (s *Server) sameOrigin(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
+// legacyAuthPaths are the Better Auth paths under /auth/ that the 0.23.0
+// dashboard (and its Better Auth / passkey client) calls and varlatchd does
+// not serve. Paths the Go dashboard also uses (such as POST
+// /auth/varlatch-token and POST /auth/sign-out) are never listed here.
+var legacyAuthPaths = map[string]bool{
+	"/auth/get-session":                           true,
+	"/auth/passkey/generate-authenticate-options": true,
+	"/auth/passkey/verify-authentication":         true,
+	"/auth/passkey/generate-register-options":     true,
+	"/auth/passkey/verify-registration":           true,
+}
+
 // newBrowserHandler builds the generated browser-session handler.
 func (s *Server) newBrowserHandler() http.Handler {
 	mux := browserMux{ServeMux: http.NewServeMux(), s: s}
@@ -132,8 +144,15 @@ func (s *Server) newBrowserHandler() http.Handler {
 			writeError(w, r, http.StatusUnprocessableEntity, "VALIDATION_FAILED", err.Error())
 		},
 	})
-	// Anything else under /auth: no such route.
-	mux.ServeMux.HandleFunc("/auth/", func(w http.ResponseWriter, _ *http.Request) { writeNotFound(w) })
+	// Anything else under /auth: legacy Better Auth paths drop a cached
+	// 0.23.0 dashboard; other unknown routes answer the plain 404.
+	mux.ServeMux.HandleFunc("/auth/", func(w http.ResponseWriter, r *http.Request) {
+		if legacyAuthPaths[r.URL.Path] {
+			writeLegacyNotFound(w, r)
+			return
+		}
+		writeNotFound(w)
+	})
 	return mux
 }
 

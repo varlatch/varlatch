@@ -31,7 +31,12 @@ before the new server opens.
 - **Unfinished sign-ins are retried.** A passkey ceremony or sign-in that
   was in flight at the barrier is not carried over: it fails and is
   started again.
-- **Dashboards and live views reconnect** to the new server on their own.
+- **Open dashboard tabs need a hard reload.** A tab that stayed open across
+  the migration is still running the 0.23.0 dashboard in memory and cannot
+  switch itself to 0.50. Reload it with `Ctrl+Shift+R` (`Cmd+Shift+R` on a
+  Mac) and sign in again with the same passkey. New tabs drop any cached
+  0.23.0 copy on their own and load the 0.50 dashboard. The same applies
+  after a rollback to 0.23.0.
 
 Sync Targets, webhooks and audit export are drained at the barrier and
 resume on the new server from where they stopped: nothing already
@@ -742,7 +747,9 @@ until the address moves back:
 Until the address moves, an interruption, a failed check or `--abort`
 undoes the rollback, and the new server goes on serving. During the
 transfer, `--resume` checks again and `--abort` gives the address back to
-the new server first. People sign in again after a rollback too.
+the new server first. People sign in again after a rollback too, with the
+same passkey, and hard-reload any dashboard tab that stayed open
+(`Ctrl+Shift+R`, `Cmd+Shift+R` on a Mac).
 
 #### The way back on Coolify
 

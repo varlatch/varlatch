@@ -43,8 +43,10 @@ func contentSecurityPolicy(endpoint string) string {
 
 // serveWeb serves the dashboard as nginx did (try_files $uri /index.html):
 // a file of the build when the path names one, the app's index.html for
-// every other path (single-page routing). /v1, /auth and /enroll never get
-// here (ServeHTTP). Device sign-in's verification page is never cached.
+// every other path (single-page routing). /v1, /auth, /enroll and /convex
+// never get here (ServeHTTP). HTML answers Cache-Control: no-cache (except
+// /device, which is never cached: no-store) so browsers revalidate after a
+// migration or upgrade instead of serving a stale app from heuristic cache.
 func (s *Server) serveWeb(w http.ResponseWriter, r *http.Request) {
 	if !isGet(r) {
 		w.Header().Set("Allow", "GET, HEAD")
@@ -74,6 +76,9 @@ func (s *Server) serveWeb(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+	}
+	if r.URL.Path != "/device" {
+		w.Header().Set("Cache-Control", "no-cache")
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	http.ServeContent(w, r, "index.html", time.Time{}, bytes.NewReader(s.webIndex))
