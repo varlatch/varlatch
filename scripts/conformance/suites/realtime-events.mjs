@@ -206,6 +206,11 @@ try {
       : 0;
     const s2Ended = await S2.endedWithin(10_000);
     out.push(`revocation ${revoke}: ended ${s2Ended}, reason ${closeOf(S2.events)}`);
+    // Revoking a browser's credential ends its session too (0.50.2): that
+    // browser cannot open a stream again, as after a sign-out.
+    const afterRevoke = stream(revokedSession.cookie);
+    await afterRevoke.done;
+    out.push(`a new stream after revocation: ${afterRevoke.status}`);
 
     // Removal from organization b: carol's stream says so, then closes; bob's stays.
     const carolStream = await opened((await browser(names, session(carol).token)).cookie);
@@ -227,7 +232,7 @@ try {
       "realtime-events.revocation-and-removal-close-streams",
       "revocation and removal close streams: sign-out, a revoked session credential and removal from an organization end the stream with the reason, and other streams stay open",
       signOut.status === 204 && s1Ended && closeOf(S1.events) === "session-ended" && afterSignOut.status === 401 &&
-        revoke === 204 && s2Ended && closeOf(S2.events) === "credential-revoked" &&
+        revoke === 204 && s2Ended && ["credential-revoked", "session-ended"].includes(closeOf(S2.events)) && afterRevoke.status === 401 &&
         carolEnded && told && closeOf(carolStream.events) === "membership-removed" && bobSaw && !bobStream.ended &&
         stillB === 0 && !kept.ended,
       out.join("; "),
