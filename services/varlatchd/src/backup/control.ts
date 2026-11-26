@@ -134,7 +134,14 @@ export function startBackupControl(ctx: AppCtx, maintenance: Maintenance, mirror
             result = await migrationBarrier(ctx, maintenance, input.drainMs ?? MIGRATION_DRAIN_MS); break;
           }
           case 'migration-status': result = { gate: maintenance.gate, busy: maintenance.busy, inFlight: maintenance.busyLabels }; break;
-          case 'migration-release': maintenance.releaseMigration(input.id ?? ''); await releaseHeldSnapshot(); result = { released: true }; break;
+          case 'migration-release': {
+            // Capabilities reopen only once the repair has run, inside the
+            // admission the release reopens (capabilityrepair.ts).
+            ctx.capabilityRepair?.invalidate();
+            maintenance.releaseMigration(input.id ?? ''); await releaseHeldSnapshot(); result = { released: true };
+            void ctx.capabilityRepair?.attempt(ctx);
+            break;
+          }
           case 'migration-migrated-out': result = { gate: maintenance.markMigratedOut(input.id ?? '') }; await releaseHeldSnapshot(); break;
           case 'status': result = backupStatus(maintenance.dir); break;
           case 'record': saveStatus(maintenance.dir, statusSchema.parse(input.status)); result = { recorded: true }; break;

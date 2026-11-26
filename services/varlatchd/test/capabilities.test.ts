@@ -748,6 +748,16 @@ describe("Capabilities wait for the repair", () => {
     expect(res.status).toBe(503);
     expect((await res.json()).error.code).toBe("MAINTENANCE");
   };
+  /** An issuance through the app, its context's repair the gated one's (its gate aside). */
+  const issueWith = async (gated: AppCtx) => {
+    await grantUse();
+    ctx.capabilityRepair = gated.capabilityRepair;
+    try {
+      return await issue();
+    } finally {
+      delete ctx.capabilityRepair;
+    }
+  };
 
   it("refuses issuance and exercise until the repair has run, and after it failed", async () => {
     const { CapabilityRepair } = await import("../src/domain/capabilityrepair.js");
@@ -810,6 +820,56 @@ describe("Capabilities wait for the repair", () => {
         prepareRestore(dir, "arc_second");
         for (let i = 0; i < 100 && repair.ready; i++) await new Promise((r) => setTimeout(r, 10));
         expect(repair.ready).toBe(false);
+      } finally {
+        stop();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("writes nothing behind the migration barrier, never on a migrated-out source, and runs once a barrier is released", async () => {
+    const { mkdtempSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { Maintenance } = await import("@varlatch/backup");
+    const { CapabilityRepair } = await import("../src/domain/capabilityrepair.js");
+    const dir = mkdtempSync(join(tmpdir(), "vl-caprepair-"));
+    try {
+      const maintenance = new Maintenance(dir);
+      let runs = 0;
+      const repair = new CapabilityRepair(async () => {
+        runs++;
+        return 0;
+      });
+      const gated = { ...ctx, maintenance, capabilityRepair: repair };
+      const settle = async (ready: boolean) => {
+        for (let i = 0; i < 100 && repair.ready !== ready; i++) await new Promise((r) => setTimeout(r, 10));
+      };
+      // Behind the barrier, as `varlatchd serve` starts behind it.
+      const barrier = maintenance.beginMigration();
+      expect(await repair.attempt(gated)).toBe(false);
+      const stop = repair.start(gated, 10);
+      try {
+        await new Promise((r) => setTimeout(r, 50));
+        expect(runs).toBe(0);
+        // Capabilities wait meanwhile.
+        await refusedUntilRepaired(await issueWith(gated));
+        // Released: the repair runs before Capabilities reopen.
+        maintenance.releaseMigration(barrier.id);
+        await settle(true);
+        expect(repair.ready).toBe(true);
+        expect(runs).toBe(1);
+        // Migrated out: not ready, and never run while the gate stands.
+        const second = maintenance.beginMigration();
+        maintenance.freezeMigration(second.id, "1");
+        maintenance.markMigratedOut(second.id);
+        await settle(false);
+        expect(repair.ready).toBe(false);
+        await new Promise((r) => setTimeout(r, 50));
+        expect(runs).toBe(1);
+        expect(await repair.attempt(gated)).toBe(false);
+        expect(runs).toBe(1);
       } finally {
         stop();
       }
