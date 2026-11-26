@@ -78,7 +78,7 @@ func TestTheDeclarationMatchesThisBuild(t *testing.T) {
 	}
 	// A declaration of another schema version does not match it.
 	code, _, errs = runIt(t, "declaration", "--declaration", filepath.Join(g6, "fixture.json"))
-	if code != exitFailed || !strings.Contains(errs, "declares schemaVersion 3 and compatibleFrom 1; this varlatchd's schema is 2, compatible from 1") {
+	if code != exitFailed || !strings.Contains(errs, "declares schemaVersion 4 and compatibleFrom 1; this varlatchd's schema is 3, compatible from 1") {
 		t.Fatalf("%d %q", code, errs)
 	}
 }
@@ -153,7 +153,7 @@ func TestAnUndeclaredBreakFails(t *testing.T) {
 	}
 	// The same change declared not rollback-safe is a note, not a failure.
 	decl := filepath.Join(t.TempDir(), "release.json")
-	if err := os.WriteFile(decl, []byte(`{"schemaVersion": 2, "compatibleFrom": 2, "rollbackSafe": false, "previous": {"version": "0.0.0-g6.base", "schemaVersion": 1}, "reversibleTo": "0.23.0", "endsRollbackWindow": false}`), 0o600); err != nil {
+	if err := os.WriteFile(decl, []byte(`{"schemaVersion": 2, "compatibleFrom": 2, "rollbackSafe": false, "previous": {"version": "0.0.0-g6.base", "schemaVersion": 1}, "reversibleTo": "0.23.1", "endsRollbackWindow": false}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if code, out, errs := runIt(t, "schema", "--previous", schemaFile, "--current", schemaWith(t, "breaking.sql"), "--declaration", decl); code != exitOK || !strings.Contains(out, "note: breaking: trigger") {
@@ -207,7 +207,7 @@ func TestTheDeclarationHoldsAgainstThePreviousRelease(t *testing.T) {
 // or on today's schema.
 func TestAnAdditionBetweenTwoReleasesHolds(t *testing.T) {
 	decl := filepath.Join(t.TempDir(), "release.json")
-	if err := os.WriteFile(decl, []byte(`{"schemaVersion": 2, "compatibleFrom": 1, "rollbackSafe": true, "previous": {"version": "0.50.0-rc.1", "schemaVersion": 1}, "reversibleTo": "0.23.0", "endsRollbackWindow": false}`), 0o600); err != nil {
+	if err := os.WriteFile(decl, []byte(`{"schemaVersion": 2, "compatibleFrom": 1, "rollbackSafe": true, "previous": {"version": "0.50.0-rc.1", "schemaVersion": 1}, "reversibleTo": "0.23.1", "endsRollbackWindow": false}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	code, out, errs := runIt(t, "schema", "--previous", filepath.Join("testdata", "schema-0.50.0-rc.1.sql"), "--current", filepath.Join("testdata", "schema-0.50.0-rc.2.sql"), "--declaration", decl, "--json")
@@ -221,7 +221,7 @@ func TestAnAdditionBetweenTwoReleasesHolds(t *testing.T) {
 	}
 	// The same change unbumped (version still 1) is refused.
 	unbumped := filepath.Join(t.TempDir(), "unbumped.json")
-	if err := os.WriteFile(unbumped, []byte(`{"schemaVersion": 1, "compatibleFrom": 1, "rollbackSafe": true, "previous": {"version": "0.50.0-rc.1", "schemaVersion": 1}, "reversibleTo": "0.23.0", "endsRollbackWindow": false}`), 0o600); err != nil {
+	if err := os.WriteFile(unbumped, []byte(`{"schemaVersion": 1, "compatibleFrom": 1, "rollbackSafe": true, "previous": {"version": "0.50.0-rc.1", "schemaVersion": 1}, "reversibleTo": "0.23.1", "endsRollbackWindow": false}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	code, out, _ = runIt(t, "schema", "--previous", filepath.Join("testdata", "schema-0.50.0-rc.1.sql"), "--current", filepath.Join("testdata", "schema-0.50.0-rc.2.sql"), "--declaration", unbumped)

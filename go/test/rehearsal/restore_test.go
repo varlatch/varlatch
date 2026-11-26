@@ -33,7 +33,7 @@ import (
 )
 
 // B6 (internal docs/design/go-step8-rehearsals.md; go-step8.md phase 2):
-// the migration of a 0.23.0 installation restored from a backup archive
+// the migration of a 0.23.1 installation restored from a backup archive
 // the operator copied to this host by hand, with its two keys
 // (VL_RH_SOURCE=restore:<archive>, VL_RH_RESTORE_BEK, VL_RH_RESTORE_KEK).
 // The harness never fetches an archive, and nothing the archive holds
@@ -119,8 +119,8 @@ func restoredInstallation(t *testing.T, rel release, s3 *s3Server, name string) 
 	}
 	_ = json.Unmarshal([]byte(body), &meta)
 	in.installationID = secret(meta.InstallationID)
-	ok := a.ok && meta.ServerVersion == "0.23.0" && meta.InstallationID != ""
-	if !record2(t, restoreItem, name+": the restored installation serves 0.23.0 at the public URL", ok, fmt.Sprintf("/readyz %d after %s; /v1/meta %s", a.code, a.took.Round(time.Millisecond), trim(redact(body)))) {
+	ok := a.ok && meta.ServerVersion == "0.23.1" && meta.InstallationID != ""
+	if !record2(t, restoreItem, name+": the restored installation serves 0.23.1 at the public URL", ok, fmt.Sprintf("/readyz %d after %s; /v1/meta %s", a.code, a.took.Round(time.Millisecond), trim(redact(body)))) {
 		t.FailNow()
 	}
 	// The restore started the copy (inside its internal network, sync and
@@ -184,7 +184,7 @@ func (in *installation) isolatedBeforeStart() (bool, string) {
 }
 
 // neutralise revokes every webhook of the copy that is not (the
-// harness's SQL, never product code): 0.23.0 delivers to webhooks whose
+// harness's SQL, never product code): 0.23.1 delivers to webhooks whose
 // revoked_at is null only.
 func (in *installation) neutralise() (int, error) {
 	r := in.psql("WITH r AS (UPDATE webhooks SET revoked_at = now() WHERE revoked_at IS NULL RETURNING 1) SELECT count(*) FROM r")
@@ -275,15 +275,15 @@ func restoreCase(t *testing.T, rel release, s3 *s3Server) {
 		return
 	}
 	a := answersWithin(func() (int, string) { return in.get("/v1/meta") }, sourceAnswers(in.installationID), sourceAnswerDeadline, 250*time.Millisecond)
-	record(t, item, "after the rollback the public URL answers from 0.23.0", a.ok, fmt.Sprintf("%d %s after %v", a.code, trim(a.body), a.took.Round(time.Millisecond)))
+	record(t, item, "after the rollback the public URL answers from 0.23.1", a.ok, fmt.Sprintf("%d %s after %v", a.code, trim(a.body), a.took.Round(time.Millisecond)))
 	// The TypeScript side runs again, on a database rebuilt from Go's:
 	// as isolated as before (the webhooks come back revoked).
 	isolated, detail := in.isolatedRunning()
 	record(t, item, "after the rollback the copy reaches nothing", isolated, detail)
 	reverseParity(t, in)
 	back, err := rd.read()
-	record(t, item, "the CLI reads after the rollback: the day's changes are on 0.23.0", err == nil && sameReads(changed, back), rd.compare(changed, back, err))
-	w.kept("0.23.0, after the rollback")
+	record(t, item, "the CLI reads after the rollback: the day's changes are on 0.23.1", err == nil && sameReads(changed, back), rd.compare(changed, back, err))
+	w.kept("0.23.1, after the rollback")
 	// Go's copy discarded, then the migration again.
 	f := in.migrateFinish(rel)
 	record(t, item, "--finish --delete-old-data after the rollback: Go's copy discarded", f.code == 0, f.String()+" "+lastLines(f.stdout, 3))
@@ -364,7 +364,7 @@ func forwardAndCheck(t *testing.T, in *installation, rel release, what string, p
 		record(t, item, what+": downtime within O7's 10 minutes", seen < 10*time.Minute, fmt.Sprintf("clients saw %s", seen.Round(time.Millisecond)))
 	}
 	_, body := in.get("/v1/meta")
-	record(t, item, what+": the public URL answers from the target", strings.Contains(body, in.installationID) && !strings.Contains(body, `"serverVersion":"0.23.0"`), trim(body))
+	record(t, item, what+": the public URL answers from the target", strings.Contains(body, in.installationID) && !strings.Contains(body, `"serverVersion":"0.23.1"`), trim(body))
 	forwardParity(t, in, what)
 	isolated, detail := in.goRunsIsolated(rd)
 	record(t, item, what+": Go runs with sync and the audit export off", isolated, detail)
@@ -500,7 +500,7 @@ func (in *installation) journalOf() (fwd, rev journalCopy, err error) {
 		Copy     *journalCopy `json:"copy"`
 		Rollback *struct {
 			// Reverse export deletes auth_sessions before writing the bundle,
-			// so 0.23.0's export already excludes ended sessions and matches
+			// so 0.23.1's export already excludes ended sessions and matches
 			// rollback.export.rows directly.
 			Export *struct {
 				Tables int64 `json:"tables"`
@@ -587,7 +587,7 @@ func reverseParity(t *testing.T, in *installation) {
 		return
 	}
 	ok, detail := parity(src, rev)
-	record(t, restoreItem, "the rollback: parity: 0.23.0's export is what the reverse imported and checked", ok, detail)
+	record(t, restoreItem, "the rollback: parity: 0.23.1's export is what the reverse imported and checked", ok, detail)
 }
 
 // --- the CLI's reads ---
@@ -1179,7 +1179,7 @@ func makeBundle(t *testing.T, rel release, s3 *s3Server) {
 		size = st.Size()
 	}
 	about, _ := json.MarshalIndent(map[string]any{
-		"what": "a synthetic production-shaped 0.23.0 archive (go/test/rehearsal, VL_RH_ONLY=bundle); no production data", "run": runID,
+		"what": "a synthetic production-shaped 0.23.1 archive (go/test/rehearsal, VL_RH_ONLY=bundle); no production data", "run": runID,
 		"made": time.Now().UTC().Format(time.RFC3339), "archive": "archive.vltbak", "bek": "backup-key", "kek": "root-kek",
 		"values": s.values, "versions": s.versions, "shape": shape, "bytes": size,
 	}, "", "  ")

@@ -21,7 +21,7 @@ A bundle is UTF-8 text, one JSON value per line, each line ending in `\n`
 1. **The header**, exactly these members in this order:
 
    ```json
-   {"bundle":"varlatch-migration","format":1,"manifest":1,"encoding":"canonical-v1","direction":"forward","release":"0.23.0","frozenPoint":{"auditPosition":42,"snapshot":"00000003-0000001B-1"},"sequences":[]}
+   {"bundle":"varlatch-migration","format":1,"manifest":1,"encoding":"canonical-v1","direction":"forward","release":"0.23.1","frozenPoint":{"auditPosition":42,"snapshot":"00000003-0000001B-1"},"sequences":[]}
    ```
 
    - `format` is this document's version, 1.
@@ -49,7 +49,7 @@ A bundle is UTF-8 text, one JSON value per line, each line ending in `\n`
      so both sides write the same rows in the same order.
 
    A column the manifest leaves out (`leftOut`, the session's token) is
-   written as `null` in every row: the 0.23.0 export never reads it, and a
+   written as `null` in every row: the 0.23.1 export never reads it, and a
    reader refuses a row that carries a value there. A table the manifest
    leaves out never appears. In a reverse bundle the
    `session` table has no rows: every Go browser session ends

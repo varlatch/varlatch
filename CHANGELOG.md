@@ -5,22 +5,45 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
-## Unreleased
+## 0.50.2 (2026-11-26)
+
+A security fix release. 0.50.1 was tagged but never published: its changes
+are part of this release.
+
+### Server
+
+- **Retiring an identity revokes its Capabilities.** Retiring an identity
+  did not revoke the Capabilities issued for it, or the ones it issued as a
+  Broker: a retired identity's Capabilities kept working until they
+  expired, up to 24 hours, and worked again if the identity was
+  reactivated. Now retiring an identity revokes them, and issuance checks
+  the Broker and the Agent again before a Capability is created. At first
+  start after upgrading, the server revokes any Capability an earlier
+  release left behind this way: issuing and exercising Capabilities answer
+  503 until that one-time cleanup finishes. The database goes to schema
+  version 3 (indexes only, safe to roll back).
+- **Revoking a browser credential ends its session.** Revoking another
+  browser's credential, or signing out everywhere else, left that
+  browser's session in place, so it could sign itself back in without its
+  passkey for as long as the session lasted. Now revoking a browser
+  credential ends the session it came from, and Sign out everywhere else
+  (the new `POST /v1/me/sessions/sign-out-others`) ends every other
+  browser's session, including browsers that held no valid credential at
+  the time. Signing out ends the session on the server, and if the server
+  cannot end it the page says so.
+
+### Upgrading
+
+- A systemd installation: `varlatch upgrade`, which applies schema version
+  3 (`varlatchd admin schema upgrade`).
+- The container image: set the new digest from this release's
+  `varlatchd-image.txt` and redeploy.
+- `varlatch migrate` now starts from 0.23.1, the patched TypeScript
+  release: upgrade a 0.23.0 installation to 0.23.1 first. A rollback within
+  the window returns to 0.23.1.
 
 ### CLI
 
-- **Tailnet handoff errors no longer drop a confirmed name refusal or claim a
-  listed holder when the wait ends.** When a tailnet rename retry's read-back
-  is cut short by the release deadline after a stale first listing, the
-  handoff keeps the last confirmed name error instead of reporting the stale
-  read-back. When a pending undo's deadline runs out after a taken-name
-  refusal where an earlier listing showed no other device under the name,
-  the error now states that no device was listed instead of sending the
-  operator to rename or delete another device.
-
-## 0.50.1 (2026-11-26)
-
-### CLI
 
 - **`varlatch migrate --rollback` no longer removes what the rebuilt
   TypeScript installation took in once it may have served.** In 0.50.0, once
@@ -40,7 +63,7 @@ fixes.
   rollback begun by 0.50.0 puts the TypeScript installation back on its own
   volumes but does not delete the fresh ones (`rollback.keptVolumes`, shown
   by `--status`): check which still exist, then reconcile and remove them.
-  A 0.50.0 CLI does not read a rollback journal of 0.50.1: use 0.50.1 to
+  A 0.50.0 CLI does not read a rollback journal of 0.50.2: use 0.50.2 to
   resume it.
 - **The tailnet handoff of `varlatch migrate` waits for Tailscale to free
   the name.** Tailscale does not make a machine name free again the moment
@@ -59,6 +82,14 @@ fixes.
   undo's two renames share its 60 seconds: when the first leaves too
   little time for the second, the undo is left pending, and `varlatch
   migrate --resume` runs it again. Nothing changes on Headscale.
+- **Tailnet handoff errors no longer drop a confirmed name refusal or claim a
+  listed holder when the wait ends.** When a tailnet rename retry's read-back
+  is cut short by the release deadline after a stale first listing, the
+  handoff keeps the last confirmed name error instead of reporting the stale
+  read-back. When a pending undo's deadline runs out after a taken-name
+  refusal where an earlier listing showed no other device under the name,
+  the error now states that no device was listed instead of sending the
+  operator to rename or delete another device.
 
 ## 0.50.0 (2026-11-25)
 

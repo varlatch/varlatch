@@ -3663,9 +3663,9 @@ migrations.
   mark-migrated-out`) and the TypeScript host CLI (`--ts-cli`, default
   `varlatch-ts`) for the preflight's backup; the target through
   `varlatchd admin migrate`.
-  - The phases: preflight (the source is 0.23.0 by its image's version,
+  - The phases: preflight (the source is 0.23.1 by its image's version,
     and its image is the published one by its registry digest of
-    `ghcr.io/varlatch/varlatchd`, `LastTypeScriptDigest`, v0.23.0's
+    `ghcr.io/varlatch/varlatchd`, `LastTypeScriptDigest`, v0.23.1's
     varlatchd image index as its release published it; it is
     behind no gate; what an interrupted run left, its scratch directories
     and bundles by their exact names, is removed; a fresh backup made, uploaded,
@@ -3870,7 +3870,7 @@ migrations.
   An interruption, a failed check or `--abort` before the transfer undoes
   it: the TypeScript side as the forward migration left it (its marker
   made again), Go's journal open again, then its barrier lifted. For
-  rollbacks begun by 0.50.1, the undo removes the fresh volumes. For
+  rollbacks begun by 0.50.2 or later, the undo removes the fresh volumes. For
   rollbacks begun by 0.50.0, it leaves any surviving fresh volumes for
   reconciliation. Go runs throughout (stopped in the transfer on the
   public and own-proxy shapes, started again by an undo). In the transfer,
@@ -3930,7 +3930,7 @@ migrations.
   Then an isolated restore: a throwaway PostgreSQL 17.6 (by digest) with
   `--network none` takes the Secret Plane's dump as the TypeScript
   restore does, and the last TypeScript release's image (by default the
-  one `LastTypeScriptDigest` pins, v0.23.0's; `--ts-image` gives another
+  one `LastTypeScriptDigest` pins, v0.23.1's; `--ts-image` gives another
   by registry digest, and a local image ID only with
   `VARLATCH_ALLOW_LOCAL_TS_IMAGE=1`, for the tests, with a warning) runs
   in its namespace, read-only, as this
@@ -3994,7 +3994,7 @@ migrations.
 - The migration's rollback window (step 7, slice 7.6b; internal
   docs/design/go-step7.md decision 17): the declaration also says what the
   release does to a migration's rollback window:
-  - `reversibleTo` names the last TypeScript release (`0.23.0`): a reverse
+  - `reversibleTo` names the last TypeScript release (`0.23.1`): a reverse
     migration of this release's data returns to it;
   - or `endsRollbackWindow` is true: after it, `varlatch migrate
     --rollback` can no longer go back. `Manifest.EndsRollbackWindow` and

@@ -61,7 +61,7 @@ func invalid(msg string) error { return domainerr.New("VALIDATION_FAILED", msg) 
 
 // Issue is issueCapability: the input checked, then, in a job with the
 // writer's checks (the Organization's, the Broker's and the Agent's gates
-// held shared), the Agent named, the advisory preflight (the Agent's
+// held shared), the Broker's credential still live, the Agent named, the advisory preflight (the Agent's
 // secret.use without Requirements, which depend on an exercise's Tailnet
 // Context), the row and capability.issued. Its secret is returned once;
 // only its hash is stored. preflightItems, when set, is added to the
@@ -126,6 +126,21 @@ func Issue(ctx context.Context, w *write.Writer, p *auth.Principal, s Scope, in 
 	err = w.Job(ctx, gates, func(ctx context.Context, tx *storage.Tx) error {
 		if _, err := write.Text(in.AgentIdentityID); err != nil {
 			return err
+		}
+		// The request authenticated before the gates. Retirement holds the
+		// Broker's gate exclusive while it disables it, revokes its
+		// credentials and its Capabilities: with the gate held here, a
+		// retirement is either seen or comes after this Capability, which
+		// it then revokes. Its expiry is read against the clock now, in the
+		// job: the request may have waited for the gates past it.
+		live, err := query.New(tx).LiveRequesterCredential(ctx, query.LiveRequesterCredentialParams{
+			ID: p.Credential.ID, IdentityID: broker, Now: sql.NullInt64{Int64: now().UnixMicro(), Valid: true},
+		})
+		if err != nil {
+			return err
+		}
+		if live == 0 {
+			return domainerr.New("INVALID_CREDENTIAL", "Credential is invalid, revoked, or expired")
 		}
 		agent, err := query.New(tx).CapabilityAgent(ctx, query.CapabilityAgentParams{ID: in.AgentIdentityID, OrganizationID: sql.NullString{String: s.OrganizationID, Valid: true}})
 		if errors.Is(err, sql.ErrNoRows) || err == nil && agent.Kind != "agent" {

@@ -1446,3 +1446,15 @@ CREATE TABLE certificate_issuances (
   ended_at INTEGER
 ) STRICT;
 CREATE INDEX certificate_issuances_name_started ON certificate_issuances (name, started_at);
+
+-- Audit reads of the repair of Capabilities earlier retirements left live
+-- (capabilities.RevokeOfRetired), schema version 3: an identity's
+-- identity.retired and identity.reactivated, and a Capability's
+-- capability.issued, each in an Organization, in audit order; and the
+-- unrevoked Capabilities by Organization and id, which the repair reads in
+-- batches from a cursor.
+CREATE INDEX audit_events_identity_lifecycle_idx ON audit_events (organization_id, json_extract(resource, '$.identityId'), event_order)
+  WHERE event_type IN ('identity.retired', 'identity.reactivated');
+CREATE INDEX audit_events_capability_issued_idx ON audit_events (organization_id, json_extract(resource, '$.capabilityId'), event_order)
+  WHERE event_type = 'capability.issued';
+CREATE INDEX capabilities_live_idx ON capabilities (organization_id, id) WHERE revoked_at IS NULL;

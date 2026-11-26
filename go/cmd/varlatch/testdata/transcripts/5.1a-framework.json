@@ -294,7 +294,7 @@
       ],
       "expect": {
         "status": 0,
-        "stdout": "varlatch 0.22.0 (migration 52)\n",
+        "stdout": "varlatch 0.22.0 (migration 53)\n",
         "stderr": "",
         "requests": [],
         "files": {
@@ -316,7 +316,7 @@
       ],
       "expect": {
         "status": 0,
-        "stdout": "varlatch 0.22.0 (migration 52)\n",
+        "stdout": "varlatch 0.22.0 (migration 53)\n",
         "stderr": "",
         "requests": [],
         "files": {
@@ -339,7 +339,7 @@
       ],
       "expect": {
         "status": 0,
-        "stdout": "varlatch 0.22.0 (migration 52)\n",
+        "stdout": "varlatch 0.22.0 (migration 53)\n",
         "stderr": "",
         "requests": [],
         "files": {

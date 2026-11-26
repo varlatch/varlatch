@@ -100,7 +100,11 @@ export async function addPasskey(name: string): Promise<void> {
   await postJson("/auth/passkey/registration", { response, ...(name ? { name } : {}) });
 }
 
-/** End the session: its browser bearers are revoked with it. */
+/** End the session: its browser bearers are revoked with it. Throws when the server refuses. */
 export async function signOut(): Promise<void> {
-  await authPost("/auth/sign-out");
+  const res = await authPost("/auth/sign-out");
+  if (!res.ok) {
+    const json = (await res.json().catch(() => null)) as { error?: { code?: string; message?: string } } | null;
+    throw new SessionRequestError(json?.error?.message ?? `/auth/sign-out failed: ${res.status}`, res.status, json?.error?.code ?? null, res);
+  }
 }

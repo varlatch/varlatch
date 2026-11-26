@@ -191,7 +191,7 @@ try {
     const s1Ended = await S1.endedWithin(10_000);
     out.push(`sign-out ${signOut.status}: ended ${s1Ended}, reason ${closeOf(S1.events)}`);
     const afterSignOut = stream(signedOut.cookie);
-    await afterSignOut.done;
+    if (!(await afterSignOut.endedWithin(10_000))) afterSignOut.abort();
     out.push(`a new stream after sign-out: ${afterSignOut.status}`);
 
     // Revoking the session's credential: its dashboard bearer.
@@ -206,6 +206,13 @@ try {
       : 0;
     const s2Ended = await S2.endedWithin(10_000);
     out.push(`revocation ${revoke}: ended ${s2Ended}, reason ${closeOf(S2.events)}`);
+    // From 0.50.2 revoking a browser's credential ends its session too, so
+    // that browser cannot open a stream again (401). G6 runs these suites
+    // against the previous release as well, which keeps the stream open, so
+    // this is reported, not checked; the Go server's tests check it.
+    const afterRevoke = stream(revokedSession.cookie);
+    if (!(await afterRevoke.endedWithin(5_000))) afterRevoke.abort();
+    out.push(`a new stream after revocation: ${afterRevoke.status}`);
 
     // Removal from organization b: carol's stream says so, then closes; bob's stays.
     const carolStream = await opened((await browser(names, session(carol).token)).cookie);
@@ -227,7 +234,7 @@ try {
       "realtime-events.revocation-and-removal-close-streams",
       "revocation and removal close streams: sign-out, a revoked session credential and removal from an organization end the stream with the reason, and other streams stay open",
       signOut.status === 204 && s1Ended && closeOf(S1.events) === "session-ended" && afterSignOut.status === 401 &&
-        revoke === 204 && s2Ended && closeOf(S2.events) === "credential-revoked" &&
+        revoke === 204 && s2Ended && ["credential-revoked", "session-ended"].includes(closeOf(S2.events)) &&
         carolEnded && told && closeOf(carolStream.events) === "membership-removed" && bobSaw && !bobStream.ended &&
         stillB === 0 && !kept.ended,
       out.join("; "),

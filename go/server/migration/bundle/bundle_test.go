@@ -195,7 +195,7 @@ func refusals(good []byte) []refusal {
 		{"an unknown header member", with(0, strings.Replace(header, `"sequences":[]`, `"sequences":[],"extra":1`, 1)), "the header"},
 		{"a forward bundle without its snapshot", with(0, strings.Replace(header, `,"snapshot":"00000003-0000001B-1"`, "", 1)), "snapshot"},
 		{"another direction", with(0, strings.Replace(header, `"forward"`, `"sideways"`, 1)), "neither forward nor reverse"},
-		{"another source release", with(0, strings.Replace(header, `"release":"0.23.0"`, `"release":"0.22.9"`, 1)), "the manifest's source"},
+		{"another source release", with(0, strings.Replace(header, `"release":"0.23.1"`, `"release":"0.22.9"`, 1)), "the manifest's source"},
 		{"tables out of order", with(1, lines[3]), "the manifest's order"},
 		{"a row more than counted", with(instRow-1, strings.Replace(lines[instRow-1], `"rows":1`, `"rows":0`, 1)), "a table line was due"},
 		{"a blank line", join(lines[:1]) + "\n" + join(lines[1:]), "blank line"},

@@ -208,7 +208,7 @@ func TestArchiveRefusesBeforeAnyProgram(t *testing.T) {
 		// No --ts-image: the pinned default passes the image's checks, and
 		// the conversion stops at its next one, an output that exists.
 		{"no image, the default", func(o *ArchiveOptions) { o.TSImage, o.Out = "", exists }, "exists: the converter writes a new archive"},
-		{"an image by tag", func(o *ArchiveOptions) { o.TSImage = "ghcr.io/varlatch/varlatchd:0.23.0" }, "is not pinned by its registry digest"},
+		{"an image by tag", func(o *ArchiveOptions) { o.TSImage = "ghcr.io/varlatch/varlatchd:0.23.1" }, "is not pinned by its registry digest"},
 		{"a local image ID without VARLATCH_ALLOW_LOCAL_TS_IMAGE", func(o *ArchiveOptions) { o.TSImage = "sha256:" + strings.Repeat("ef", 32) }, "is not pinned by its registry digest"},
 		{"an output that exists", func(o *ArchiveOptions) { o.Out = exists }, "exists: the converter writes a new archive"},
 		{"another installation's Root KEK", func(o *ArchiveOptions) { o.KEKFile = wrongKEK }, "does not open the archive's canaries"},
@@ -323,7 +323,7 @@ func conversionSequence(t *testing.T, given, image string) {
 		case c.name == "docker" && len(c.args) > 3 && c.args[0] == "exec" && slices.Contains(c.args, "SELECT 1"):
 			return Ran{Answer: []byte("1\n")}
 		case c.name == "docker" && c.args[0] == "run" && slices.Contains(c.args, "export"):
-			// 0.23.0's export to its standard output (--out -): the bundle
+			// 0.23.1's export to its standard output (--out -): the bundle
 			// there, the summary as stderr's last line. No directory is
 			// mounted for it to write.
 			exportStdin = c.stdin

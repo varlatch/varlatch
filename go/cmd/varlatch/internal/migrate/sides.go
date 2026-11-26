@@ -10,16 +10,16 @@ import (
 // LastTypeScriptRelease is the one release a migration starts from (O1):
 // the last TypeScript release, whose export writes the bundle this
 // varlatchd imports.
-const LastTypeScriptRelease = "0.23.0"
+const LastTypeScriptRelease = "0.23.1"
 
 // The last TypeScript release's published image: a migration starts from
 // that image only, by its registry digest (decision 20). The digest is
-// v0.23.0's varlatchd multi-arch image index (linux/amd64 and
+// v0.23.1's varlatchd multi-arch image index (linux/amd64 and
 // linux/arm64), as its release published it (varlatch-release.json and
-// coolify-image-digests.env, signed by release.yml@refs/tags/v0.23.0).
+// coolify-image-digests.env, signed by release.yml@refs/tags/v0.23.1).
 const (
 	LastTypeScriptRepository = "ghcr.io/varlatch/varlatchd"
-	LastTypeScriptDigest     = "sha256:6d9b9a6742d9269da511736164a9b2cff78bca415f7a1a5d73b9a93290f1e3b6"
+	LastTypeScriptDigest     = "sha256:fceb39c0c209779764d37da9e68a8e705676eca6a798a832d74fb0f6ebf1bba2"
 )
 
 // imagePin is the image a migration starts from: the constants above, or

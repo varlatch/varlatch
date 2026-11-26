@@ -326,7 +326,7 @@ func (s *Service) ListOwnCredentials(ctx context.Context, identityID string) ([]
 
 // RevokeOwnCredential revokes one of the caller's credentials (DELETE
 // /v1/me/credentials/{credential}); another's, or an unknown one, is not
-// found. A machine identity's Organization must be live: its credentials
+// found. A browser credential's session ends with it (endsSession). A machine identity's Organization must be live: its credentials
 // belong to the Organization (lockLiveScope with the recovery exception).
 func (s *Service) RevokeOwnCredential(ctx context.Context, p *Principal, credentialID string) error {
 	return s.store.Write(ctx, func(tx *storage.Tx) error {
@@ -338,13 +338,75 @@ func (s *Service) RevokeOwnCredential(ctx context.Context, p *Principal, credent
 				return err
 			}
 		}
-		if _, err := q.CredentialOfIdentity(ctx, query.CredentialOfIdentityParams{ID: credentialID, IdentityID: p.Identity.ID}); errors.Is(err, sql.ErrNoRows) {
+		row, err := q.CredentialOfIdentity(ctx, query.CredentialOfIdentityParams{ID: credentialID, IdentityID: p.Identity.ID})
+		if errors.Is(err, sql.ErrNoRows) {
 			return domainerr.New("RESOURCE_NOT_FOUND", "Credential not found")
 		} else if err != nil {
 			return err
 		}
-		return RevokeCredential(ctx, tx, s.micros(), credentialID, p.Identity.ID, nil)
+		if err := RevokeCredential(ctx, tx, s.micros(), credentialID, p.Identity.ID, nil); err != nil {
+			return err
+		}
+		if !endsSession(p, credentialID, row.Kind, row.AuthSessionID) {
+			return nil
+		}
+		// Deleting the session revokes its other browser bearers (the
+		// trigger), so the browser cannot mint another from its cookie.
+		_, err = q.DeleteAuthSession(ctx, row.AuthSessionID.String)
+		return err
 	})
+}
+
+// SignOutOtherSessions ends every browser session of the caller but the
+// one its browser bearer comes from (POST /v1/me/sessions/sign-out-others)
+// and returns how many: the session-end trigger revokes each session's
+// browser bearers, each a credential.revoked event, so the browser cannot
+// mint another. CLI credentials, the hand-off's included, stay. Only a
+// browser bearer may: it names the session that stays.
+func (s *Service) SignOutOtherSessions(ctx context.Context, p *Principal) (int64, error) {
+	if p.Identity.Kind != "human" || p.Credential.Kind != KindBrowser || p.Credential.AuthSessionID == nil {
+		return 0, domainerr.New("PERMISSION_DENIED", "Only a browser session bearer may sign out the other browsers")
+	}
+	var ended int64
+	err := s.store.Write(ctx, func(tx *storage.Tx) error {
+		// The request authenticated before this write: a browser that
+		// another one signed out meanwhile (the single writer ran that
+		// first) signs out nobody. Its bearer and its session must still be
+		// live now.
+		q := query.New(tx)
+		live, err := q.BrowserBearerSessionLive(ctx, query.BrowserBearerSessionLiveParams{
+			CredentialID: p.Credential.ID, IdentityID: p.Identity.ID, Now: sql.NullInt64{Int64: s.micros(), Valid: true},
+		})
+		if err != nil {
+			return err
+		}
+		if live == 0 {
+			return domainerr.New("INVALID_CREDENTIAL", "Credential is invalid, revoked, or expired")
+		}
+		ended, err = q.DeleteOtherAuthSessionsOfIdentity(ctx, query.DeleteOtherAuthSessionsOfIdentityParams{
+			Keep: *p.Credential.AuthSessionID, IdentityID: p.Identity.ID,
+		})
+		return err
+	})
+	return ended, err
+}
+
+// endsSession reports whether revoking a browser credential ends the
+// browser session it was minted from: a revoked bearer would otherwise be
+// replaced by the next POST /auth/varlatch-token of the same browser, for
+// as long as its session lasts. An older bearer of the caller's own
+// session is only revoked ("Sign out everywhere else" leaves this browser
+// signed in); the presenting bearer ends it ("Sign out this browser"). Only
+// a browser bearer is of its own session: a CLI credential from the browser
+// hand-off carries the session too, but revoking a browser bearer with it
+// ends the session; revoking that CLI credential leaves the session alone
+// (ADR-0024).
+func endsSession(p *Principal, credentialID, kind string, session sql.NullString) bool {
+	if kind != KindBrowser || !session.Valid {
+		return false
+	}
+	own := p.Credential.Kind == KindBrowser && p.Credential.AuthSessionID != nil && *p.Credential.AuthSessionID == session.String
+	return !own || credentialID == p.Credential.ID
 }
 
 // CLI credential lifetimes for the browser hand-off exchange (ADR-0024).

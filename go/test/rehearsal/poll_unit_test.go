@@ -21,7 +21,7 @@ func TestAnswersWithin(t *testing.T) {
 			if calls <= n {
 				return 502, "bad gateway"
 			}
-			return 200, `{"serverVersion":"0.23.0"}`
+			return 200, `{"serverVersion":"0.23.1"}`
 		}
 	}
 	if a := answersWithin(answersAfter(0), pass, time.Second, 10*time.Millisecond); !a.ok || a.tries != 1 || a.code != 200 {
@@ -37,8 +37,8 @@ func TestAnswersWithin(t *testing.T) {
 	}
 }
 
-// The source's own answer: 200, 0.23.0 and its installation's id. A 200
-// of another release, one without the id (0.23.0's while its database is
+// The source's own answer: 200, 0.23.1 and its installation's id. A 200
+// of another release, one without the id (0.23.1's while its database is
 // down), another installation's, a page that is not JSON and an error
 // status are not.
 func TestSourceAnswers(t *testing.T) {
@@ -49,18 +49,18 @@ func TestSourceAnswers(t *testing.T) {
 		body string
 		want bool
 	}{
-		{"the source", 200, `{"apiMajor":1,"serverVersion":"0.23.0","installationId":"inst_own"}`, true},
+		{"the source", 200, `{"apiMajor":1,"serverVersion":"0.23.1","installationId":"inst_own"}`, true},
 		{"another release", 200, `{"serverVersion":"0.50.0","installationId":"inst_own"}`, false},
-		{"no installation id", 200, `{"serverVersion":"0.23.0"}`, false},
-		{"another installation", 200, `{"serverVersion":"0.23.0","installationId":"inst_other"}`, false},
+		{"no installation id", 200, `{"serverVersion":"0.23.1"}`, false},
+		{"another installation", 200, `{"serverVersion":"0.23.1","installationId":"inst_other"}`, false},
 		{"not JSON", 200, "<html>bad gateway</html>", false},
-		{"an error status", 503, `{"serverVersion":"0.23.0","installationId":"inst_own"}`, false},
+		{"an error status", 503, `{"serverVersion":"0.23.1","installationId":"inst_own"}`, false},
 	} {
 		if got := own(c.code, c.body); got != c.want {
 			t.Errorf("%s: %v, want %v", c.name, got, c.want)
 		}
 	}
-	if sourceAnswers("")(200, `{"serverVersion":"0.23.0","installationId":""}`) {
+	if sourceAnswers("")(200, `{"serverVersion":"0.23.1","installationId":""}`) {
 		t.Error("an unknown installation id accepts any answer")
 	}
 }

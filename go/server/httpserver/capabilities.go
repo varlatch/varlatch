@@ -96,6 +96,9 @@ func (q *orgRequest) brokerOf() string {
 // with the categories that changed), then the issuance. 201, never
 // cacheable.
 func (o *operations) IssueCapability(ctx context.Context, _ api.IssueCapabilityRequestObject) (api.IssueCapabilityResponseObject, error) {
+	if err := o.capabilitiesAdmitted(); err != nil {
+		return nil, err
+	}
 	p, env, err := o.enterEnvironment(ctx, capabilitiesRoute, "")
 	if err != nil {
 		return nil, err
@@ -215,6 +218,9 @@ func (o *operations) RevokeCapability(ctx context.Context, _ api.RevokeCapabilit
 // retrieval (go/server/values). The body is read first and parsed once
 // the Broker is known (readJson). Never cacheable.
 func (o *operations) ExerciseCapability(ctx context.Context, _ api.ExerciseCapabilityRequestObject) (api.ExerciseCapabilityResponseObject, error) {
+	if err := o.capabilitiesAdmitted(); err != nil {
+		return nil, err
+	}
 	req, err := o.valuesRequest(ctx, exercisesRoute)
 	if err != nil {
 		return nil, err
@@ -251,4 +257,13 @@ func (o *operations) ExerciseCapability(ctx context.Context, _ api.ExerciseCapab
 	}
 	writerOf(ctx).Header().Set("Cache-Control", "no-store")
 	return ok(out), nil
+}
+
+// capabilitiesAdmitted refuses issuance and exercise until the repair of
+// what earlier retirements left live has run (Options.Capabilities).
+func (o *operations) capabilitiesAdmitted() error {
+	if o.s.opts.Capabilities == nil {
+		return nil
+	}
+	return o.s.opts.Capabilities.Require()
 }

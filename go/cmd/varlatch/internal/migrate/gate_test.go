@@ -589,7 +589,7 @@ func TestTheProbesFollowNoRedirectAway(t *testing.T) {
 	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		followed++
 		if r.URL.Path == "/v1/meta" {
-			fmt.Fprint(w, `{"installationId":"inst_x","serverVersion":"0.23.0"}`)
+			fmt.Fprint(w, `{"installationId":"inst_x","serverVersion":"0.23.1"}`)
 			return
 		}
 		gate(w)

@@ -26,7 +26,7 @@ const ManifestVersion = 2
 // LastTypeScriptRelease is the TypeScript release a migration starts from,
 // and the only one a reverse migration returns to (ADR-0059 Decision 9 and
 // amendment 4; go-step7.md O1).
-const LastTypeScriptRelease = "0.23.0"
+const LastTypeScriptRelease = "0.23.1"
 
 // RollbackWindowNotice is what `varlatch upgrade` says before upgrading to a
 // release that ends the migration's rollback window.

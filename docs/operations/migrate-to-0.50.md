@@ -28,13 +28,13 @@ before the new server opens.
   was in flight at the barrier is not carried over: it fails and is
   started again.
 - **Open dashboard tabs need a hard reload.** A tab that stayed open across
-  the migration is still running the 0.23.0 dashboard in memory and cannot
+  the migration is still running the 0.23.1 dashboard in memory and cannot
   switch itself to 0.50. Reload it with `Ctrl+Shift+R` (`Cmd+Shift+R` on a
   Mac) and sign in again with the same passkey. A browser that opens a
-  bookmarked address from its cache of 0.23.0 has its cache cleared on the
+  bookmarked address from its cache of 0.23.1 has its cache cleared on the
   old page's first call, so a plain reload or the next address opens the
   0.50 dashboard. The same hard reload applies to open tabs after a
-  rollback to 0.23.0.
+  rollback to 0.23.1.
 
 Sync Targets, webhooks and audit export are drained at the barrier and
 resume on the new server from where they stopped: nothing already
@@ -43,9 +43,9 @@ rules.
 
 ## Before you start
 
-### What 0.23.0 says about 0.50
+### What 0.23.1 says about 0.50
 
-Once 0.50.0 is the latest release, 0.23.0 and earlier notice it, but look in it
+Once 0.50.0 is the latest release, 0.23.1 and earlier notice it, but look in it
 for files that a 0.50 release does not have. Nothing is changed or installed,
 and the words mislead:
 
@@ -65,25 +65,25 @@ and the words mislead:
   on. Follow this guide instead: 0.50 is not an upgrade of a Compose
   installation.
 
-On the installation's host, keep the 0.23.0 CLI: its host commands are the
+On the installation's host, keep the 0.23.1 CLI: its host commands are the
 Compose installation's (below).
 
 ### Upgrade to the last TypeScript release first
 
 `varlatch migrate` takes exactly one source: a Compose installation of the
-last TypeScript release, **0.23.0**, running its published image,
-`ghcr.io/varlatch/varlatchd`, checked by its registry digest. Upgrade to it
-first, the usual way
+last TypeScript release, **0.23.1**, running its published image,
+`ghcr.io/varlatch/varlatchd`, checked by its registry digest. Installations on
+0.23.0 must upgrade to 0.23.1 first. Upgrade to it the usual way
 ([Upgrade](../../infra/compose/README.md#upgrade-backup-gated-forward-only)),
 and let it run.
 
 - A source on another release is refused: `the source runs <release>; a
-  migration starts from the last TypeScript release, 0.23.0, only: upgrade
+  migration starts from the last TypeScript release, 0.23.1, only: upgrade
   it first`.
 - An image built locally, or pulled under another repository's name, is
   refused, naming both images: `the source's image is repository
-  <repository>, digest <digest>, not the published 0.23.0 image: repository
-  ghcr.io/varlatch/varlatchd, digest sha256:6d9b9a67...`.
+  <repository>, digest <digest>, not the published 0.23.1 image: repository
+  ghcr.io/varlatch/varlatchd, digest sha256:fceb39c0...`.
 - Its exposure backfill must have finished, and no key rotation may be in
   progress. The TypeScript release's export refuses either: `the exposure
   backfill has not finished: let varlatchd run until it has (it runs in
@@ -99,7 +99,7 @@ the Linux host of the installation it migrates`):
 - **The Go CLI**, `varlatch` 0.50 or later, and `varlatchd` of the release
   you migrate to. `varlatch migrate` drives both installations as
   programs: it opens neither database itself.
-- **The TypeScript CLI** of 0.23.0, as `varlatch-ts` on the `PATH` (or name
+- **The TypeScript CLI** of 0.23.1, as `varlatch-ts` on the `PATH` (or name
   it with `--ts-cli`). The preflight makes its backup with it.
 - **The stock layout of the server's state.** `varlatchd`'s `/var/lib/varlatch`
   is on a named volume of its own, the whole of it, as the stock and Coolify
@@ -137,7 +137,7 @@ the Linux host of the installation it migrates`):
   `--destinations-file`) and its **read credentials**
   (`--read-credentials-file`): the preflight uploads a fresh backup, then
   downloads it and verifies it, as
-  [0.23.0's runbook](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/operations/backup.md#create-and-verify) describes.
+  [0.23.1's runbook](https://github.com/varlatch/varlatch/tree/v0.23.1/docs/operations/backup.md#create-and-verify) describes.
 - **The target**, in one of two shapes:
   - **A host install** (`--config /etc/varlatch/varlatchd.conf`, and
     `--unit` when its systemd unit is not `varlatchd`). There is no need to
@@ -691,7 +691,7 @@ sudo varlatch migrate --ingress coolify \
 For **30 days after the switch**, `varlatch migrate --rollback` returns the
 installation to the last TypeScript release, with everything that changed
 since. It works while every release the installation has run since is
-reversible to 0.23.0: each 0.50 release says so in its `release.json`
+reversible to 0.23.1: each 0.50 release says so in its `release.json`
 (`reversibleTo`), and passes the migration's gate, forward and back,
 before it is published. A
 release that cannot keep the window says so instead
@@ -701,7 +701,7 @@ release that ends the window:
 
 > This release ends the migration's rollback window: after it, `varlatch
 > migrate --rollback` can no longer return this installation to the
-> TypeScript release (0.23.0). Its data stays; only the way back goes.
+> TypeScript release (0.23.1). Its data stays; only the way back goes.
 
 An upgrade has its own way back, `sudo varlatch upgrade --rollback`, to the
 release it came from (0.50.0-rc.4 or later). It leaves this window as it is,
@@ -779,7 +779,7 @@ including a failed start of the rebuilt release, stops with the rebuilt
 volumes and journal phase kept so you can fix the cause and run `--resume`
 again, and `--abort` refuses. `varlatch migrate --status` shows when the
 start was recorded. A rollback begun by 0.50.0 and interrupted in step 5
-counts as started too: finish it with the 0.50.1 CLI. People sign in again after a rollback too, with the
+counts as started too: finish it with the 0.50.2 CLI. People sign in again after a rollback too, with the
 same passkey, and hard-reload any dashboard tab that stayed open
 (`Ctrl+Shift+R`, `Cmd+Shift+R` on a Mac).
 
@@ -1124,7 +1124,7 @@ varlatch migrate --from-archive <archive> \
   installation and with the same keys. Restore it with `setup --restore`.
 - `--ts-image <name>@sha256:<digest>` names the TypeScript release's image
   by its registry digest. By default it is the one this `varlatch` pins:
-  0.23.0's published image.
+  0.23.1's published image.
 - When `--bek-file` holds a passphrase rather than the key,
   `--out-bek-file` names the key file the new archive is sealed with.
 - Any archive from 0.7.0 on converts. The converter ships with every

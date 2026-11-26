@@ -160,7 +160,7 @@ type RollbackRecord struct {
 	// undoes the reverse or removes the fresh volumes (servedAt says what
 	// counts for a 0.50.0 journal, which has none).
 	ServedAt string `json:"servedAt,omitempty"`
-	// RecordsServing marks a reverse of this release (0.50.1 and later),
+	// RecordsServing marks a reverse of this release (0.50.2 and later),
 	// which journals ServedAt before it starts the rebuilt installation.
 	// Without it (a 0.50.0 journal), a reverse in its transfer may have
 	// served with nothing recorded (servedAt). Set from the reverse's start:

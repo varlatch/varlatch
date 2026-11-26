@@ -245,10 +245,10 @@ func fakeDocker(args []string) int {
 	j := strings.Join(args, " ")
 	switch {
 	case j == "compose images --format json varlatchd":
-		fmt.Println(`[{"ContainerName":"g5-varlatchd-1","Repository":"ghcr.io/varlatch/varlatchd","Tag":"0.23.0","ID":"sha256:g5image"}]`)
+		fmt.Println(`[{"ContainerName":"g5-varlatchd-1","Repository":"ghcr.io/varlatch/varlatchd","Tag":"0.23.1","ID":"sha256:g5image"}]`)
 		return 0
 	case j == "image inspect --format {{json .}} sha256:g5image":
-		fmt.Printf(`{"RepoDigests":["%s"],"Config":{"Labels":{"org.opencontainers.image.version":"0.23.0"}}}`+"\n", os.Getenv("VARLATCH_MIGRATE_PIN"))
+		fmt.Printf(`{"RepoDigests":["%s"],"Config":{"Labels":{"org.opencontainers.image.version":"0.23.1"}}}`+"\n", os.Getenv("VARLATCH_MIGRATE_PIN"))
 		return 0
 	case j == "compose ps -q varlatchd":
 		// The running service's container, as migrate reads its
@@ -344,7 +344,7 @@ func tsMigration(verb string, rest []string) int {
 		}
 	case "export":
 		dry := slices.Contains(rest, "--dry-run")
-		// 0.23.0's export to its standard output (--out -): the bundle on
+		// 0.23.1's export to its standard output (--out -): the bundle on
 		// stdout only, the summary as stderr's last line behind its prefix,
 		// nothing written in the container.
 		if len(rest) < 3 || rest[0] != "--out" || rest[1] != "-" || rest[2] != "--digests" {
@@ -1026,7 +1026,7 @@ func (w *world) serveOrigin(rw http.ResponseWriter, r *http.Request) {
 		rw.WriteHeader(http.StatusUnauthorized)
 		return
 	}
-	fmt.Fprintf(rw, `{"apiMajor":1,"serverVersion":"0.23.0","capabilities":[],"installationId":"%s"}`, w.installationID)
+	fmt.Fprintf(rw, `{"apiMajor":1,"serverVersion":"0.23.1","capabilities":[],"installationId":"%s"}`, w.installationID)
 }
 
 // args are the migration's options.
@@ -1173,7 +1173,7 @@ func (w *world) answers() string {
 	}
 	code, body := get("/v1/meta")
 	switch {
-	case code == http.StatusOK && strings.Contains(body, `"serverVersion":"0.23.0"`):
+	case code == http.StatusOK && strings.Contains(body, `"serverVersion":"0.23.1"`):
 		return "source"
 	case code == http.StatusServiceUnavailable && strings.Contains(body, "MAINTENANCE") && !strings.Contains(body, "message"):
 		return "source-barrier"
@@ -1528,7 +1528,7 @@ func TestG5AnAbortRecreatesARunningBrokenDashboard(t *testing.T) {
 	}
 }
 
-// The export's stream (0.23.0's --out -): a bundle with no summary after
+// The export's stream (0.23.1's --out -): a bundle with no summary after
 // it is never taken. The dry run fails, nothing is left in the backups
 // directory (neither a bundle nor its .partial), and the failed dry run is
 // recorded as stopped, so the next run starts it again instead of finding

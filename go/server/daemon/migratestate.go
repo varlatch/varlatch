@@ -774,6 +774,9 @@ func runMigrateOpen(env *hostEnv, rest []string, stdout, stderr io.Writer) int {
 	case h.Phase != "switched" && h.Phase != "open":
 		return fail(ExitFailure, "the migration %s is in phase %s; it opens once switched", h.ID, h.Phase)
 	}
+	// What the transfer brought in was never repaired: Capabilities wait
+	// for the repair before the API opens (capabilities.Repair).
+	env.capabilityRepair.Invalidate()
 	if err := env.admission.EndMigration(h.ID); err != nil {
 		return fail(ExitFailure, "the transfer's gate %s could not be ended (%v), so the journal still says %s; remove that file by hand, then run varlatch migrate --resume",
 			filepath.Join(dir, backup.GateFile), err, h.Phase)

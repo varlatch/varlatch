@@ -65,6 +65,7 @@ export function startBackupControl(ctx: AppCtx, maintenance: Maintenance, mirror
             if (getGate().kind !== 'restore') throw new Error('Not a restore');
             if (online.running) throw new Error('A backup capture is running; restore refused');
             await drain();
+            ctx.capabilityRepair?.invalidate();
             // Existing operator processes are drained when the database exists.
             // Fresh-host restore has no operator process that could have entered it.
             try {
@@ -109,7 +110,11 @@ export function startBackupControl(ctx: AppCtx, maintenance: Maintenance, mirror
             if (proof.id !== gate.id) throw new Error("Restore reconciliation has not completed");
             // Completion is separate so the host can validate both planes first.
             if (!(await verifyLoadedKek(ctx)) || !(await schemaIsCurrent(ctx.db))) throw new Error('Final restore checks failed');
-            maintenance.completeRestore(gate.id); result = { completed: true }; break;
+            // What the archive brought back was never repaired: Capabilities wait for it again.
+            ctx.capabilityRepair?.invalidate();
+            maintenance.completeRestore(gate.id); result = { completed: true };
+            void ctx.capabilityRepair?.attempt(ctx);
+            break;
           }
           case 'status': result = backupStatus(maintenance.dir); break;
           case 'record': saveStatus(maintenance.dir, statusSchema.parse(input.status)); result = { recorded: true }; break;

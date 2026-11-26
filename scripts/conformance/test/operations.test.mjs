@@ -158,7 +158,7 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
     "getApproval", "startApproval", "approveApproval", "cancelApproval",
     "startDeviceSignIn", "collectDeviceSignIn", "lookupDeviceSignIn", "decideDeviceSignIn", "listOrganizations",
     "getBrowserSession", "startPasskeySignIn", "finishPasskeySignIn", "startPasskeyRegistration", "finishPasskeyRegistration",
-    "signOut", "mintBrowserBearer",
+    "signOut", "signOutOtherSessions", "mintBrowserBearer",
     // Step 3.5: the dashboard's live updates.
     "streamBrowserEvents",
     // Step 3.6: the read path of values.

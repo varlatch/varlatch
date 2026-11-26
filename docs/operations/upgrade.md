@@ -1,7 +1,7 @@
 # Upgrading
 
 This page is for installations on 0.50 or later that `install.sh --server`
-installed. From 0.23.0, [migrate](migrate-to-0.50.md) first. On Coolify,
+installed. From 0.23.1, [migrate](migrate-to-0.50.md) first. On Coolify,
 you change the image's digest:
 [Pinning and upgrading by digest](../../infra/coolify/README.md#pinning-and-upgrading-by-digest).
 

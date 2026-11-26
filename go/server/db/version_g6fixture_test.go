@@ -6,6 +6,7 @@ package db
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -42,7 +43,7 @@ func TestTheG6FixtureUpgradesToItsSchema(t *testing.T) {
 	older := openFile(t, filepath.Join(t.TempDir(), "older.db"))
 	defer older.Close()
 	exec(t, older, schemaSQL,
-		"INSERT INTO schema_version (version, compatible_from, created_at, created_by_release, updated_at, updated_by_release) VALUES (2, 1, 1, 'previous', 1, 'previous')")
+		fmt.Sprintf("INSERT INTO schema_version (version, compatible_from, created_at, created_by_release, updated_at, updated_by_release) VALUES (%d, 1, 1, 'previous', 1, 'previous')", releaseVersion))
 	up, err := Upgrade(ctx, older, testRelease)
 	if err != nil || !up.Changed || up.From != releaseVersion || up.To != SchemaVersion || up.CompatibleFrom != CompatibleFrom {
 		t.Fatalf("%+v, %v", up, err)

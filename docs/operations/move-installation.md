@@ -4,7 +4,7 @@ An installation's public URL ([`public_url`](../self-hosting/configuration.md#pu
 is the address people open in the browser. Use `varlatch move` to change it,
 for example for a new domain. To move to another host at the same address,
 [restore a backup](backup.md#restore-on-a-fresh-host-or-retry-an-interrupted-restore)
-there instead. To move from 0.23.0 to 0.50, [migrate](migrate-to-0.50.md).
+there instead. To move from 0.23.1 to 0.50, [migrate](migrate-to-0.50.md).
 
 ## What a move changes
 

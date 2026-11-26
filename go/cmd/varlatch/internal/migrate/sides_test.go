@@ -241,16 +241,16 @@ func TestComposeDiscover(t *testing.T) {
 	}
 	digest := "sha256:" + hexOf(randomBytes(32))
 	inspect, _ := json.Marshal(map[string]any{"RepoDigests": []string{"ghcr.io/varlatch/varlatchd@" + digest},
-		"Config": map[string]any{"Labels": map[string]string{"org.opencontainers.image.version": "0.23.0"}}})
+		"Config": map[string]any{"Labels": map[string]string{"org.opencontainers.image.version": "0.23.1"}}})
 	host := &labelled{containers: []composeContainer{ctr("varlatch", "varlatchd", filepath.Join(dir, "docker-compose.yml"), dir, "False")}}
 	run := &scripted{t: t, host: host, answers: map[string]Ran{
-		"docker compose images --format json varlatchd":        {Answer: []byte(`[{"ContainerName":"x-varlatchd-1","Repository":"ghcr.io/varlatch/varlatchd","Tag":"0.23.0","ID":"sha256:abc"}]`)},
+		"docker compose images --format json varlatchd":        {Answer: []byte(`[{"ContainerName":"x-varlatchd-1","Repository":"ghcr.io/varlatch/varlatchd","Tag":"0.23.1","ID":"sha256:abc"}]`)},
 		"docker image inspect --format {{json .}} sha256:abc":  {Answer: inspect},
 		"docker compose config --no-interpolate --format json": {Answer: []byte(stockConfig)},
 	}}
 	c := &Compose{Directory: dir, Run: run}
 	info, err := c.Discover(context.Background())
-	if err != nil || info.Release != "0.23.0" || info.Digest != digest || info.DigestRepository != "ghcr.io/varlatch/varlatchd" || info.Image != "ghcr.io/varlatch/varlatchd:0.23.0" {
+	if err != nil || info.Release != "0.23.1" || info.Digest != digest || info.DigestRepository != "ghcr.io/varlatch/varlatchd" || info.Image != "ghcr.io/varlatch/varlatchd:0.23.1" {
 		t.Fatalf("%+v %v", info, err)
 	}
 	if info.Project == nil || info.Project.Name != "varlatch" || !slices.Equal(info.Project.Files, []string{filepath.Join(dir, "docker-compose.yml")}) {
