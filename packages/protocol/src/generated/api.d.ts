@@ -4054,6 +4054,17 @@ export interface components {
         };
     };
     responses: {
+        /** @description The request window refused the request: more than 600 requests from this client address in its current 60-second window (the address behind the proxies the server trusts). The error envelope with code PERMISSION_DENIED and message "Request rate exceeded", whatever the operation; Retry-After says how many seconds remain in the window. It is answered before authentication. An operation with a limit of its own may also answer 429 with that limit's code (RATE_LIMITED, SLOW_DOWN), as its description says. */
+        RequestWindow: {
+            headers: {
+                /** @description Seconds until the client's window ends (at least 1). */
+                "Retry-After"?: number;
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
         /** @description STEP_UP_REQUIRED (ADR-0054 Decision 3): a Security Control of the Organization at enforce (admin-step-up, capability security.enforce.admin-step-up; requirement-protection), a loosening Security Control change, or the removal of a trusted passkey needs the requester's step-up approval of exactly this request, and the request carried none. Nothing was changed, and no Idempotency-Key claim was kept. details.approval is the Approval Intent (schema Approval: its id, operation, summary, url and expiresAt). The person who asked approves it with a trusted passkey that verifies them (the dashboard's approval dialog, or its url; the CLI prints the url and polls GET /v1/me/approvals/{approval}), then repeats the identical request with the Varlatch-Approval header set to its id (parameter approvalHeader). Only that person can approve it, within its lifetime: 2 minutes for a dashboard request, 10 for a CLI one. A machine credential can never give an approval: under enforce it is refused with PERMISSION_DENIED (details.reason machine-credential), and no intent is created. Refusals that do not depend on the approval (validation, not-found, conflicts, a frozen or deleting Organization, passkey-verification) come first. The error envelope is the same as every other error's. */
         StepUpRequired: {
             headers: {

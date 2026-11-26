@@ -4877,6 +4877,23 @@ components:
       schema: { type: string, format: date-time, examples: ["2026-11-17T12:00:00.000Z"] }
 
   responses:
+    RequestWindow:
+      description: >
+        The request window refused the request: more than 600 requests from
+        this client address in its current 60-second window (the address
+        behind the proxies the server trusts). The error envelope with code
+        PERMISSION_DENIED and message "Request rate exceeded", whatever the
+        operation; Retry-After says how many seconds remain in the window.
+        It is answered before authentication. An operation with a limit of
+        its own may also answer 429 with that limit's code (RATE_LIMITED,
+        SLOW_DOWN), as its description says.
+      headers:
+        Retry-After:
+          description: Seconds until the client's window ends (at least 1).
+          schema: { type: integer, minimum: 1 }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ApiError" }
     StepUpRequired:
       description: >
         STEP_UP_REQUIRED (ADR-0054 Decision 3): a Security Control of the
