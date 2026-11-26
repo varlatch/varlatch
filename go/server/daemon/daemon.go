@@ -36,6 +36,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/auditexport"
 	"github.com/varlatch/varlatch/go/server/auth"
 	"github.com/varlatch/varlatch/go/server/backups"
+	"github.com/varlatch/varlatch/go/server/capabilities"
 	"github.com/varlatch/varlatch/go/server/clientaddr"
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/db"
@@ -393,7 +394,8 @@ func serve(opts Options, h *hooks) int {
 		}
 		defer public.Close()
 	}
-	env := &hostEnv{cfg: cfg, store: store, rootKEK: rootKEK, gates: gates, admission: admission, log: log, tune: h.backups, public: public,
+	capRepair := &capabilities.Repair{}
+	env := &hostEnv{cfg: cfg, store: store, rootKEK: rootKEK, gates: gates, admission: admission, capabilityRepair: capRepair, log: log, tune: h.backups, public: public,
 		serving: &atomic.Bool{}, ready: (&backend{store: store, rootKEK: rootKEK}).Ready,
 		// Host commands are served before the hub is made.
 		endStreams: func() {
@@ -599,6 +601,7 @@ func serve(opts Options, h *hooks) int {
 		RootKEK:         rootKEK,
 		Maintenance:     admission,
 		Held:            admission.Held,
+		Capabilities:    capRepair,
 		Backups:         env.backups,
 		Log:             log,
 	}
@@ -691,6 +694,20 @@ func serve(opts Options, h *hooks) int {
 	go func() { served <- srv.Serve(ln) }()
 	env.serving.Store(true)
 	log.Info("varlatchd is serving", "version", buildinfo.Version, "address", ln.Addr().String(), "installationId", inst.ID)
+	// Capabilities wait for the repair of what earlier releases'
+	// retirements left live (capabilities.Repair): 503 MAINTENANCE until it
+	// has run, inside the maintenance admission. It starts once the
+	// listener serves, in bounded write jobs, so it never holds the start;
+	// then every two seconds while it has not run: behind a gate, an
+	// upgrade's hold or after a failure. A non-capture gate (a restore or
+	// migration, or an unreadable gate) or an upgrade's hold makes it run
+	// again; nothing changes behind a backup capture.
+	repairDone := make(chan struct{})
+	go func() {
+		defer close(repairDone)
+		capRepair.Loop(ctx, 2*time.Second, writer, admission.Enter, admission.InvalidatesRepair, time.Now, log)
+	}()
+	defer func() { cancel(); <-repairDone }()
 	var publicServers []*http.Server
 	publicDone := make(chan struct{})
 	if public != nil {

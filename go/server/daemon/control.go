@@ -19,6 +19,7 @@ import (
 
 	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/server/backups"
+	"github.com/varlatch/varlatch/go/server/capabilities"
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/maintenance"
 	"github.com/varlatch/varlatch/go/server/publictls"
@@ -69,7 +70,10 @@ type hostEnv struct {
 	// (backup.go).
 	admission *maintenance.Admission
 	backups   *backups.Service
-	log       *slog.Logger
+	// capabilityRepair is whether Capabilities may be admitted
+	// (capabilities.Repair); a migration's transfer makes them wait again.
+	capabilityRepair *capabilities.Repair
+	log              *slog.Logger
 	// tune adjusts the backup service's options (tests).
 	tune func(*backups.Options)
 	// tailnet is the tailnet node's pin and report, in a running varlatchd

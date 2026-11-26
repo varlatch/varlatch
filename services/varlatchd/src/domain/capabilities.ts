@@ -14,6 +14,7 @@ import {
 import { newId } from "../db/ids.js";
 import { withTx } from "../db/tx.js";
 import { loadGrants, loadTailnetRequirements } from "../http/support.js";
+import { requireCapabilityRepair } from "./capabilityrepair.js";
 import type { AppCtx } from "./ctx.js";
 import { rootIdOf, type EnvironmentRow } from "./environments.js";
 import { DomainError } from "./errors.js";
@@ -206,9 +207,12 @@ export async function issueCapability(
   org: OrgRow,
   project: ProjectRow,
   env: EnvironmentRow,
-  brokerIdentityId: string,
+  broker: { identityId: string; credentialId: string },
   input: IssueCapabilityInput,
 ): Promise<IssuedCapability> {
+  const { identityId: brokerIdentityId, credentialId: brokerCredentialId } = broker;
+  // Until the repair of earlier retirements has run (capabilityrepair.ts).
+  requireCapabilityRepair(ctx);
   if (input.items.length === 0) {
     throw new DomainError("VALIDATION_FAILED", "A Capability names explicit Config Items");
   }
@@ -282,6 +286,26 @@ export async function issueCapability(
     // created_by) and the agent at step 2, before the Project and the
     // Environment.
     await lockLiveScope(db, { organizationId: org.id, people: [brokerIdentityId, agent.id], projectId: project.id, environmentIds: [env.id] });
+    // The reads above, and the request's authentication, came before these
+    // locks. Retirement holds the identity FOR UPDATE until it commits,
+    // revoking its credentials and its Capabilities: now that the broker
+    // and the agent are held, a retirement either committed (and is seen
+    // here) or waits for this issuance, whose Capability it then revokes.
+    const brokerLive = (
+      await db.query(
+        `SELECT 1 FROM credentials c JOIN identities i ON i.id = c.identity_id
+         WHERE c.id = $1 AND c.identity_id = $2 AND c.revoked_at IS NULL
+           AND (c.expires_at IS NULL OR c.expires_at > clock_timestamp()) AND NOT i.disabled`,
+        [brokerCredentialId, brokerIdentityId],
+      )
+    ).rows[0];
+    if (!brokerLive) throw new DomainError("INVALID_CREDENTIAL", "Credential is invalid, revoked, or expired");
+    const agentNow = (await db.query("SELECT disabled FROM identities WHERE id = $1", [agent.id])).rows[0] as
+      | { disabled: boolean }
+      | undefined;
+    if (!agentNow || agentNow.disabled) {
+      throw new DomainError("VALIDATION_FAILED", "Agent identity is disabled");
+    }
     await db.query(
       `INSERT INTO capabilities
          (id, organization_id, broker_identity_id, agent_identity_id, project_id,
@@ -485,6 +509,10 @@ export async function exerciseCapability(
     listener?: "ordinary" | "tailnet" | undefined;
   },
 ): Promise<ExerciseResult> {
+  // Until the repair of earlier retirements has run (capabilityrepair.ts).
+  // The caller checks it before the snapshot opens (what decides); this
+  // refuses an exercise a restore invalidated the repair since.
+  requireCapabilityRepair(ctx);
   const { state, row } = captured;
   const { org, project, env } = state;
 

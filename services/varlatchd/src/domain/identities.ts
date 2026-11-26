@@ -288,10 +288,40 @@ export async function retireIdentity(
       "SELECT id FROM credentials WHERE identity_id = $1 AND revoked_at IS NULL ORDER BY created_at, id",
       [identityId],
     );
+    // The Capabilities issued for it as Agent, or by it as Broker, are
+    // revoked too: they would otherwise keep working until they expire (up
+    // to a day), and again after a reactivation. Domain rows (step 10),
+    // before the first audit insert.
+    const capabilities = await lockedQuery(
+      db,
+      { table: "capabilities", mode: "no key update" },
+      `SELECT id FROM capabilities
+       WHERE (agent_identity_id = $1 OR broker_identity_id = $1) AND revoked_at IS NULL
+       ORDER BY id FOR NO KEY UPDATE`,
+      [identityId],
+    );
+    if (capabilities.rows.length > 0) {
+      await db.query(
+        `UPDATE capabilities SET revoked_at = now()
+         WHERE (agent_identity_id = $1 OR broker_identity_id = $1) AND revoked_at IS NULL`,
+        [identityId],
+      );
+    }
     // Bulk revocation goes through the single revocation primitive so every
     // credential gets its own credential.revoked audit line.
     for (const row of live.rows as { id: string }[]) {
       await revokeCredential(db, row.id, actorIdentityId, { organizationId });
+    }
+    for (const row of capabilities.rows as { id: string }[]) {
+      await recordAuditEvent(db, {
+        eventType: "capability.revoked",
+        decision: "info",
+        actorIdentityId,
+        organizationId,
+        action: "secret.use",
+        resource: { capabilityId: row.id },
+        metadata: { reason: "identity-retired", identityId },
+      });
     }
     await recordAuditEvent(db, {
       eventType: "identity.retired",

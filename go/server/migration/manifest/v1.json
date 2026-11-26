@@ -61,7 +61,7 @@
     ]
   },
   "target": {
-    "schemaVersion": 2
+    "schemaVersion": 3
   },
   "foreignKeys": "The schema's foreign keys form cycles (identities and organization_deletions refer to each other), so no table order satisfies them all: tables are listed by name, the import defers foreign keys and checks every one before it commits.",
   "tables": [

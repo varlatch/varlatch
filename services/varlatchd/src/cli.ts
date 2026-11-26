@@ -18,6 +18,7 @@ import { startAuditExportLoop } from "./domain/auditexport.js";
 import { startExposureBackfillLoop } from "./domain/exposure.js";
 import { startDeletionLoop } from "./domain/orgdeletion.js";
 import { startRegistrationSweepLoop } from "./domain/githubapps.js";
+import { CapabilityRepair } from "./domain/capabilityrepair.js";
 import { ACCESS_COUNTS, startSecurityReportLoop } from "./domain/securityreport.js";
 import { DomainError } from "./domain/errors.js";
 import { ConfigError, loadConfig, type VarlatchdConfig } from "./config.js";
@@ -118,7 +119,10 @@ async function serveCommand(): Promise<void> {
   });
   // The outbound policy (ADR-0057): VARLATCH_OUTBOUND_ALLOW, read once here.
   const outbound = new OutboundPolicy(config.outboundAllow);
-  const ctx: AppCtx = { db, rootKek, maintenance, accessCountDb, outbound, auditExport: config.auditExport };
+  // Capabilities wait for the repair of what earlier retirements left live
+  // (capabilityrepair.ts): 503 until it has run on this database.
+  const capabilityRepair = new CapabilityRepair();
+  const ctx: AppCtx = { db, rootKek, maintenance, accessCountDb, outbound, auditExport: config.auditExport, capabilityRepair };
   if (config.outboundAllow.length > 0) {
     console.log(`outbound allow list: ${config.outboundAllow.map((e) => e.text).join(", ")}`);
   }
@@ -190,6 +194,12 @@ async function serveCommand(): Promise<void> {
   serve({ fetch: app.fetch, port: config.port }, (info) => {
     console.log(`varlatchd ${SERVER_VERSION} listening on :${info.port} (ordinary listener)`);
   });
+  // Once serving: Capabilities an earlier release's retirement left live
+  // are revoked, in bounded batches (capabilityrepair.ts); Capabilities
+  // answer 503 until it has run. Behind a restore's gate, and after a
+  // failure, it is tried again until it has run; a restore makes it run
+  // again.
+  capabilityRepair.start(ctx);
 
   if (config.convexUrl) {
     startMirrorLoop(ctx, { convexUrl: config.convexUrl, issuer }, undefined, undefined, new MirrorStatusReporter(stateDir()));

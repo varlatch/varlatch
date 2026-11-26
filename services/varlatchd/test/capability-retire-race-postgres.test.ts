@@ -1,0 +1,247 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { issueCredential } from "../src/auth/credentials.js";
+import { createPgQuerier } from "../src/db/pg.js";
+import { runMigrations } from "../src/db/migrate.js";
+import { withTx } from "../src/db/tx.js";
+import { CapabilityRepair, ISSUED_SQL, LATEST_RETIRED_SQL, LIFECYCLE_AT_SQL, LIVE_BATCH_SQL } from "../src/domain/capabilityrepair.js";
+import { consumeSetupGrant, ensureInstallation, issueBootstrapGrant } from "../src/domain/bootstrap.js";
+import type { AppCtx } from "../src/domain/ctx.js";
+import { retireIdentity } from "../src/domain/identities.js";
+import { getOrganization } from "../src/domain/orgs.js";
+import { buildApp } from "../src/http/app.js";
+
+/**
+ * Retirement against an issuance in flight, on real PostgreSQL: the
+ * issuance passed authentication and its advisory reads while the
+ * retirement was not yet committed, then waits for the identity's lock.
+ * Once the retirement commits, the issuance must see it and refuse;
+ * otherwise it would insert a Capability after retirement's revocation
+ * sweep, which nothing revokes.
+ */
+
+const url = process.env.VARLATCH_TEST_DATABASE_URL;
+
+describe.skipIf(!url)("Capability issuance racing an identity's retirement on real PostgreSQL", () => {
+  let admin: ReturnType<typeof createPgQuerier>;
+  let db: ReturnType<typeof createPgQuerier>;
+  let ctx: AppCtx;
+  let http: ReturnType<typeof buildApp>;
+  let adminId: string;
+  let adminToken: string;
+  let brokerId: string;
+  let brokerToken: string;
+  let agentId: string;
+  const database = `varlatch_capretire_${process.pid}`;
+  const ENV_PATH = "/v1/organizations/acme/projects/api/environments/development";
+
+  const request = (path: string, method: string, body: unknown, token: string) =>
+    http.request(path, {
+      method,
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+
+  const waitingOnLock = async () => {
+    for (let i = 0; i < 200; i++) {
+      const res = await admin.query(
+        "SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = $1 AND wait_event_type = 'Lock'",
+        [database],
+      );
+      if ((res.rows[0] as { n: number }).n >= 1) return;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    throw new Error("the issuance never waited on the identity's lock");
+  };
+
+  beforeEach(async () => {
+    admin = createPgQuerier(url!);
+    await admin.query(`DROP DATABASE IF EXISTS ${database} WITH (FORCE)`);
+    await admin.query(`CREATE DATABASE ${database}`);
+    const dbUrl = new URL(url!);
+    dbUrl.pathname = `/${database}`;
+    db = createPgQuerier(dbUrl.toString());
+    const connection = await db.connect();
+    try {
+      await runMigrations(connection);
+    } finally {
+      connection.release();
+    }
+    ctx = { db, rootKek: Buffer.alloc(32, 23) };
+    await ensureInstallation(ctx);
+    adminId = (await consumeSetupGrant(ctx, (await issueBootstrapGrant(ctx)).token, {})).identityId;
+    adminToken = (await issueCredential(db, { identityId: adminId, kind: "cli" })).token;
+    http = buildApp(ctx);
+    const post = async (path: string, body: unknown) => {
+      const res = await request(path, "POST", body, adminToken);
+      expect(res.status, path).toBe(201);
+      return (await res.json()) as { id: string; credential: string | null };
+    };
+    await post("/v1/organizations", { slug: "acme", name: "Acme" });
+    await post("/v1/organizations/acme/projects", { slug: "api", name: "API", contractAuthority: "git" });
+    await post("/v1/organizations/acme/projects/api/environments", { name: "development", tier: "development" });
+    const broker = await post("/v1/organizations/acme/identities", { name: "broker", kind: "broker" });
+    brokerId = broker.id;
+    brokerToken = broker.credential!;
+    agentId = (await post("/v1/organizations/acme/identities", { name: "agent", kind: "agent" })).id;
+    // The broker's credential is used once, so the race's request does not
+    // also write its last use.
+    expect((await request(`${ENV_PATH}/capabilities`, "GET", undefined, brokerToken)).status).toBe(200);
+  });
+  afterEach(async () => {
+    await db?.end();
+    if (admin) {
+      await admin.query(`DROP DATABASE IF EXISTS ${database} WITH (FORCE)`);
+      await admin.end();
+    }
+  });
+
+  const issue = () =>
+    request(
+      `${ENV_PATH}/capabilities`,
+      "POST",
+      {
+        agentIdentityId: agentId,
+        items: ["STRIPE_KEY"],
+        destinations: ["api.stripe.com"],
+        targets: { STRIPE_KEY: ["header:authorization"] },
+        ttlSeconds: 600,
+      },
+      brokerToken,
+    );
+
+  /**
+   * Retires `identityId` in a transaction that stays open until an
+   * issuance started meanwhile waits on the identity's lock, then commits.
+   * Returns the issuance's response.
+   */
+  const issueWhileRetiring = async (identityId: string) => {
+    const orgId = (await getOrganization(ctx, "acme")).id;
+    const holder = await db.connect();
+    let retired!: () => void;
+    const retiredUncommitted = new Promise<void>((r) => (retired = r));
+    let commit!: () => void;
+    const mayCommit = new Promise<void>((r) => (commit = r));
+    const retiring = withTx(holder, async (tx) => {
+      await retireIdentity({ ...ctx, db: tx }, orgId, identityId, adminId);
+      retired();
+      await mayCommit;
+    }).finally(() => holder.release());
+    await retiredUncommitted;
+    const issuing = issue();
+    await waitingOnLock();
+    commit();
+    await retiring;
+    return issuing;
+  };
+
+  const liveCapabilitiesOf = async (identityId: string) =>
+    (
+      (
+        await db.query(
+          `SELECT count(*)::int AS n FROM capabilities
+           WHERE (agent_identity_id = $1 OR broker_identity_id = $1) AND revoked_at IS NULL`,
+          [identityId],
+        )
+      ).rows[0] as { n: number }
+    ).n;
+
+  it("an issuance for an Agent retired while it waited is refused", async () => {
+    const res = await issueWhileRetiring(agentId);
+    expect(res.status, await res.clone().text()).toBe(422);
+    expect((await res.json()).error.message).toBe("Agent identity is disabled");
+    expect(await liveCapabilitiesOf(agentId)).toBe(0);
+  });
+
+  it("an issuance by a Broker retired while it waited is refused", async () => {
+    const res = await issueWhileRetiring(brokerId);
+    expect(res.status, await res.clone().text()).toBe(401);
+    expect((await res.json()).error.code).toBe("INVALID_CREDENTIAL");
+    expect(await liveCapabilitiesOf(brokerId)).toBe(0);
+  });
+
+  it("an exercise before the repair has run is refused (503), and the repair revokes the Capability", async () => {
+    // A Capability an earlier release's retirement of its Agent left live;
+    // the Agent was reactivated since, which made it work again.
+    expect((await request(`${ENV_PATH}/values/STRIPE_KEY`, "PUT", { value: "sk_live_1" }, adminToken)).status).toBe(200);
+    const projectId = ((await (await request("/v1/organizations/acme/projects/api", "GET", undefined, adminToken)).json()) as { id: string }).id;
+    expect(
+      (
+        await request(
+          "/v1/organizations/acme/grants",
+          "POST",
+          { subjectIdentityId: agentId, scope: { kind: "project", projectId }, actions: ["secret.use"] },
+          adminToken,
+        )
+      ).status,
+    ).toBe(201);
+    const issued = await issue();
+    expect(issued.status, await issued.clone().text()).toBe(201);
+    const cap = (await issued.json()) as { id: string; secret: string };
+    expect((await request(`/v1/organizations/acme/identities/${agentId}/retire`, "POST", {}, adminToken)).status).toBe(200);
+    await db.query("UPDATE capabilities SET revoked_at = NULL WHERE id = $1", [cap.id]);
+    expect((await request(`/v1/organizations/acme/identities/${agentId}/reactivate`, "POST", {}, adminToken)).status).toBe(200);
+
+    // The repair has not run: Capabilities wait for it (503) before the
+    // exercise opens its snapshot or reads anything, so no window between
+    // a snapshot and the repair's commit is left to race.
+    const repair = new CapabilityRepair(undefined, { log: () => {}, error: () => {} });
+    const res = await buildApp({ ...ctx, capabilityRepair: repair }).request(`${ENV_PATH}/capabilities/${cap.id}/exercises`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${brokerToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        capabilitySecret: cap.secret,
+        destination: { host: "api.stripe.com", port: 443 },
+        placements: [{ item: "STRIPE_KEY", target: "header:authorization" }],
+      }),
+    });
+    const text = await res.text();
+    expect(res.status, text).toBe(503);
+    expect(text).not.toContain("sk_live_1");
+    expect(
+      (
+        (
+          await db.query(
+            "SELECT count(*)::int AS n FROM audit_events WHERE event_type = 'capability.exercised' AND resource->>'capabilityId' = $1",
+            [cap.id],
+          )
+        ).rows[0] as { n: number }
+      ).n,
+    ).toBe(0);
+    // Repaired, the Capability is revoked.
+    expect(await repair.attempt(ctx)).toBe(true);
+    expect(((await db.query("SELECT revoked_at FROM capabilities WHERE id = $1", [cap.id])).rows[0] as { revoked_at: unknown }).revoked_at).not.toBeNull();
+  });
+
+  it("the repair reads the audit log, and its batches of Capabilities, by their indexes", async () => {
+    const orgId = (await getOrganization(ctx, "acme")).id;
+    const client = await db.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SET LOCAL enable_seqscan = off");
+      await client.query("SET LOCAL enable_bitmapscan = off");
+      const plan = async (text: string) =>
+        (
+          await client.query(
+            `EXPLAIN ${text
+              .replace("$1", "'" + orgId + "'")
+              .replace("$2::text[]", "ARRAY['x']::text[]")
+              .replace("$3::bigint[]", "ARRAY[10]::bigint[]")}`,
+          )
+        ).rows
+          .map((r) => (r as { "QUERY PLAN": string })["QUERY PLAN"])
+          .join("\n");
+      expect(await plan(LATEST_RETIRED_SQL)).toContain("audit_events_identity_lifecycle_idx");
+      expect(await plan(LIFECYCLE_AT_SQL)).toContain("audit_events_identity_lifecycle_idx");
+      expect(await plan(ISSUED_SQL)).toContain("audit_events_capability_issued_idx");
+      // A batch is a range of the live Capabilities' index from the cursor
+      // on, never a sort of what remains of the Organization.
+      const batch = await plan(LIVE_BATCH_SQL.replace("$2", "'cap_x'").replace("$3", "200"));
+      expect(batch).toContain("capabilities_live_idx");
+      expect(batch).not.toMatch(/\bSort\b/);
+    } finally {
+      await client.query("ROLLBACK");
+      client.release();
+    }
+  });
+});

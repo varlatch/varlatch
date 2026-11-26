@@ -6,9 +6,11 @@ package daemon
 
 import (
 	"bytes"
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -20,8 +22,11 @@ import (
 
 	"github.com/varlatch/varlatch/go/lib/backup"
 	"github.com/varlatch/varlatch/go/lib/envelope"
+	"github.com/varlatch/varlatch/go/server/capabilities"
 	"github.com/varlatch/varlatch/go/server/config"
+	"github.com/varlatch/varlatch/go/server/maintenance"
 	"github.com/varlatch/varlatch/go/server/migration/migrationtest"
+	"github.com/varlatch/varlatch/go/server/write"
 )
 
 func migrateWith(t *testing.T, conf string, stdin []byte, args ...string) (int, string, string) {
@@ -642,5 +647,77 @@ func TestStateSaysWhatTheImportWouldRefuse(t *testing.T) {
 	code, _, errOut := migrateWith(t, in.conf, nil, "import", "--in", filepath.Join(t.TempDir(), "no-bundle.jsonl"))
 	if code != ExitFailure || !strings.Contains(errOut, r+"; nothing was imported") {
 		t.Fatalf("the import: %d %q, want %q", code, errOut, r)
+	}
+}
+
+// runMigrateOpen invalidates capabilityRepair before lifting the transfer's
+// gate so Capabilities wait (503 MAINTENANCE) until the repair has run on
+// what the transfer brought in.
+func TestRunMigrateOpenInvalidatesCapabilityRepair(t *testing.T) {
+	in := newInstall(t, "backup_interval = off\n")
+	for _, phase := range []string{"started", "transfer", "switched"} {
+		if code, _, errOut := migrateWith(t, in.conf, journalText(migA, phase), "state", "--write"); code != ExitOK {
+			t.Fatal(errOut)
+		}
+	}
+	cfg, err := config.Load(in.conf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admission := maintenance.Open(in.data, nil)
+	if !admission.Isolated() {
+		t.Fatal("expected the transfer gate to isolate admission")
+	}
+	repair := &capabilities.Repair{Run: func(ctx context.Context, w *write.Writer, now func() time.Time) (int, error) {
+		return 0, nil
+	}}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	if !repair.Attempt(context.Background(), nil, func() (func(), bool) { return func() {}, true }, time.Now, log) || !repair.Ready() {
+		t.Fatal("setup: could not mark capability repair ready")
+	}
+	env := &hostEnv{cfg: cfg, admission: admission, capabilityRepair: repair}
+	var out, errOut bytes.Buffer
+	code := runMigrateOpen(env, []string{"open", "--id", migA}, &out, &errOut)
+	if code != ExitOK || !strings.Contains(out.String(), `"opened":true`) {
+		t.Fatalf("runMigrateOpen: %d %q %q", code, out.String(), errOut.String())
+	}
+	if repair.Ready() {
+		t.Fatal("runMigrateOpen left capabilityRepair ready instead of invalidating it")
+	}
+	if err := repair.Require(); err == nil {
+		t.Fatal("Capabilities were not refused after runMigrateOpen invalidated the repair")
+	}
+	if admission.Isolated() {
+		t.Fatal("runMigrateOpen did not end the migration gate")
+	}
+	// If EndMigration fails (e.g. an unreadable gate), capabilityRepair is
+	// still invalidated (fail closed).
+	in2 := newInstall(t, "backup_interval = off\n")
+	for _, phase := range []string{"started", "transfer", "switched"} {
+		if code, _, errOut := migrateWith(t, in2.conf, journalText(migB, phase), "state", "--write"); code != ExitOK {
+			t.Fatal(errOut)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(in2.data, backup.GateFile), []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg2, err := config.Load(in2.conf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repair2 := &capabilities.Repair{Run: func(ctx context.Context, w *write.Writer, now func() time.Time) (int, error) {
+		return 0, nil
+	}}
+	if !repair2.Attempt(context.Background(), nil, func() (func(), bool) { return func() {}, true }, time.Now, log) || !repair2.Ready() {
+		t.Fatal("setup: could not mark second capability repair ready")
+	}
+	out.Reset()
+	errOut.Reset()
+	code = runMigrateOpen(&hostEnv{cfg: cfg2, admission: maintenance.Open(in2.data, nil), capabilityRepair: repair2}, []string{"open", "--id", migB}, &out, &errOut)
+	if code != ExitFailure {
+		t.Fatalf("runMigrateOpen with unreadable gate: %d %q %q", code, out.String(), errOut.String())
+	}
+	if repair2.Ready() {
+		t.Fatal("runMigrateOpen left capabilityRepair ready when EndMigration failed")
 	}
 }

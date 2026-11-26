@@ -145,6 +145,7 @@ import {
   listCapabilities,
   revokeCapability,
 } from "../domain/capabilities.js";
+import { requireCapabilityRepair } from "../domain/capabilityrepair.js";
 import { newId } from "../db/ids.js";
 import { SerializationRetriesExhausted, withTx } from "../db/tx.js";
 import { captureState, inSnapshot } from "../domain/retrieval.js";
@@ -2509,7 +2510,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         }
         preflight = checked.items;
       }
-      const issued = await issueCapability(ctx, org, project, env, principal.identity.id, input);
+      const issued = await issueCapability(ctx, org, project, env, { identityId: principal.identity.id, credentialId: principal.credentialId }, input);
       c.header("Cache-Control", "no-store");
       return c.json(preflight ? { ...issued, preflightItems: preflight } : issued, 201);
     },
@@ -2571,6 +2572,11 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       const principal = c.get("principal");
       const input = await readJson(c);
       const tailnetContext = (c.get("tailnetContext") as TailnetContext | undefined) ?? null;
+      // Before the snapshot opens: once the repair of earlier retirements
+      // has run (capabilityrepair.ts), what it revoked is in every snapshot
+      // opened since. Checked inside it, a repair committed meanwhile would
+      // pass the check while the snapshot still showed its Capabilities live.
+      requireCapabilityRepair(ctx);
       const phase = await inSnapshot(ctx, async (sctx, now) => {
         const scope = await envScope(sctx, c);
         requireBroker(principal, scope.org);

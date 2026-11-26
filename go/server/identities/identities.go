@@ -548,6 +548,30 @@ func Retire(ctx context.Context, w *write.Writer, p *auth.Principal, organizatio
 				return err
 			}
 		}
+		// The Capabilities issued for it as Agent, or by it as Broker, are
+		// revoked too: they would otherwise keep working until they expire
+		// (up to a day), and again after a reactivation.
+		caps, err := q.LiveCapabilitiesOfIdentity(ctx, identityID)
+		if err != nil {
+			return err
+		}
+		if len(caps) > 0 {
+			if err := q.RevokeCapabilitiesOfIdentity(ctx, query.RevokeCapabilitiesOfIdentityParams{
+				Now: sql.NullInt64{Int64: at, Valid: true}, IdentityID: identityID,
+			}); err != nil {
+				return err
+			}
+		}
+		useAction := "secret.use"
+		for _, id := range caps {
+			if _, err := audit.Record(ctx, tx, audit.Event{
+				Type: "capability.revoked", Decision: audit.Info, ActorIdentityID: &actor, OrganizationID: &organizationID,
+				Action: &useAction, Resource: jsvalue.Object{{Key: "capabilityId", Value: id}},
+				Metadata: jsvalue.Object{{Key: "reason", Value: "identity-retired"}, {Key: "identityId", Value: identityID}},
+			}); err != nil {
+				return err
+			}
+		}
 		action := "identity.manage"
 		_, err = audit.Record(ctx, tx, audit.Event{
 			Type: "identity.retired", Decision: audit.Info, ActorIdentityID: &actor, OrganizationID: &organizationID, Action: &action,
