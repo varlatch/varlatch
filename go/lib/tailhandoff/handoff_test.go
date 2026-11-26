@@ -23,6 +23,8 @@ var ctx = context.Background()
 
 func TestMain(m *testing.M) {
 	tailcontrol.ReadBackRetry = 5 * time.Millisecond
+	tailcontrol.ReleaseWaits = []time.Duration{5 * time.Millisecond, 10 * time.Millisecond, 20 * time.Millisecond}
+	tailcontrol.ReleaseBudget = 300 * time.Millisecond
 	os.Exit(m.Run())
 }
 
@@ -507,8 +509,10 @@ func TestAFailureAfterEachStepIsUndone(t *testing.T) {
 		want   string
 	}{
 		{"closing the serving listener", func(r *rig) { r.ep.closeErr = errors.New("listener stuck") }, "listener stuck"},
-		{"the serving node's rename", func(r *rig) { r.f.RewriteRename = once("vault-vl-"+op+"-o", "vault-vl-"+op+"-o-1") }, "read back 1"},
-		{"the incoming node's rename", func(r *rig) { r.f.RewriteRename = once("vault", "vault-1") }, "read back 2"},
+		// A name applied otherwise than asked, not with a dedup suffix (a
+		// name not released yet, waited for: release_test.go), is final.
+		{"the serving node's rename", func(r *rig) { r.f.RewriteRename = once("vault-vl-"+op+"-o", "vault-vl-"+op+"-x") }, "read back 1"},
+		{"the incoming node's rename", func(r *rig) { r.f.RewriteRename = once("vault", "vault-x") }, "read back 2"},
 		{"a rate-limit refusal", func(r *rig) {
 			r.c.obtain = func(_ context.Context, role tailhandoff.Role, name string) error {
 				if name == "vault" {

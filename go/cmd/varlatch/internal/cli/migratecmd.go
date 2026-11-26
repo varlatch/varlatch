@@ -57,7 +57,7 @@ const migrateUsage = `Usage:
                    (instead of --config and --unit: the Go image's service, created in setup mode with nothing listening,
                     its bind paths on this host; you start and stop it when migrate asks)
   varlatch migrate --resume (the same options)
-  varlatch migrate --abort (the same options): undo a migration not yet switched, or a reverse not yet rolled back
+  varlatch migrate --abort (the same options): undo a migration not yet switched, or a reverse before it records a start of the rebuilt TypeScript release
   varlatch migrate --abort --forget-target (the same options): after an undo whose removal of the target migrate made
                    kept failing and you removed what was left by hand (--status names each item), clear its record
   varlatch migrate --rollback [--from <compose directory>] (--config <varlatchd.conf> | --to-data ... as above)
@@ -508,6 +508,12 @@ func (r *Run) showJournal(j *migrate.Journal, asJSON bool) error {
 		}
 		if c := rb.Checks; c != nil {
 			fmt.Fprintf(&b, " reverse checks passed %v;", c.Passed)
+		}
+		if rb.ServedAt != "" {
+			fmt.Fprintf(&b, " a start of the rebuilt TypeScript release was recorded at %s (it may have accepted writes since: forward only);", rb.ServedAt)
+		}
+		if len(rb.KeptVolumes) > 0 {
+			fmt.Fprintf(&b, " its undo does not delete the fresh volumes %s (check which still exist before reconciling them: they may hold writes the TypeScript installation does not have; then remove them by hand);", strings.Join(rb.KeptVolumes, ", "))
 		}
 		if rb.VerifiedAt != "" {
 			fmt.Fprintf(&b, " the public URL answered from the TypeScript release at %s;", rb.VerifiedAt)

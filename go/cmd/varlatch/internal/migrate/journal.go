@@ -152,9 +152,27 @@ type RollbackRecord struct {
 	Checks  *CheckSummary   `json:"checks,omitempty"`
 	// GoStopped is Go's service stopped for the address (the public and
 	// own-proxy shapes, at the transfer; Coolify's once the domain moved).
-	GoStopped  bool   `json:"goStopped"`
-	Asked      bool   `json:"asked"`
-	VerifiedAt string `json:"verifiedAt,omitempty"`
+	GoStopped bool `json:"goStopped"`
+	Asked     bool `json:"asked"`
+	// ServedAt is when the transfer first asked the rebuilt TypeScript
+	// installation to serve, journalled before StartServing is called: once
+	// set, it may have accepted writes, so no automatic path and no --abort
+	// undoes the reverse or removes the fresh volumes (servedAt says what
+	// counts for a 0.50.0 journal, which has none).
+	ServedAt string `json:"servedAt,omitempty"`
+	// RecordsServing marks a reverse of this release (0.50.1 and later),
+	// which journals ServedAt before it starts the rebuilt installation.
+	// Without it (a 0.50.0 journal), a reverse in its transfer may have
+	// served with nothing recorded (servedAt). Set from the reverse's start:
+	// a 0.50.0 CLI refuses a journal with it (an unknown field), so it
+	// neither resumes nor undoes a reverse of this release.
+	RecordsServing bool   `json:"recordsServing,omitempty"`
+	VerifiedAt     string `json:"verifiedAt,omitempty"`
+	// KeptVolumes are the fresh volumes an undo does not delete (keepFresh:
+	// a reverse a 0.50.0 CLI began, or one that may have served),
+	// journalled before it puts the installation back, for the operator to
+	// reconcile and remove. An earlier run may have deleted some already.
+	KeptVolumes []string `json:"keptVolumes,omitempty"`
 	// Archives are the Go (format 3) archives made since the switch,
 	// listed in the report and never deleted (decision 17).
 	Archives []ArchiveInfo `json:"archives,omitempty"`
@@ -193,6 +211,9 @@ type RebuildRecord struct {
 	// Made are those, once made. An undo removes only what matches both.
 	Owner string         `json:"owner,omitempty"`
 	Made  []VolumeRecord `json:"made,omitempty"`
+	// keep, set on restoreSource's copy only (never journalled), has
+	// UndoRebuild leave the fresh volumes instead of removing them.
+	keep bool
 	// Retained are the Postgres and the Convex volume the installation ran
 	// on before the reverse, as they were then: --finish --delete-old-data
 	// removes these, and nothing by a name it makes up.

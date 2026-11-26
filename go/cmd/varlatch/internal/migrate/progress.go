@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/varlatch/varlatch/go/lib/tailcontrol"
 	"github.com/varlatch/varlatch/go/lib/tailhandoff"
 )
 
@@ -89,6 +90,17 @@ func (e *Engine) step(what string, f func() error) (err error) {
 	err = f()
 	returned = true
 	return err
+}
+
+// waitingForName is the handoff's progress line while a rename waits for
+// the control plane to release the name (tailcontrol.RenameReleased).
+func (e *Engine) waitingForName(name string) {
+	if e.Options.Progress == nil {
+		return
+	}
+	e.prog.mu.Lock()
+	defer e.prog.mu.Unlock()
+	e.progressLine("Waiting for the tailnet to release the name %s (up to %s).", name, elapsed(tailcontrol.ReleaseBudget))
 }
 
 func (e *Engine) stepGoesOn(s *stepRun) {

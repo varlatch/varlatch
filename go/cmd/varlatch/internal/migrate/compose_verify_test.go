@@ -487,7 +487,7 @@ func rolledWorld(t *testing.T, phase Phase, kind Ingress) (*world, *reverseFake,
 	w := newWorld(t)
 	w.eng.Options.Ingress = kind
 	j := &Journal{Format: 1, ID: "mig_aaaaaaaaaaaaaaaaaaaaaaaaaa", Phase: phase, Source: w.src.info, Ingress: kind, Transfer: &TransferRecord{Origin: "https://vault.example.test"},
-		Rollback: &RollbackRecord{Rebuild: &RebuildRecord{Override: OverrideFile, Volumes: []string{"p_postgres-data-abcdefgh", "p_convex-data-abcdefgh"}}, Export: &CopyRecord{InstallationID: "inst_fake"}},
+		Rollback: &RollbackRecord{RecordsServing: true, Rebuild: &RebuildRecord{Override: OverrideFile, Volumes: []string{"p_postgres-data-abcdefgh", "p_convex-data-abcdefgh"}}, Export: &CopyRecord{InstallationID: "inst_fake"}},
 		History:  []Step{{Phase: Switched, At: w.eng.now().Format(time.RFC3339Nano)}},
 		Barrier:  &BarrierRecord{GateID: "gate-1", AuditPosition: "46"}}
 	j.Source.State = &stateVol
@@ -749,6 +749,15 @@ func TestTheUndoRemovesOnlyVolumesOfTheMigration(t *testing.T) {
 				t.Fatal(err)
 			}
 			p.Owner = ""
+		}, nil},
+		// An undo a 0.50.0 CLI began after the rebuilt release may have
+		// served (restoreSource's keep): put back, the fresh ones left.
+		{"made and journalled, kept", func(t *testing.T, c *Compose, h *labelled, p *RebuildRecord) {
+			var err error
+			if p.Made, err = c.MakeVolumes(t.Context(), *p); err != nil {
+				t.Fatal(err)
+			}
+			p.keep = true
 		}, nil},
 	} {
 		cmp, host, plan := newPlan(t)

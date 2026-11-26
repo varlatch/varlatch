@@ -823,7 +823,7 @@ func (c *Compose) CheckRebuilt(ctx context.Context, plan RebuildRecord, convex b
 		return err
 	}
 	if err := c.checkVolumes(ctx, plan); err != nil {
-		return fmt.Errorf("%w; %s", err, c.rebuiltHelp(p, plan))
+		return c.notRebuilt(err, p, plan)
 	}
 	for i, d := range dataMounts {
 		if i > 0 && !convex {
@@ -845,14 +845,39 @@ func (c *Compose) CheckRebuilt(ctx context.Context, plan RebuildRecord, convex b
 			why = fmt.Sprintf("%s runs on %s, not on the fresh volume %s the journal names", d.service, orWord(own[0].volumeAt(d.target), "no named volume"), plan.Volumes[i])
 		}
 		if why != "" {
-			return errors.New(why + "; " + c.rebuiltHelp(p, plan))
+			return c.notRebuilt(errors.New(why), p, plan)
 		}
 	}
 	return nil
 }
 
-// rebuiltHelp is how the installation runs on the fresh volumes again.
-func (c *Compose) rebuiltHelp(p *ComposeProject, plan RebuildRecord) string {
+// notRebuiltError is CheckRebuilt's refusal: why, and how the
+// installation runs on the fresh volumes again (help). Its text starts
+// varlatchd with the database services; daemonKept is the same refusal
+// with varlatchd stopped instead, for a reverse whose journal does not yet
+// say it may serve (the engine's checkRebuilt).
+type notRebuiltError struct {
+	why  error
+	help func(daemon bool) string
+}
+
+func (e *notRebuiltError) Error() string { return e.why.Error() + "; " + e.help(true) }
+func (e *notRebuiltError) Unwrap() error { return e.why }
+
+// daemonKept is the refusal whose help keeps varlatchd stopped.
+func (e *notRebuiltError) daemonKept() error {
+	return fmt.Errorf("%w; %s", e.why, e.help(false))
+}
+
+func (c *Compose) notRebuilt(why error, p *ComposeProject, plan RebuildRecord) error {
+	return &notRebuiltError{why: why, help: func(daemon bool) string { return c.rebuiltHelp(p, plan, daemon) }}
+}
+
+// rebuiltHelp is how the installation runs on the fresh volumes again:
+// with daemon, varlatchd made again with the database services; without,
+// varlatchd stopped and left so, for varlatch migrate --resume to start
+// once the journal records that it may serve.
+func (c *Compose) rebuiltHelp(p *ComposeProject, plan RebuildRecord, daemon bool) string {
 	path := filepath.Join(c.Directory, plan.Override)
 	if !isFile(path) {
 		return path + " (the Compose file that names them) is gone: put it back from a copy of that directory"
@@ -862,8 +887,13 @@ func (c *Compose) rebuiltHelp(p *ComposeProject, plan RebuildRecord) string {
 		return err.Error()
 	}
 	files := append(slices.Clone(p.Files), path)
+	args := shellArgs(c.globalArgs(p, files))
+	if !daemon {
+		return fmt.Sprintf("to run it on them again: 1. set COMPOSE_FILE=%s in %s; 2. docker %s stop %s; 3. docker %s up -d --no-deps postgres convex-backend (it makes those that are on another volume again; no volume is removed). Do not start %s by hand: varlatch migrate --resume starts it once the journal records a start of the rebuilt release (or, undoing the reverse, behind its gate)",
+			value, c.envPath(), args, service, args, service)
+	}
 	return fmt.Sprintf("to run it on them again: 1. set COMPOSE_FILE=%s in %s; 2. docker %s up -d --no-deps postgres convex-backend %s (it makes those that are on another volume again; no volume is removed)",
-		value, c.envPath(), shellArgs(c.globalArgs(p, files)), service)
+		value, c.envPath(), args, service)
 }
 
 // importAnswerLimit bounds what the import's standard output keeps: its
@@ -969,7 +999,8 @@ func (c *Compose) StopFront(ctx context.Context, kind Ingress) error {
 
 // UndoRebuild: what holds the database stopped; COMPOSE_FILE as it was and
 // migrate's file removed, so Compose names the old volumes again; Postgres
-// and Convex back on them, the fresh volumes removed by their names; with
+// and Convex back on them, the fresh volumes removed by their names (but
+// with plan.keep, which leaves them); with
 // start, varlatchd started behind the gate, which is there already
 // (HoldGate), as the forward migration left it.
 func (c *Compose) UndoRebuild(ctx context.Context, plan RebuildRecord, gate GateRef, start bool) error {
@@ -994,6 +1025,10 @@ func (c *Compose) UndoRebuild(ctx context.Context, plan RebuildRecord, gate Gate
 		return err
 	}
 	for i, name := range plan.Volumes {
+		if plan.keep {
+			// Kept for the operator (restoreSource): named by nothing now.
+			break
+		}
 		// Only a volume this migration made (its label, and, once it is
 		// journalled, the very one): whatever else has the name is left.
 		v, err := c.volume(ctx, name)

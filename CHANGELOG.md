@@ -5,7 +5,47 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
-## Unreleased
+## 0.50.1 (2026-11-26)
+
+### CLI
+
+- **`varlatch migrate --rollback` no longer removes what the rebuilt
+  TypeScript installation took in once it may have served.** In 0.50.0, once
+  the rollback had started the rebuilt 0.23.0 installation on its address, a
+  `--resume` whose start of it failed again, a failed check of the public
+  URL, a failed tailnet handoff, or `--abort` could undo the rollback and
+  remove its fresh volumes, with every write made to it since. The journal
+  now records a start of the rebuilt release (`rollback.servedAt`) just
+  before it is started. From then on any failure, a failed start included,
+  stops with the fresh volumes and the `rollback-transfer` phase kept: fix
+  the cause, then run `varlatch migrate --resume`. `--abort` refuses from
+  that state. Before then, `--abort` undoes the rollback as before, a
+  failed check of the fresh volumes in the transfer leaves it pending
+  (repair, then `--resume`), and every repair printed keeps `varlatchd`
+  stopped. A rollback begun by 0.50.0 and interrupted in its transfer
+  counts as started, and `--resume` records it so at once. An undo of a
+  rollback begun by 0.50.0 puts the TypeScript installation back on its own
+  volumes but does not delete the fresh ones (`rollback.keptVolumes`, shown
+  by `--status`): check which still exist, then reconcile and remove them.
+  A 0.50.0 CLI does not read a rollback journal of 0.50.1: use 0.50.1 to
+  resume it.
+- **The tailnet handoff of `varlatch migrate` waits for Tailscale to free
+  the name.** Tailscale does not make a machine name free again the moment
+  a node lets go of it: a rename to it a second later is accepted, but
+  applied as `<name>-1`. In 0.50.0 the handoff renamed the new node right
+  after the old one, so the name could read back as `<name>-1`, the
+  handoff failed, and its undo could fail the same way giving the old node
+  its name back, leaving both installations closed until the name was
+  renamed by hand. Now, on Tailscale, a rename that reads back as the name
+  with such a number, or that is refused as taken, while the API lists no
+  other device under the name, is made again after 1, 2, 3 and then every
+  5 seconds, for up to 45 seconds within the handoff's deadline, and the
+  CLI prints `Waiting for the tailnet to release the name <name>`. This
+  holds for the migration, its undo and the rollback. A name another
+  device holds, or any other name read back, still fails at once. The
+  undo's two renames share its 60 seconds: when the first leaves too
+  little time for the second, the undo is left pending, and `varlatch
+  migrate --resume` runs it again. Nothing changes on Headscale.
 
 ## 0.50.0 (2026-11-25)
 

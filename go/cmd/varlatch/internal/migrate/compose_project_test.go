@@ -1330,6 +1330,28 @@ func TestTheRebuildRunsOnTheFreshVolume(t *testing.T) {
 				t.Errorf("%s: %v, want %q", c.name, err, w)
 			}
 		}
+		// Before the reverse records a start of the rebuilt release, the
+		// same refusal keeps varlatchd stopped: the database services only.
+		var nr *notRebuiltError
+		if err != nil && strings.Contains(err.Error(), "to run it on them again") {
+			if !errors.As(err, &nr) {
+				t.Errorf("%s: %T is no notRebuiltError", c.name, err)
+			} else if kept := nr.daemonKept().Error(); !strings.Contains(kept, " stop varlatchd; 3. docker ") || !strings.Contains(kept, " up -d --no-deps postgres convex-backend (") ||
+				strings.Contains(kept, "convex-backend varlatchd") || !strings.Contains(kept, "Do not start varlatchd by hand: varlatch migrate --resume starts it") {
+				t.Errorf("%s, varlatchd kept stopped: %s", c.name, kept)
+			}
+		}
+		// The engine, before the transfer, with an undo that stops (its gate
+		// not held): the refusal it reports keeps varlatchd stopped too.
+		if strings.HasPrefix(c.name, "deployed again") {
+			w, src, j := rolledWorld(t, RollbackChecked, Coolify)
+			src.checkErr, src.holdErr = err, errors.New("the gate's state volume is not the migration's")
+			got := w.eng.reverseTransfer(t.Context(), j)
+			if got == nil || !strings.Contains(got.Error(), "undoing stopped") || !strings.Contains(got.Error(), " stop varlatchd; 3. docker ") ||
+				!strings.Contains(got.Error(), " up -d --no-deps postgres convex-backend (") || strings.Contains(got.Error(), "convex-backend varlatchd") {
+				t.Errorf("%s, before the transfer: %v", c.name, got)
+			}
+		}
 		if len(run.ran) > 0 && !slices.Equal(run.ran, []string{"docker compose config --no-interpolate --format json"}) {
 			t.Errorf("%s: ran %v", c.name, run.ran)
 		}
@@ -1355,6 +1377,8 @@ type reverseFake struct {
 	helds                     int
 	frontErrs                 []error
 	servingErr                error
+	startServingErr           error
+	startServing              func() error
 	started                   bool
 	planErr                   error
 	// check, when set, answers instead of checkErr.
@@ -1405,13 +1429,23 @@ func (r *reverseFake) ResetConvex(context.Context) error { r.do("convex"); retur
 func (r *reverseFake) ExportForCheck(context.Context, []byte) (string, error) {
 	return "", errors.New("not reached")
 }
-func (r *reverseFake) StartServing(context.Context, Ingress) error { r.do("serve"); return nil }
+func (r *reverseFake) StartServing(context.Context, Ingress) error {
+	r.do("serve")
+	if r.startServing != nil {
+		return r.startServing()
+	}
+	return r.startServingErr
+}
 func (r *reverseFake) StopServing(context.Context, Ingress) error {
 	r.do("stop serving")
 	return r.servingErr
 }
 func (r *reverseFake) UndoRebuild(_ context.Context, p RebuildRecord, g GateRef, start bool) error {
-	r.do("undo " + p.Volumes[0])
+	if p.keep {
+		r.do("undo, keeping " + p.Volumes[0])
+	} else {
+		r.do("undo " + p.Volumes[0])
+	}
 	r.gates = append(r.gates, g)
 	r.started = start
 	return r.undoErr

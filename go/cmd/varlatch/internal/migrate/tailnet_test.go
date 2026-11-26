@@ -1199,3 +1199,29 @@ func TestAFailedNameReturnLeavesTheRestForTheResume(t *testing.T) {
 		t.Fatalf("after --resume: target's database %v, target running %v, the source's ingress down %v, sidecar running %v", w.tgt.database, w.tgt.running, w.src.ingressDown, w.src.running)
 	}
 }
+
+// Tailscale keeps a name a rename freed for a moment (2026-11-26): the
+// target's node's rename to it reads back suffixed (-1) at first. The
+// handoff renames again until it reads back, and says that it waits.
+func TestTheTailnetNameIsWaitedForUntilReleased(t *testing.T) {
+	waits, budget := tailcontrol.ReleaseWaits, tailcontrol.ReleaseBudget
+	t.Cleanup(func() { tailcontrol.ReleaseWaits, tailcontrol.ReleaseBudget = waits, budget })
+	tailcontrol.ReleaseWaits, tailcontrol.ReleaseBudget = []time.Duration{10 * time.Millisecond}, 2*time.Second
+	w := patientTailnetWorld(t)
+	w.cp.SetReleaseRenames(2)
+	var mu sync.Mutex
+	var lines []string
+	w.eng.Options.Progress = func(s string) { mu.Lock(); lines = append(lines, s); mu.Unlock() }
+	j, err := w.eng.Run(context.Background(), false)
+	if err != nil || j.Phase != Open || j.Tailnet.Handoff.Phase != tailhandoff.Done {
+		t.Fatalf("%v %+v", err, j)
+	}
+	if n := w.names(); n["new"] != "vault" {
+		t.Fatalf("names %v", n)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !slices.Contains(lines, "Waiting for the tailnet to release the name vault (up to 2s).") {
+		t.Errorf("no waiting line: %q", lines)
+	}
+}

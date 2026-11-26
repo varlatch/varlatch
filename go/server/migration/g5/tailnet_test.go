@@ -685,8 +685,12 @@ func TestG5TailnetSwitchInterruptions(t *testing.T) {
 
 // G5, the reverse's tailnet handoff interrupted: --rollback killed at
 // every step that hands the name back to the sidecar, then --resume to
-// rolled back (the name the sidecar's), or, before the name moved,
-// --abort back to open (the name the target's).
+// rolled back (the name the sidecar's). The handoff runs after the rebuilt
+// TypeScript release was started (rollback.servedAt), which may have taken
+// writes: --abort refuses at every step, changing nothing, the fresh
+// volumes kept, and --resume finishes the rollback on them. Killed before
+// that start (and before the name moved), --abort still undoes the
+// reverse: the name stays the target's.
 func TestG5TailnetRollbackInterruptions(t *testing.T) {
 	for _, step := range forwardSteps {
 		for _, abort := range []bool{false, true} {
@@ -704,30 +708,30 @@ func TestG5TailnetRollbackInterruptions(t *testing.T) {
 				if code := w.rollback(point, "--rollback"); code != -1 {
 					t.Fatalf("not killed at %s: %d\n%s", point, code, w.outputs[len(w.outputs)-1])
 				}
-				if abort && late {
-					if code := w.rollback("", "--abort"); code != 1 {
-						t.Fatalf("--abort once the name is back: %d\n%s", code, w.outputs[len(w.outputs)-1])
+				fresh := w.freshVolumes()
+				if len(fresh) == 0 {
+					t.Fatalf("killed at %s: no fresh volumes", point)
+				}
+				if abort {
+					code := w.rollback("", "--abort")
+					out := string(w.outputs[len(w.outputs)-1])
+					if code != 1 || !late && !strings.Contains(out, "may have accepted writes since") {
+						t.Fatalf("--abort once the rebuilt release may have served: %d\n%s", code, out)
+					}
+					if got := w.freshVolumes(); !slices.Equal(got, fresh) {
+						t.Fatalf("the refused --abort changed the fresh volumes: %q, then %q", fresh, got)
 					}
 				}
-				if abort && !late {
-					if code := w.rollback("", "--abort"); code != 0 {
-						t.Fatalf("--abort: %d\n%s", code, w.outputs[len(w.outputs)-1])
-					}
-					w.useState()
-					w.tailnetAt(t, tn, sidecar, "target")
-					if sidecarRunning() {
-						calls, _ := os.ReadFile(state("docker-calls"))
-						t.Errorf("the sidecar runs after the reverse was undone; Docker was asked:\n%s", calls)
-					}
-				} else {
-					if code := w.rollback("", "--resume"); code != 0 {
-						t.Fatalf("--resume: %d\n%s", code, w.outputs[len(w.outputs)-1])
-					}
-					w.useState()
-					w.tailnetAt(t, tn, sidecar, "source")
-					if got := sidecarID(t); got != sidecar {
-						t.Fatalf("the sidecar came back as another node: %s", got)
-					}
+				if code := w.rollback("", "--resume"); code != 0 {
+					t.Fatalf("--resume: %d\n%s", code, w.outputs[len(w.outputs)-1])
+				}
+				w.useState()
+				w.tailnetAt(t, tn, sidecar, "source")
+				if got := sidecarID(t); got != sidecar {
+					t.Fatalf("the sidecar came back as another node: %s", got)
+				}
+				if got := w.freshVolumes(); !slices.Equal(got, fresh) {
+					t.Errorf("rolled back without the fresh volumes: %q, then %q", fresh, got)
 				}
 				if code := w.rollback("", "--resume"); code != 0 {
 					t.Errorf("a second --resume: %d\n%s", code, w.outputs[len(w.outputs)-1])
@@ -736,6 +740,40 @@ func TestG5TailnetRollbackInterruptions(t *testing.T) {
 			})
 		}
 	}
+	t.Run("before the start, aborted", func(t *testing.T) {
+		w, tn := newTailnetWorld(t)
+		sidecar := sidecarID(t)
+		if code := w.run(""); code != 0 {
+			t.Fatalf("the migration: %d\n%s", code, w.outputs[len(w.outputs)-1])
+		}
+		if code := w.rollback("rollback rebuilt", "--rollback"); code != -1 {
+			t.Fatalf("not killed: %d\n%s", code, w.outputs[len(w.outputs)-1])
+		}
+		if code := w.rollback("", "--abort"); code != 0 {
+			t.Fatalf("--abort before the start: %d\n%s", code, w.outputs[len(w.outputs)-1])
+		}
+		w.useState()
+		w.tailnetAt(t, tn, sidecar, "target")
+		if sidecarRunning() {
+			calls, _ := os.ReadFile(state("docker-calls"))
+			t.Errorf("the sidecar runs after the reverse was undone; Docker was asked:\n%s", calls)
+		}
+		if got := w.freshVolumes(); len(got) != 0 {
+			t.Errorf("fresh volumes left after the undo: %q", got)
+		}
+		if code := w.rollback("", "--resume"); code != 0 {
+			t.Errorf("a second --resume: %d\n%s", code, w.outputs[len(w.outputs)-1])
+		}
+		w.noSecrets()
+	})
+}
+
+// freshVolumes are the volumes the Docker stand-in holds that are not the
+// installation's own: the reverse's fresh volumes.
+func (w *world) freshVolumes() []string {
+	w.t.Helper()
+	b, _ := os.ReadFile(filepath.Join(w.stateDir, "volumes"))
+	return strings.Fields(string(b))
 }
 
 // heldAs is the target's hold's temporary name ("" for none).
@@ -873,7 +911,9 @@ func TestG5TailnetUndoSlotSteps(t *testing.T) {
 
 // The rollback's return of the name, its own undo killed at each step it
 // journals (the sidecar's rename to the name refused): --resume hands the
-// name back again and rolls back; --abort leaves it with Go.
+// name back again and rolls back. The rebuilt TypeScript release was
+// started before the handoff (rollback.servedAt), so --abort refuses,
+// changing nothing, the fresh volumes kept, and --resume rolls back.
 func TestG5TailnetRollbackUndoSteps(t *testing.T) {
 	for _, c := range []struct {
 		step string
@@ -896,18 +936,25 @@ func TestG5TailnetRollbackUndoSteps(t *testing.T) {
 					t.Fatalf("not killed at %s: %d\n%s", step, code, w.outputs[len(w.outputs)-1])
 				}
 				tn.set(func(tn *tailnetEnv) { tn.failName, tn.failNode, tn.downAfterFail, tn.down = "", "", false, false })
+				fresh := w.freshVolumes()
+				if len(fresh) == 0 {
+					t.Fatalf("killed at %s: no fresh volumes", step)
+				}
 				if abort {
-					if code := w.rollback("", "--abort"); code != 0 {
-						t.Fatalf("--abort: %d\n%s", code, w.outputs[len(w.outputs)-1])
+					if code := w.rollback("", "--abort"); code != 1 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "may have accepted writes since") {
+						t.Fatalf("--abort once the rebuilt release may have served: %d\n%s", code, w.outputs[len(w.outputs)-1])
 					}
-					w.useState()
-					w.tailnetAt(t, tn, sidecar, "target")
-				} else {
-					if code := w.rollback("", "--resume"); code != 0 {
-						t.Fatalf("--resume: %d\n%s", code, w.outputs[len(w.outputs)-1])
+					if got := w.freshVolumes(); !slices.Equal(got, fresh) {
+						t.Fatalf("the refused --abort changed the fresh volumes: %q, then %q", fresh, got)
 					}
-					w.useState()
-					w.tailnetAt(t, tn, sidecar, "source")
+				}
+				if code := w.rollback("", "--resume"); code != 0 {
+					t.Fatalf("--resume: %d\n%s", code, w.outputs[len(w.outputs)-1])
+				}
+				w.useState()
+				w.tailnetAt(t, tn, sidecar, "source")
+				if got := w.freshVolumes(); !slices.Equal(got, fresh) {
+					t.Errorf("rolled back without the fresh volumes: %q, then %q", fresh, got)
 				}
 				if code := w.rollback("", "--resume"); code != 0 {
 					t.Errorf("a second --resume: %d\n%s", code, w.outputs[len(w.outputs)-1])

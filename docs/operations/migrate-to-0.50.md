@@ -532,9 +532,27 @@ tailnet name over to a new node, by rename, in the same transfer:
   back from the control plane. On Tailscale, the new node then obtains the
   certificate for `<name>`. Everything from stopping the old sidecar to
   the final check runs within one 180-second deadline.
+- Tailscale does not make a name free again the moment a node lets go of
+  it. A rename to it a second later is accepted, but the node gets
+  `<name>-1`, although no other device lists `<name>`. When a rename reads
+  back as the wanted name with such a number added, or Tailscale refuses
+  the name as taken, and the API lists no other device under the name,
+  the handoff waits and renames again (after 1, 2, 3, then every 5
+  seconds, for up to 45 seconds, always within the deadline), printing
+  `Waiting for the tailnet to release the name <name>`. A name another
+  device holds, or any other name read back, still fails at once.
+  Headscale frees a name at once, so nothing waits there.
 - The transfer counts only once `<name>`, resolved from a client node,
   reaches the new node. Any failure before the new node opens renames both
-  nodes back (each read back) and reopens the old node.
+  nodes back (each read back, with the same wait for the name) and reopens
+  the old node. The rollback's handoff waits the same way.
+- The undo has 60 seconds in all, for both of its renames. When the first
+  one's wait leaves too little time for the second, the undo stops with
+  both installations closed and the journal says the undo is pending:
+  `varlatch migrate --resume` runs the undo again. When Tailscale keeps
+  refusing the name and lists no device holding it, the message says so:
+  look the name up in the tailnet's admin console, correct it there if a
+  device does hold it, then run `varlatch migrate --resume`.
 
 With both a public (or Coolify) address and the tailnet address, the order
 is fixed: the domain first, checked through the public URL; then the
@@ -731,7 +749,10 @@ until the address moves back:
    TypeScript application: Coolify starts it from its own Compose file,
    which names the volumes from before the migration, without what was
    written since. It would answer as the same installation and release.
-   Restarting its containers (`docker restart`) is fine.
+   Once `varlatch migrate --status` shows that a start of the rebuilt
+   release was recorded, restarting its containers (`docker restart`) is
+   fine. Before that, start none of them by hand: `--resume` starts them
+   after it records the start.
 
    The address moves by the route you put in before (see
    [the way back on Coolify](#the-way-back-on-coolify)): the TypeScript
@@ -739,13 +760,26 @@ until the address moves back:
    the new server stops. If the application was deployed again before that,
    `--resume` refuses, the new server goes on as it was, and it prints how
    to run the application on the new volumes again: the `COMPOSE_FILE` to
-   set in `.env`, then one `docker compose up -d --no-deps` command.
+   set in `.env`, then the `docker compose` commands to run. Before the
+   rollback has recorded a start of the rebuilt release, those keep
+   `varlatchd` stopped: do not start it yourself, `--resume` starts it once
+   the journal protects the new volumes.
 6. Rolled back: the new server never starts on that data directory again.
 
-Until the address moves, an interruption, a failed check or `--abort`
-undoes the rollback, and the new server goes on serving. During the
-transfer, `--resume` checks again and `--abort` gives the address back to
-the new server first. People sign in again after a rollback too, with the
+Before step 5, an interruption, a failed check or `--abort` undoes the
+rollback, and the new server goes on serving. In step 5, until the
+rollback records that it starts the rebuilt TypeScript release (just
+before it starts it), `--resume` goes on with the move, and a failed check
+of the volumes (the application deployed again, for example) leaves the
+rollback pending: repair it as `--resume` says and run `--resume` again,
+or run `--abort`, which undoes it while nothing is recorded as started.
+From that record on, the rebuilt release may have accepted writes that the new
+server's copy does not have, so the rollback goes forward only: a failure,
+including a failed start of the rebuilt release, stops with the rebuilt
+volumes and journal phase kept so you can fix the cause and run `--resume`
+again, and `--abort` refuses. `varlatch migrate --status` shows when the
+start was recorded. A rollback begun by 0.50.0 and interrupted in step 5
+counts as started too: finish it with the 0.50.1 CLI. People sign in again after a rollback too, with the
 same passkey, and hard-reload any dashboard tab that stayed open
 (`Ctrl+Shift+R`, `Cmd+Shift+R` on a Mac).
 

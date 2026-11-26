@@ -368,6 +368,7 @@ func (e *Engine) handoffEngine(j *Journal, slot handoffSlot) (*tailhandoff.Engin
 		Deadline:   cmp.Or(testHandoffDeadline, o.Deadline),
 		UndoWait:   cmp.Or(testHandoffUndoWait, o.UndoWait),
 		RetryEvery: o.RetryEvery,
+		Waiting:    e.waitingForName,
 		// Real time, never the migration's clock: the handoff's deadlines
 		// are contexts', and its issuance count's week is the CA's.
 	}, nil
@@ -743,9 +744,10 @@ func (e *Engine) reholdTargetAs(ctx context.Context, name, op string) error {
 // rollbackTailnet gives the tailnet name back to the retained old node in
 // a reverse migration (decision 17), after the address answers from the
 // TypeScript release: the reverse handoff, under an operation of its own,
-// Go's node closing (stopped) and the sidecar opening. A failure undone by
-// the handoff undoes the reverse (the address back to Go); one pending
-// waits for --resume. Nothing when the forward migration moved no name.
+// Go's node closing (stopped) and the sidecar opening. Once the rebuilt
+// TypeScript release has started serving, a failure stops without undoing
+// so the rebuilt volumes are kept and --resume finishes it. Nothing when
+// the forward migration moved no name.
 func (e *Engine) rollbackTailnet(ctx context.Context, j *Journal) error {
 	rec := j.Tailnet
 	if rec == nil || rec.Handoff == nil || rec.Handoff.Phase != tailhandoff.Done {
@@ -783,6 +785,9 @@ func (e *Engine) rollbackTailnet(ctx context.Context, j *Journal) error {
 		plan := tailhandoff.NewReverse(op, rec.Name, rec.IncomingID, rec.ServingID, retained, rec.Certificates)
 		e.say("Tailnet: the name %s goes back to the TypeScript release's node.", rec.Name)
 		if _, err := he.Prepare(ctx, plan); err != nil {
+			if servedAt(j) != "" {
+				return fmt.Errorf("the tailnet name back: %w; %s", err, keptForResume(j))
+			}
 			return e.undoReverse(ctx, j, fmt.Errorf("the tailnet name back: %w", err))
 		}
 		crashPoint("rollback tailnet switch")
@@ -820,6 +825,9 @@ func (e *Engine) rollbackTailnet(ctx context.Context, j *Journal) error {
 func (e *Engine) rollbackTailnetFailed(ctx context.Context, j *Journal, err error) error {
 	var herr *tailhandoff.HandoffError
 	if errors.As(err, &herr) && (herr.Phase == tailhandoff.Undone || herr.Phase == tailhandoff.Prepared) {
+		if servedAt(j) != "" {
+			return fmt.Errorf("the tailnet name back: %w; %s", err, keptForResume(j))
+		}
 		return e.undoReverse(ctx, j, fmt.Errorf("the tailnet name back: %w", err))
 	}
 	return fmt.Errorf("the tailnet name back: %w; varlatch migrate --resume goes on", err)

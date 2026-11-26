@@ -3868,10 +3868,20 @@ migrations.
     data directory again.
 
   An interruption, a failed check or `--abort` before the transfer undoes
-  it: the TypeScript side as the forward migration left it (its fresh
-  volumes removed, its marker made again), Go's journal open again, then its
-  barrier lifted. Go runs throughout. In the transfer, `--resume` checks
-  again; `--abort` gives the address back to Go first.
+  it: the TypeScript side as the forward migration left it (its marker
+  made again), Go's journal open again, then its barrier lifted. For
+  rollbacks begun by 0.50.1, the undo removes the fresh volumes. For
+  rollbacks begun by 0.50.0, it leaves any surviving fresh volumes for
+  reconciliation. Go runs throughout (stopped in the transfer on the
+  public and own-proxy shapes, started again by an undo). In the transfer,
+  until it records a start of the rebuilt release, `--resume` goes on, a
+  failed check of the fresh volumes leaves it pending (repair, then
+  `--resume`), and `--abort` still undoes it. The journal records `servedAt` just before
+  the transfer first starts the rebuilt release; from then on it may have
+  accepted writes, so the reverse goes forward only, a failed start
+  included: the fresh volumes and the phase are kept for `--resume`, and
+  `--abort` refuses. A 0.50.0 journal (without `recordsServing`) in the
+  transfer counts as started.
 
   Its report lists the Go archives made since the switch, which the
   TypeScript release cannot read (never deleted).

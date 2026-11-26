@@ -16,7 +16,9 @@
 //     the rollback window. Nothing is renamed.
 //   - Switch, under the barrier: the serving installation lets go of the
 //     tailnet, the serving node is renamed to its temporary name and the
-//     incoming node to the name, back to back, each read back; the
+//     incoming node to the name, back to back, each read back (a name
+//     Tailscale has not released yet, which it applies suffixed, -1, is
+//     renamed to again until it reads back, within the deadline); the
 //     incoming node obtains the name's certificate; a client must reach
 //     the incoming node by the name; only then does it open. Everything
 //     from the first rename runs under one deadline.
@@ -276,6 +278,10 @@ type Engine struct {
 	// RetryEvery is the wait between tries of a control-plane call that
 	// failed in a way that may pass (a server restarting); 1 s by default.
 	RetryEvery time.Duration
+	// Waiting, when set, is told the name a rename waits for the control
+	// plane to release (tailcontrol.RenameReleased), once per wait: a
+	// progress line for the operator. It must not block.
+	Waiting func(name string)
 	// Now is the clock; time.Now when nil.
 	Now func() time.Time
 }
@@ -313,6 +319,11 @@ func (e *HandoffError) Error() string {
 	case UndoPending:
 		// A device holding the name is the operator's step, so it leads,
 		// even when the device the name was to go back to is gone too.
+		// A refusal no listed device explains is said as such: there is no
+		// device to look for in the listing.
+		if unlisted := (*UnlistedHolderError)(nil); errors.As(e.Err, &unlisted) {
+			return fmt.Sprintf("the handoff failed and its undo could not give the name %s back: the tailnet's control plane still refuses it as taken, but lists no device holding it, and neither installation is opened on the tailnet. Look the name up in the tailnet's admin console, correct its assignment there if needed, then resume (varlatch migrate --resume): %v", unlisted.Name, e.Err)
+		}
 		if errors.Is(e.Err, tailcontrol.ErrNameTaken) {
 			return fmt.Sprintf("the handoff failed and its undo could not give a name back: another device holds it now, and neither installation is opened on the tailnet. Rename or delete that device in the tailnet's admin console, then resume: %v", e.Err)
 		}
@@ -631,16 +642,28 @@ func (e *Engine) obtain(ctx context.Context, node Role, name string, until time.
 
 // rename renames a device and reads it back, trying again while the
 // control plane fails in a way that may pass (a restart, a lost
-// connection) until ctx ends. A taken name or a read-back that differs is
-// final.
+// connection) until ctx ends. A name the control plane has not released
+// yet is waited for, within tailcontrol.ReleaseBudget and ctx
+// (renameReleased); after that, a taken name or a read-back that differs
+// is final.
 func (e *Engine) rename(ctx context.Context, id, name string) error {
 	return e.retry(ctx, func() error {
-		_, err := tailcontrol.RenameAndReadBack(ctx, e.Control, id, name)
+		err := e.renameReleased(ctx, id, name)
 		if err != nil && !final(err) && e.unlisted(ctx, id) {
 			return &GoneError{ID: id}
 		}
 		return err
 	})
+}
+
+// renameReleased is tailcontrol.RenameReleased, telling Waiting.
+func (e *Engine) renameReleased(ctx context.Context, id, name string) error {
+	var waiting func()
+	if e.Waiting != nil {
+		waiting = func() { e.Waiting(name) }
+	}
+	_, err := tailcontrol.RenameReleased(ctx, e.Control, id, name, waiting)
+	return err
 }
 
 // GoneError is a device the control plane no longer lists: deleted from
@@ -864,7 +887,9 @@ func (e *Engine) holder(ctx context.Context, name, except string, devices []tail
 }
 
 // restoreName renames a device to name unless it is listed under it
-// already; a device no longer listed is gone (GoneError).
+// already, waiting for the control plane to release a name let go of a
+// moment ago (renameReleased); a device no longer listed is gone
+// (GoneError).
 func (e *Engine) restoreName(ctx context.Context, id, name string) error {
 	devices, err := e.Control.Devices(ctx)
 	if err != nil {
@@ -878,16 +903,36 @@ func (e *Engine) restoreName(ctx context.Context, id, name string) error {
 			return nil
 		}
 	}
-	_, err = tailcontrol.RenameAndReadBack(ctx, e.Control, id, name)
+	err = e.renameReleased(ctx, id, name)
 	if errors.Is(err, tailcontrol.ErrNameTaken) {
 		// Another device took the name while it was free: say which, so
-		// the operator can rename or delete it.
+		// the operator can rename or delete it. When a fresh listing shows
+		// none, say that instead: the refusal is the control plane's own.
 		if d, ok := e.holder(ctx, name, id, devices); ok {
 			return fmt.Errorf("%w: it is held by %s now", err, d)
+		}
+		if again, lerr := e.Control.Devices(ctx); lerr == nil && !slices.ContainsFunc(again, func(d tailcontrol.Device) bool {
+			return d.ID != id && strings.EqualFold(d.Name, name)
+		}) {
+			return &UnlistedHolderError{Name: name, Err: err}
 		}
 	}
 	return err
 }
+
+// UnlistedHolderError is a rename refused as taken while the control plane
+// lists no other device under the name: kept refusing through the wait for
+// its release (tailcontrol.RenameReleased).
+type UnlistedHolderError struct {
+	Name string
+	Err  error
+}
+
+func (e *UnlistedHolderError) Error() string {
+	return fmt.Sprintf("%v (no device is listed under %s)", e.Err, e.Name)
+}
+
+func (e *UnlistedHolderError) Unwrap() error { return e.Err }
 
 func (e *Engine) confirm(ctx context.Context, id, name string) error {
 	devices, err := e.Control.Devices(ctx)
