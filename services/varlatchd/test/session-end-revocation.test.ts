@@ -175,3 +175,69 @@ describe("the session exchange (/auth/varlatch-token)", () => {
     expect((await exchange()).status).toBe(401);
   });
 });
+
+describe("revoking a browser credential from Active sessions (DELETE /v1/me/credentials/{id})", () => {
+  let current: { identityId: string; sessionId: string } | null;
+  let app: ReturnType<typeof buildApp>;
+  beforeEach(() => {
+    current = { identityId: personId, sessionId: "ses_a" };
+    const humanAuth: HumanAuth = {
+      handler: async () => new Response(null, { status: 404 }),
+      sessionFor: async () => current,
+      close: async () => undefined,
+    };
+    app = buildApp(ctx, { humanAuth });
+  });
+  /** A bearer from sessionId's browser, as POST /auth/varlatch-token mints it. */
+  const mint = async (sessionId: string) => {
+    current = { identityId: personId, sessionId };
+    const res = await app.request("/auth/varlatch-token", { method: "POST" });
+    expect(res.status).toBe(200);
+    const { token } = (await res.json()) as { token: string };
+    const me = (await (await app.request("/v1/me", { headers: { Authorization: `Bearer ${token}` } })).json()) as { credential: { id: string } };
+    return { token, id: me.credential.id };
+  };
+  const revoke = (id: string, as: string) =>
+    app.request(`/v1/me/credentials/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${as}` } });
+  const sessions = async () => ((await ctx.db.query(`SELECT id FROM "session" ORDER BY id`)).rows as { id: string }[]).map((r) => r.id);
+  const canMint = async (sessionId: string) => {
+    current = { identityId: personId, sessionId };
+    return (await app.request("/auth/varlatch-token", { method: "POST" })).status;
+  };
+
+  it("ends the other browser's session, so it cannot mint a new bearer", async () => {
+    const mine = await mint("ses_a");
+    const theirs = await mint("ses_b");
+    expect((await revoke(theirs.id, mine.token)).status).toBe(204);
+    expect(await works(theirs.token)).toBe(false);
+    expect(await canMint("ses_b")).toBe(401);
+    expect(await sessions()).toEqual(["ses_a"]);
+    expect(await works(mine.token)).toBe(true);
+  });
+
+  it("reaches a browser whose bearers all expired", async () => {
+    const mine = await mint("ses_a");
+    const theirs = await mint("ses_b");
+    await ctx.db.query("UPDATE credentials SET expires_at = now() - interval '1 second' WHERE id = $1", [theirs.id]);
+    expect((await revoke(theirs.id, mine.token)).status).toBe(204);
+    expect(await canMint("ses_b")).toBe(401);
+  });
+
+  it("an older bearer of this browser's own session is only revoked; the presenting one signs this browser out", async () => {
+    const old = await mint("ses_a");
+    const mine = await mint("ses_a");
+    expect((await revoke(old.id, mine.token)).status).toBe(204);
+    expect(await works(old.token)).toBe(false);
+    expect(await works(mine.token)).toBe(true);
+    expect(await sessions()).toEqual(["ses_a", "ses_b"]);
+    expect((await revoke(mine.id, mine.token)).status).toBe(204);
+    expect(await canMint("ses_a")).toBe(401);
+  });
+
+  it("revoking a CLI credential from the browser handoff leaves the session alone", async () => {
+    const mine = await mint("ses_a");
+    const handoff = await issueCredential(ctx.db, { identityId: personId, kind: "cli", authSessionId: "ses_b" });
+    expect((await revoke(handoff.credentialId, mine.token)).status).toBe(204);
+    expect(await sessions()).toEqual(["ses_a", "ses_b"]);
+  });
+});

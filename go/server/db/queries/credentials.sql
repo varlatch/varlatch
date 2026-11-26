@@ -37,7 +37,9 @@ WHERE id = sqlc.arg(id) AND kind = 'browser' AND revoked_at IS NULL
   AND (expires_at IS NULL OR expires_at > sqlc.arg(now));
 
 -- name: CredentialOfIdentity :one
-SELECT id FROM credentials WHERE id = ? AND identity_id = ?;
+-- revokeOwnCredential: the caller's credential, its kind and the browser
+-- session it came from.
+SELECT id, kind, auth_session_id FROM credentials WHERE id = ? AND identity_id = ?;
 
 -- name: ListCredentialsOfIdentity :many
 SELECT id, kind, name, created_at, expires_at, revoked_at, max_uses, use_count, client

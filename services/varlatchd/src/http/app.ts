@@ -1199,12 +1199,41 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     await withTx(ctx.db, async (db) => {
       // Revoking only takes authority away: recovery while frozen (ADR-0055).
       if (organizationId) await lockLiveScope(db, { organizationId, duringIncidentFreeze: "recovery", people: [principal.identity.id] });
+      const credentialId = c.req.param("credential");
       const res = await db.query(
-        "SELECT id FROM credentials WHERE id = $1 AND identity_id = $2",
-        [c.req.param("credential"), principal.identity.id],
+        "SELECT id, kind, auth_session_id FROM credentials WHERE id = $1 AND identity_id = $2",
+        [credentialId, principal.identity.id],
       );
-      if (!res.rows[0]) throw new DomainError("RESOURCE_NOT_FOUND", "Credential not found");
-      await revokeCredential(db, c.req.param("credential"), principal.identity.id);
+      const row = res.rows[0] as { id: string; kind: string; auth_session_id: string | null } | undefined;
+      if (!row) throw new DomainError("RESOURCE_NOT_FOUND", "Credential not found");
+      // A browser credential's session ends with it: the browser would
+      // otherwise mint a new bearer from its cookie for as long as the
+      // session lasts. An older bearer of the caller's own session is only
+      // revoked ("Sign out everywhere else" leaves this browser signed in);
+      // the presenting bearer ends it ("Sign out this browser"). A CLI
+      // credential from the browser handoff leaves its session alone
+      // (ADR-0024).
+      const session = row.kind === "browser" ? row.auth_session_id : null;
+      const endsSession =
+        session !== null && (session !== (principal.authSessionId ?? null) || credentialId === principal.credentialId);
+      if (endsSession) {
+        // Lock order (domain/liveness.ts): the session row (step 6), then
+        // the credentials the revocation and the session-end trigger
+        // revoke (step 7), in the trigger's mode, before the first audit
+        // insert.
+        await lockedQuery(db, { table: "session", mode: "update" }, `SELECT id FROM session WHERE id = $1 FOR UPDATE`, [session]);
+        await lockedQuery(
+          db,
+          { table: "credentials", mode: "update" },
+          `SELECT id FROM credentials
+           WHERE id = $1 OR (auth_session_id = $2 AND kind = 'browser' AND revoked_at IS NULL)
+           ORDER BY id FOR UPDATE`,
+          [credentialId, session],
+        );
+      }
+      await revokeCredential(db, credentialId, principal.identity.id);
+      // Deleting the session revokes its other browser bearers (migration 43).
+      if (endsSession) await db.query(`DELETE FROM "session" WHERE id = $1`, [session]);
     });
     return c.body(null, 204);
   });
