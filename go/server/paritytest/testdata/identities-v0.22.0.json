@@ -7422,7 +7422,26 @@
         },
         "body": "{\"id\":\"idn_avuysifrytuicievwesbxxf64q\",\"disabled\":false}"
       },
-      "audit": [],
+      "audit": [
+        {
+          "action": "identity.manage",
+          "actor_identity_id": "idn_k3dfddwryrpnjupboz5optkrp4",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_5sxymlp22hyngcc7f4ussofcde",
+          "decision": "info",
+          "event_type": "identity.reactivated",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "org_jfi2qsin4pgh6dxcu34szcxwf4",
+          "request_id": null,
+          "resource": {
+            "identityId": "idn_avuysifrytuicievwesbxxf64q"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
       "side": {}
     },
     {
@@ -7668,7 +7687,26 @@
         },
         "body": "{\"id\":\"idn_7vyibktuxp2t7tpf5dpb5bttoi\",\"disabled\":false}"
       },
-      "audit": [],
+      "audit": [
+        {
+          "action": "identity.manage",
+          "actor_identity_id": "idn_k3dfddwryrpnjupboz5optkrp4",
+          "authz": null,
+          "client": "varlatch CLI 0.22.0 on Linux",
+          "credential_id": "crd_5sxymlp22hyngcc7f4ussofcde",
+          "decision": "info",
+          "event_type": "identity.reactivated",
+          "listener": "ordinary",
+          "metadata": null,
+          "organization_id": "org_rnbljbdtpxzdg24pbcvjrxvyme",
+          "request_id": null,
+          "resource": {
+            "identityId": "idn_7vyibktuxp2t7tpf5dpb5bttoi"
+          },
+          "schema_version": 1,
+          "tailnet": null
+        }
+      ],
       "side": {}
     },
     {

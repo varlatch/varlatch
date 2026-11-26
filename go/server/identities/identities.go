@@ -641,14 +641,13 @@ func Reactivate(ctx context.Context, w *write.Writer, approvals *auth.Service, r
 		if boundEnabled && wasDisabled {
 			return domainerr.New("STATE_CHANGED", "The identity was retired while it was being reactivated; nothing changed. Reactivate it again")
 		}
-		if !wasDisabled {
-			return nil
-		}
 		if err := query.New(tx).SetIdentityDisabled(ctx, query.SetIdentityDisabledParams{Disabled: false, ID: identityID}); err != nil {
 			return err
 		}
-		if err := p.Count(ctx, tx); err != nil {
-			return err
+		if wasDisabled {
+			if err := p.Count(ctx, tx); err != nil {
+				return err
+			}
 		}
 		action := "identity.manage"
 		e := audit.Event{

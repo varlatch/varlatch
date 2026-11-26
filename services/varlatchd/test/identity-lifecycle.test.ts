@@ -202,12 +202,12 @@ describe("retire and reactivate", () => {
     expect(evt.rows).toHaveLength(1);
   });
 
-  it("reactivating an already-enabled identity changes nothing and emits no identity.reactivated", async () => {
+  it("reactivating an already-enabled identity still records identity.reactivated", async () => {
     expect((await post(`${IDS(svcId)}/reactivate`)).status).toBe(200);
     const evt = await ctx.db.query(
       "SELECT id FROM audit_events WHERE event_type = 'identity.reactivated'",
     );
-    expect(evt.rows).toHaveLength(0);
+    expect(evt.rows).toHaveLength(1);
   });
 });
 

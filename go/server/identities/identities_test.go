@@ -207,10 +207,9 @@ func TestIssueAndRetireRaceToNoLiveCredential(t *testing.T) {
 	}
 }
 
-// Reactivating an already-enabled identity changes nothing and records no
-// identity.reactivated audit event; reactivating a retired one records it
-// once.
-func TestReactivateEnabledRecordsNoAuditEvent(t *testing.T) {
+// Reactivating an already-enabled identity still records identity.reactivated
+// so a consumed step-up approval stays audited.
+func TestReactivateEnabledRecordsAuditEvent(t *testing.T) {
 	wd := newWorld(t)
 	ctx := context.Background()
 	id := wd.create("svc")
@@ -220,8 +219,8 @@ func TestReactivateEnabledRecordsNoAuditEvent(t *testing.T) {
 	if _, err := identities.Reactivate(ctx, wd.w, wd.approvals, identities.Request{Principal: alice()}, wd.org, id, time.Now); err != nil {
 		t.Fatal(err)
 	}
-	if n := reactivatedEvents(); n != 0 {
-		t.Fatalf("reactivating an enabled identity recorded %d events, want 0", n)
+	if n := reactivatedEvents(); n != 1 {
+		t.Fatalf("reactivating an enabled identity recorded %d events, want 1", n)
 	}
 	if _, err := identities.Retire(ctx, wd.w, alice(), wd.org, id, time.Now); err != nil {
 		t.Fatal(err)
@@ -229,13 +228,13 @@ func TestReactivateEnabledRecordsNoAuditEvent(t *testing.T) {
 	if _, err := identities.Reactivate(ctx, wd.w, wd.approvals, identities.Request{Principal: alice()}, wd.org, id, time.Now); err != nil {
 		t.Fatal(err)
 	}
-	if n := reactivatedEvents(); n != 1 {
-		t.Fatalf("reactivating a retired identity recorded %d events, want 1", n)
+	if n := reactivatedEvents(); n != 2 {
+		t.Fatalf("reactivating a retired identity recorded %d events, want 2", n)
 	}
 	if _, err := identities.Reactivate(ctx, wd.w, wd.approvals, identities.Request{Principal: alice()}, wd.org, id, time.Now); err != nil {
 		t.Fatal(err)
 	}
-	if n := reactivatedEvents(); n != 1 {
-		t.Fatalf("reactivating an already-reactivated identity recorded %d events, want 1", n)
+	if n := reactivatedEvents(); n != 3 {
+		t.Fatalf("reactivating an already-reactivated identity recorded %d events, want 3", n)
 	}
 }

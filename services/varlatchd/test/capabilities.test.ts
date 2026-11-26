@@ -790,9 +790,6 @@ describe("the repair of earlier retirements", () => {
     const orgId = ((await ctx.db.query("SELECT id FROM organizations WHERE slug = 'acme'")).rows[0] as { id: string }).id;
     const cap = await (await issue()).json();
     await reactivate(agentId);
-    expect(await revokeCapabilitiesOfRetiredIdentities(ctx)).toBe(0);
-    expect(await live(cap.id)).toBe(true);
-    expect((await exercise(cap.id, cap.secret)).status).toBe(200);
     expect(
       (
         (
@@ -802,21 +799,13 @@ describe("the repair of earlier retirements", () => {
           )
         ).rows[0] as { n: number }
       ).n,
-    ).toBe(0);
-    // Even with a spurious identity.reactivated left by an earlier release on
-    // a never-retired identity, the repair keeps its live Capabilities.
-    await recordAuditEvent(ctx.db, {
-      eventType: "identity.reactivated",
-      decision: "info",
-      organizationId: orgId,
-      action: "identity.manage",
-      resource: { identityId: agentId },
-    });
+    ).toBe(1);
     expect(await revokeCapabilitiesOfRetiredIdentities(ctx)).toBe(0);
     expect(await live(cap.id)).toBe(true);
+    expect((await exercise(cap.id, cap.secret)).status).toBe(200);
     // After a genuine retirement and reactivation, a valid Capability issued
-    // afterwards survives a later spurious identity.reactivated; a Capability
-    // whose issuance raced while disabled and was then reactivated is revoked.
+    // afterwards survives a later redundant reactivation; a Capability whose
+    // issuance raced while disabled and was then reactivated is revoked.
     expect((await post(`/v1/organizations/acme/identities/${agentId}/retire`, {})).status).toBe(200);
     await imported(cap.id, "cap_raced_while_retired");
     await recordAuditEvent(ctx.db, {
@@ -828,13 +817,17 @@ describe("the repair of earlier retirements", () => {
     });
     await reactivate(agentId);
     const validAfter = await (await issue()).json();
-    await recordAuditEvent(ctx.db, {
-      eventType: "identity.reactivated",
-      decision: "info",
-      organizationId: orgId,
-      action: "identity.manage",
-      resource: { identityId: agentId },
-    });
+    await reactivate(agentId);
+    expect(
+      (
+        (
+          await ctx.db.query(
+            "SELECT count(*)::int AS n FROM audit_events WHERE event_type = 'identity.reactivated' AND resource->>'identityId' = $1",
+            [agentId],
+          )
+        ).rows[0] as { n: number }
+      ).n,
+    ).toBe(3);
     expect(await revokeCapabilitiesOfRetiredIdentities(ctx)).toBe(1);
     expect(await live("cap_raced_while_retired")).toBe(false);
     expect(await live(validAfter.id)).toBe(true);

@@ -300,11 +300,10 @@ func TestRevokeOfRetiredRetiredNow(t *testing.T) {
 }
 
 // TestRevokeOfRetiredKeepsLiveCapabilitiesAfterEnabledReactivate:
-// reactivating an already-enabled identity with live Capabilities neither
-// records identity.reactivated nor causes the repair to revoke them; nor
-// does a spurious identity.reactivated left by an earlier release on a
-// never-retired identity or after a post-reactivation issuance. A
-// Capability issued while the identity was retired and then reactivated
+// reactivating an already-enabled identity with live Capabilities still
+// records identity.reactivated, and the repair keeps its live Capabilities
+// both on a never-retired identity and after a post-reactivation issuance.
+// A Capability issued while the identity was retired and then reactivated
 // is still revoked.
 func TestRevokeOfRetiredKeepsLiveCapabilitiesAfterEnabledReactivate(t *testing.T) {
 	r := newRetireHarness(t)
@@ -325,27 +324,18 @@ func TestRevokeOfRetiredKeepsLiveCapabilitiesAfterEnabledReactivate(t *testing.T
 	}
 	liveCap := r.issue()
 	r.reactivate("agent")
+	if got := r.count("SELECT count(*) FROM audit_events WHERE event_type = 'identity.reactivated' AND json_extract(resource, '$.identityId') = ?", agent); got != 1 {
+		t.Fatalf("reactivating an enabled identity recorded %d identity.reactivated events, want 1", got)
+	}
 	if n, err := capabilities.RevokeOfRetired(context.Background(), r.w, r.now); err != nil || n != 0 {
 		t.Fatalf("revoked %d (%v) after reactivating an enabled identity, want 0", n, err)
 	}
 	if !r.live(liveCap) {
 		t.Fatal("reactivating an enabled identity caused the repair to revoke its live Capability")
 	}
-	if got := r.count("SELECT count(*) FROM audit_events WHERE event_type = 'identity.reactivated' AND json_extract(resource, '$.identityId') = ?", agent); got != 0 {
-		t.Fatalf("reactivating an enabled identity recorded %d identity.reactivated events, want 0", got)
-	}
-	// A spurious identity.reactivated recorded by an earlier release on a
-	// never-retired identity still leaves its live Capabilities live.
-	recordEvent("identity.reactivated", jsvalue.Object{{Key: "identityId", Value: agent}})
-	if n, err := capabilities.RevokeOfRetired(context.Background(), r.w, r.now); err != nil || n != 0 {
-		t.Fatalf("revoked %d (%v) for a never-retired identity with a spurious reactivation, want 0", n, err)
-	}
-	if !r.live(liveCap) {
-		t.Fatal("spurious reactivation on a never-retired identity revoked its live Capability")
-	}
 	// After a genuine retirement and reactivation, a valid Capability issued
-	// afterwards survives a later spurious identity.reactivated; a Capability
-	// whose issuance raced while retired and was then reactivated is revoked.
+	// afterwards survives a later redundant reactivation; a Capability whose
+	// issuance raced while retired and was then reactivated is revoked.
 	r.retire("agent")
 	// Simulate an issuance that raced while the Agent was retired (committed
 	// after identity.retired, before identity.reactivated).
@@ -353,7 +343,10 @@ func TestRevokeOfRetiredKeepsLiveCapabilitiesAfterEnabledReactivate(t *testing.T
 	recordEvent("capability.issued", jsvalue.Object{{Key: "capabilityId", Value: "cap_raced_while_retired"}})
 	r.reactivate("agent")
 	validAfter := r.issue()
-	recordEvent("identity.reactivated", jsvalue.Object{{Key: "identityId", Value: agent}})
+	r.reactivate("agent")
+	if got := r.count("SELECT count(*) FROM audit_events WHERE event_type = 'identity.reactivated' AND json_extract(resource, '$.identityId') = ?", agent); got != 3 {
+		t.Fatalf("recorded %d identity.reactivated events, want 3", got)
+	}
 	if n, err := capabilities.RevokeOfRetired(context.Background(), r.w, r.now); err != nil || n != 1 {
 		t.Fatalf("revoked %d (%v), want 1 (only the raced Capability)", n, err)
 	}
@@ -361,7 +354,7 @@ func TestRevokeOfRetiredKeepsLiveCapabilitiesAfterEnabledReactivate(t *testing.T
 		t.Fatal("the Capability issued while retired and then reactivated stayed live")
 	}
 	if !r.live(validAfter) {
-		t.Fatal("the Capability issued after reactivation was revoked by a later spurious reactivation")
+		t.Fatal("the Capability issued after reactivation was revoked by a later redundant reactivation")
 	}
 }
 

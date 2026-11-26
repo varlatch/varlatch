@@ -29,9 +29,9 @@ type Lifecycle struct {
 // whether a retirement of one of a Capability's identities (its Agent or
 // its Broker) ends it. The audit log's order decides, never timestamps: an
 // identity retired now ends it; one with no identity.retired in its history
-// keeps it (a suspension by an Organization's deletion records none, and an
-// earlier release's reactivation of an already-enabled identity is no
-// retirement); otherwise, with its latest identity.retired at latestRetired,
+// keeps it (a suspension by an Organization's deletion records none, and
+// reactivating an already-enabled identity is no retirement); otherwise,
+// with its latest identity.retired at latestRetired,
 // the Capability is ended when its capability.issued is not found (issued
 // == nil), precedes latestRetired, or has identity.retired as the
 // identity's latest lifecycle event at or before issued (atIssuance).
@@ -71,8 +71,8 @@ var afterBatch func(n int)
 // version 3. Each revocation is audited as retirement's own
 // (capability.revoked, reason identity-retired), with no actor. A
 // Capability this release issued is never ended unless a retirement
-// already revoked it (reactivating an already-enabled identity records no
-// event, and only a retirement bracketing the issuance ends it), so it is
+// already revoked it (only a retirement bracketing the issuance ends it,
+// never a redundant identity.reactivated), so it is
 // safe to run again; batches are safe one after another, since no
 // Capability is issued until the repair has run, a retirement since
 // revokes its identity's Capabilities itself, and a reactivation since
