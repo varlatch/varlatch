@@ -3,8 +3,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { issueCredential } from "../src/auth/credentials.js";
 import { createPgQuerier } from "../src/db/pg.js";
 import { runMigrations } from "../src/db/migrate.js";
-import { withTx, type PoolQuerier } from "../src/db/tx.js";
-import { CapabilityRepair, ISSUED_SQL, LIFECYCLE_SQL } from "../src/domain/capabilityrepair.js";
+import { withTx } from "../src/db/tx.js";
+import { CapabilityRepair, ISSUED_SQL, LIFECYCLE_SQL, LIVE_BATCH_SQL } from "../src/domain/capabilityrepair.js";
 import { consumeSetupGrant, ensureInstallation, issueBootstrapGrant } from "../src/domain/bootstrap.js";
 import type { AppCtx } from "../src/domain/ctx.js";
 import { retireIdentity } from "../src/domain/identities.js";
@@ -160,7 +160,7 @@ describe.skipIf(!url)("Capability issuance racing an identity's retirement on re
     expect(await liveCapabilitiesOf(brokerId)).toBe(0);
   });
 
-  it("an exercise whose snapshot opened before the repair completed is refused", async () => {
+  it("an exercise before the repair has run is refused (503), and the repair revokes the Capability", async () => {
     // A Capability an earlier release's retirement of its Agent left live;
     // the Agent was reactivated since, which made it work again.
     expect((await request(`${ENV_PATH}/values/STRIPE_KEY`, "PUT", { value: "sk_live_1" }, adminToken)).status).toBe(200);
@@ -182,30 +182,11 @@ describe.skipIf(!url)("Capability issuance racing an identity's retirement on re
     await db.query("UPDATE capabilities SET revoked_at = NULL WHERE id = $1", [cap.id]);
     expect((await request(`/v1/organizations/acme/identities/${agentId}/reactivate`, "POST", {}, adminToken)).status).toBe(200);
 
-    // The repair has not run; it completes right after the exercise's
-    // snapshot opened, before anything else the exercise reads.
+    // The repair has not run: Capabilities wait for it (503) before the
+    // exercise opens its snapshot or reads anything, so no window between
+    // a snapshot and the repair's commit is left to race.
     const repair = new CapabilityRepair(undefined, { log: () => {}, error: () => {} });
-    let armed = true;
-    let repairedDuringSnapshot = false;
-    const racing: PoolQuerier = {
-      query: (text, params) => db.query(text, params),
-      connect: async () => {
-        const client = await db.connect();
-        return {
-          release: (destroy?: boolean) => client.release(destroy),
-          query: async (text: string, params?: unknown[]) => {
-            const res = await client.query(text, params);
-            if (armed && text === "SELECT now() AS now") {
-              armed = false;
-              repairedDuringSnapshot = await repair.attempt(ctx);
-            }
-            return res;
-          },
-        };
-      },
-    };
-    const racingApp = buildApp({ ...ctx, db: racing, capabilityRepair: repair });
-    const res = await racingApp.request(`${ENV_PATH}/capabilities/${cap.id}/exercises`, {
+    const res = await buildApp({ ...ctx, capabilityRepair: repair }).request(`${ENV_PATH}/capabilities/${cap.id}/exercises`, {
       method: "POST",
       headers: { Authorization: `Bearer ${brokerToken}`, "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -215,9 +196,8 @@ describe.skipIf(!url)("Capability issuance racing an identity's retirement on re
       }),
     });
     const text = await res.text();
-    expect([403, 503], text).toContain(res.status);
+    expect(res.status, text).toBe(503);
     expect(text).not.toContain("sk_live_1");
-    if (repairedDuringSnapshot) expect(repair.ready).toBe(true);
     expect(
       (
         (
@@ -233,7 +213,7 @@ describe.skipIf(!url)("Capability issuance racing an identity's retirement on re
     expect(((await db.query("SELECT revoked_at FROM capabilities WHERE id = $1", [cap.id])).rows[0] as { revoked_at: unknown }).revoked_at).not.toBeNull();
   });
 
-  it("the repair reads the audit log by its indexes", async () => {
+  it("the repair reads the audit log, and its batches of Capabilities, by their indexes", async () => {
     const orgId = (await getOrganization(ctx, "acme")).id;
     const client = await db.connect();
     try {
@@ -248,6 +228,11 @@ describe.skipIf(!url)("Capability issuance racing an identity's retirement on re
           .join("\n");
       expect(await plan(LIFECYCLE_SQL)).toContain("audit_events_identity_lifecycle_idx");
       expect(await plan(ISSUED_SQL)).toContain("audit_events_capability_issued_idx");
+      // A batch is a range of the live Capabilities' index from the cursor
+      // on, never a sort of what remains of the Organization.
+      const batch = await plan(LIVE_BATCH_SQL.replace("$2", "'cap_x'").replace("$3", "200"));
+      expect(batch).toContain("capabilities_live_idx");
+      expect(batch).not.toMatch(/\bSort\b/);
     } finally {
       await client.query("ROLLBACK");
       client.release();

@@ -73,6 +73,15 @@ export const ISSUED_SQL = `SELECT c.id AS capability_id, e.event_order::text AS 
     ORDER BY event_order LIMIT 1) e`;
 
 /**
+ * The Organization's ($1) next at most $3 unexpired, unrevoked Capabilities
+ * after the id $2, locked: a range of capabilities_live_idx (migration 53)
+ * from the cursor on, with no sort of the rest.
+ */
+export const LIVE_BATCH_SQL = `SELECT id, agent_identity_id, broker_identity_id FROM capabilities
+       WHERE organization_id = $1 AND id > $2 AND revoked_at IS NULL AND expires_at > now()
+       ORDER BY id LIMIT $3 FOR NO KEY UPDATE`;
+
+/**
  * The repair of Capabilities a retirement left live, run before Capabilities
  * are issued or exercised (CapabilityRepair): before this release,
  * retirement did not revoke an identity's Capabilities, and issuance did not
@@ -135,9 +144,7 @@ async function repairBatch(
     await lockedQuery(
       db,
       { table: "capabilities", mode: "no key update" },
-      `SELECT id, agent_identity_id, broker_identity_id FROM capabilities
-       WHERE organization_id = $1 AND id > $2 AND revoked_at IS NULL AND expires_at > now()
-       ORDER BY id LIMIT $3 FOR NO KEY UPDATE`,
+      LIVE_BATCH_SQL,
       [organizationId, after, batchSize],
     )
   ).rows as { id: string; agent_identity_id: string; broker_identity_id: string }[];

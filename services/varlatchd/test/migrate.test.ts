@@ -693,7 +693,7 @@ it("adds the audit export tables, empty, and lets Approval Intents name audit_ex
   await expect(plan("aep_2", "manifest", false)).rejects.toThrow(/unique/);
 });
 
-it("adds the repair's two partial audit indexes, and nothing else", async () => {
+it("adds the repair's two partial audit indexes and its cursor's, and nothing else", async () => {
   await db.exec!("CREATE TABLE varlatch_migrations (id integer PRIMARY KEY, name text NOT NULL)");
   for (const migration of MIGRATIONS.filter(m => m.id <= 52)) {
     await db.exec!(migration.sql);
@@ -708,7 +708,8 @@ it("adds the repair's two partial audit indexes, and nothing else", async () => 
   expect((await runMigrations(db)).applied.map(m => m.id)).toEqual([53]);
   expect(await columns()).toEqual(columnsBefore);
   const added = (await indexes()).filter((i) => !indexesBefore.some((b) => b.indexname === i.indexname));
-  expect(added.map((i) => i.indexname)).toEqual(["audit_events_capability_issued_idx", "audit_events_identity_lifecycle_idx"]);
+  expect(added.map((i) => i.indexname)).toEqual(["audit_events_capability_issued_idx", "audit_events_identity_lifecycle_idx", "capabilities_live_idx"]);
   expect(added[0]!.indexdef).toMatch(/\(organization_id, \(\(resource ->> 'capabilityId'::text\)\), event_order\) WHERE \(event_type = 'capability\.issued'::text\)/);
   expect(added[1]!.indexdef).toMatch(/\(organization_id, \(\(resource ->> 'identityId'::text\)\), event_order\) WHERE \(event_type = ANY \(ARRAY\['identity\.retired'::text, 'identity\.reactivated'::text\]\)\)/);
+  expect(added[2]!.indexdef).toMatch(/ON public\.capabilities USING btree \(organization_id, id\) WHERE \(revoked_at IS NULL\)/);
 });

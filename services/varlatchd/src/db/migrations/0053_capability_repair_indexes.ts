@@ -8,9 +8,12 @@
  *   identity.reactivated in an Organization, in audit order (its latest is
  *   the last entry);
  * - audit_events_capability_issued_idx: a Capability's capability.issued in
- *   an Organization.
+ *   an Organization;
+ * - capabilities_live_idx: the unrevoked Capabilities by Organization and
+ *   id, the repair's batch cursor: each batch a range from the cursor on,
+ *   not a sort of the rest of the Organization.
  *
- * Both are partial: only those event types are indexed. Indexes only: no
+ * All are partial: only those event types, only unrevoked Capabilities. Indexes only: no
  * table, column, constraint or row changes, so what a backup or a
  * migration's bundle holds is the same with or without them.
  */
@@ -21,4 +24,7 @@ CREATE INDEX audit_events_identity_lifecycle_idx
 CREATE INDEX audit_events_capability_issued_idx
   ON audit_events (organization_id, (resource->>'capabilityId'), event_order)
   WHERE event_type = 'capability.issued';
+CREATE INDEX capabilities_live_idx
+  ON capabilities (organization_id, id)
+  WHERE revoked_at IS NULL;
 `;
