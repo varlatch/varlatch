@@ -696,6 +696,47 @@ describe("the repair of earlier retirements", () => {
     expect(await live(after.id)).toBe(true);
   });
 
+  it("finds an issuance however far its row's created_at is from it", async () => {
+    const { revokeCapabilitiesOfRetiredIdentities } = await import("../src/domain/capabilityrepair.js");
+    await grantUse();
+    expect((await post(`/v1/organizations/acme/identities/${agentId}/retire`, {})).status).toBe(200);
+    await reactivate(agentId);
+    const after = await (await issue()).json();
+    // An imported Capability's created_at, days from its capability.issued.
+    await ctx.db.query(
+      "UPDATE capabilities SET created_at = created_at - interval '3 days', expires_at = now() + interval '1 day' WHERE id = $1",
+      [after.id],
+    );
+    expect(await revokeCapabilitiesOfRetiredIdentities(ctx)).toBe(0);
+    expect(await live(after.id)).toBe(true);
+  });
+
+  it("works in bounded batches, each its own transaction", async () => {
+    const { revokeCapabilitiesOfRetiredIdentities } = await import("../src/domain/capabilityrepair.js");
+    await grantUse();
+    const ended: string[] = [];
+    for (let i = 0; i < 5; i++) ended.push((await (await issue()).json()).id);
+    await retireAsBefore(agentId, ...ended);
+    await reactivate(agentId);
+    const kept: string[] = [];
+    for (let i = 0; i < 3; i++) kept.push((await (await issue()).json()).id);
+    const statements: string[] = [];
+    const db = ctx.db;
+    const recording = {
+      query: (text: string, params?: unknown[]) => {
+        statements.push(text);
+        return db.query(text, params);
+      },
+    };
+    expect(await revokeCapabilitiesOfRetiredIdentities({ ...ctx, db: recording }, { batchSize: 2 })).toBe(5);
+    for (const id of ended) expect(await live(id)).toBe(false);
+    for (const id of kept) expect(await live(id)).toBe(true);
+    // Eight live Capabilities, two at a time: five transactions (the last
+    // one finds none), each locking at most two.
+    expect(statements.filter((t) => t === "BEGIN")).toHaveLength(5);
+    expect(statements.filter((t) => /FROM capabilities[\s\S]*LIMIT \$3 FOR NO KEY UPDATE/.test(t))).toHaveLength(5);
+  });
+
   it("reads a retirement however old, for a Capability that outlives a day", async () => {
     const { revokeCapabilitiesOfRetiredIdentities } = await import("../src/domain/capabilityrepair.js");
     await grantUse();
@@ -877,6 +918,19 @@ describe("Capabilities wait for the repair", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("starts at once, not after its first interval", async () => {
+    const { CapabilityRepair } = await import("../src/domain/capabilityrepair.js");
+    const repair = new CapabilityRepair(async () => 0);
+    const stop = repair.start({ ...ctx, capabilityRepair: repair }, 60_000);
+    try {
+      for (let i = 0; i < 100 && !repair.ready; i++) await new Promise((r) => setTimeout(r, 10));
+      expect(repair.ready).toBe(true);
+    } finally {
+      stop();
+    }
+  });
+
   it("survives an unreadable maintenance file: not ready, and tried again once it reads", async () => {
     const { mkdtempSync, rmSync, writeFileSync, unlinkSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");

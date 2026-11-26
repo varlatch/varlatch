@@ -153,14 +153,7 @@ async function serveCommand(): Promise<void> {
           "canary. Refusing to start with a wrong key (ADR-0019).",
       );
     }
-    // Before serving: Capabilities an earlier release's retirement left
-    // live are revoked. A failure leaves Capabilities refused, and is
-    // tried again below.
-    await capabilityRepair.attempt(ctx);
   }
-  // Behind a restore's gate, and after a failure, the repair is tried
-  // again until it has run; a restore makes it run again.
-  capabilityRepair.start(ctx);
   const issuer = config.issuer;
   const humanAuth = buildHumanAuth({
     ctx,
@@ -208,6 +201,12 @@ async function serveCommand(): Promise<void> {
   serve({ fetch: app.fetch, port: config.port }, (info) => {
     console.log(`varlatchd ${SERVER_VERSION} listening on :${info.port} (ordinary listener)`);
   });
+  // Once serving: Capabilities an earlier release's retirement left live
+  // are revoked, in bounded batches (capabilityrepair.ts); Capabilities
+  // answer 503 until it has run. Behind a restore's gate, and after a
+  // failure, it is tried again until it has run; a restore makes it run
+  // again.
+  capabilityRepair.start(ctx);
 
   if (config.convexUrl) {
     startMirrorLoop(ctx, { convexUrl: config.convexUrl, issuer }, undefined, undefined, new MirrorStatusReporter(stateDir()));
