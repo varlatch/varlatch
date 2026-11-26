@@ -87,6 +87,20 @@ func (a *Admission) Isolated() bool {
 	return a.closed()
 }
 
+// InvalidatesRepair reports whether a gate that may replace or bring in
+// rows is open (anything other than a backup capture, or an unreadable
+// gate file), or an upgrade holds this varlatchd. Nothing changes behind
+// a backup capture.
+func (a *Admission) InvalidatesRepair() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.unreadable || a.upgrading {
+		return true
+	}
+	g := a.active()
+	return g != nil && g.Kind != "capture"
+}
+
 // HoldForUpgrade admits nothing until EndUpgrade, beside whatever gate is
 // open: this process's only, never written. It begins before anything asks
 // to be admitted.

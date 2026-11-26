@@ -18,8 +18,8 @@ import (
 	"github.com/varlatch/varlatch/go/server/write"
 )
 
-// Lifecycle is an identity's latest identity.retired or
-// identity.reactivated, by audit order; nil when it has neither.
+// Lifecycle is an identity's identity.retired or identity.reactivated
+// event, by audit order.
 type Lifecycle struct {
 	EventType  string
 	EventOrder int64
@@ -28,22 +28,24 @@ type Lifecycle struct {
 // EndedByRetirement is endedByRetirement (domain/capabilityrepair.ts):
 // whether a retirement of one of a Capability's identities (its Agent or
 // its Broker) ends it. The audit log's order decides, never timestamps: an
-// identity retired now ends it; one with no retirement or reactivation in
-// its history keeps it (a suspension by an Organization's deletion records
-// neither); otherwise it is kept only when the identity's latest such event
-// is a reactivation that precedes the Capability's capability.issued
-// (issued, nil when not found).
-func EndedByRetirement(retiredNow bool, latest *Lifecycle, issued *int64) bool {
+// identity retired now ends it; one with no identity.retired in its history
+// keeps it (a suspension by an Organization's deletion records none, and an
+// earlier release's reactivation of an already-enabled identity is no
+// retirement); otherwise, with its latest identity.retired at latestRetired,
+// the Capability is ended when its capability.issued is not found (issued
+// == nil), precedes latestRetired, or has identity.retired as the
+// identity's latest lifecycle event at or before issued (atIssuance).
+func EndedByRetirement(retiredNow bool, latestRetired *int64, issued *int64, atIssuance *Lifecycle) bool {
 	if retiredNow {
 		return true
 	}
-	if latest == nil {
+	if latestRetired == nil {
 		return false
 	}
-	if latest.EventType == "identity.retired" {
+	if issued == nil || *issued < *latestRetired {
 		return true
 	}
-	return issued == nil || *issued < latest.EventOrder
+	return atIssuance != nil && atIssuance.EventType == "identity.retired"
 }
 
 // RepairBatch is how many Capabilities one write job of RevokeOfRetired
@@ -68,12 +70,14 @@ var afterBatch func(n int)
 // may be older than what it ends. Its reads go by the indexes of schema
 // version 3. Each revocation is audited as retirement's own
 // (capability.revoked, reason identity-retired), with no actor. A
-// Capability this release issued is never ended unless a retirement already
-// revoked it, so it is safe to run again; batches are safe one after
-// another, since no Capability is issued until the repair has run, a
-// retirement since revokes its identity's Capabilities itself, and a
-// reactivation since leaves the latest event a reactivation after the
-// issuance, which still ends it. It returns how many it revoked.
+// Capability this release issued is never ended unless a retirement
+// already revoked it (reactivating an already-enabled identity records no
+// event, and only a retirement bracketing the issuance ends it), so it is
+// safe to run again; batches are safe one after another, since no
+// Capability is issued until the repair has run, a retirement since
+// revokes its identity's Capabilities itself, and a reactivation since
+// commits after the issuance and cannot clear a retirement before or at
+// issuance. It returns how many it revoked.
 func RevokeOfRetired(ctx context.Context, w *write.Writer, now func() time.Time) (int, error) {
 	return RevokeOfRetiredInBatches(ctx, w, now, RepairBatch)
 }
@@ -122,8 +126,8 @@ func repairBatch(ctx context.Context, tx *storage.Tx, at int64, afterOrg, afterI
 	full = len(caps) == batch
 	type key struct{ org, identity string }
 	retiredNow := map[string]bool{}
-	latest := map[key]*Lifecycle{}
-	identity := func(org, id string) (bool, *Lifecycle, error) {
+	latestRetired := map[key]*int64{}
+	identity := func(org, id string) (bool, *int64, error) {
 		if _, ok := retiredNow[id]; !ok {
 			n, err := q.IdentityRetiredNow(ctx, id)
 			if err != nil {
@@ -131,21 +135,24 @@ func repairBatch(ctx context.Context, tx *storage.Tx, at int64, afterOrg, afterI
 			}
 			retiredNow[id] = n > 0
 		}
+		if retiredNow[id] {
+			return true, nil, nil
+		}
 		k := key{org, id}
-		if _, ok := latest[k]; !ok {
-			row, err := q.LatestIdentityLifecycle(ctx, query.LatestIdentityLifecycleParams{
+		if _, ok := latestRetired[k]; !ok {
+			order, err := q.LatestIdentityRetirement(ctx, query.LatestIdentityRetirementParams{
 				OrganizationID: sql.NullString{String: org, Valid: true}, IdentityID: sql.NullString{String: id, Valid: true},
 			})
 			switch {
 			case errors.Is(err, sql.ErrNoRows):
-				latest[k] = nil
+				latestRetired[k] = nil
 			case err != nil:
 				return false, nil, err
 			default:
-				latest[k] = &Lifecycle{EventType: row.EventType, EventOrder: row.EventOrder}
+				latestRetired[k] = &order
 			}
 		}
-		return retiredNow[id], latest[k], nil
+		return false, latestRetired[k], nil
 	}
 	useAction := "secret.use"
 	for _, c := range caps {
@@ -153,24 +160,40 @@ func repairBatch(ctx context.Context, tx *storage.Tx, at int64, afterOrg, afterI
 		issuedRead := false
 		ended := ""
 		for _, id := range []string{c.AgentIdentityID, c.BrokerIdentityID} {
-			retired, lifecycle, err := identity(c.OrganizationID, id)
+			retired, retiredOrder, err := identity(c.OrganizationID, id)
 			if err != nil {
 				return 0, "", "", false, err
 			}
-			if !issuedRead && !retired && lifecycle != nil && lifecycle.EventType == "identity.reactivated" {
-				issuedRead = true
-				order, err := q.CapabilityIssuedOrder(ctx, query.CapabilityIssuedOrderParams{
-					OrganizationID: sql.NullString{String: c.OrganizationID, Valid: true},
-					CapabilityID:   sql.NullString{String: c.ID, Valid: true},
-				})
-				if err != nil && !errors.Is(err, sql.ErrNoRows) {
-					return 0, "", "", false, err
+			var atIssuance *Lifecycle
+			if !retired && retiredOrder != nil {
+				if !issuedRead {
+					issuedRead = true
+					order, err := q.CapabilityIssuedOrder(ctx, query.CapabilityIssuedOrderParams{
+						OrganizationID: sql.NullString{String: c.OrganizationID, Valid: true},
+						CapabilityID:   sql.NullString{String: c.ID, Valid: true},
+					})
+					if err != nil && !errors.Is(err, sql.ErrNoRows) {
+						return 0, "", "", false, err
+					}
+					if err == nil {
+						issued = &order
+					}
 				}
-				if err == nil {
-					issued = &order
+				if issued != nil && *issued >= *retiredOrder {
+					row, err := q.LatestIdentityLifecycleAt(ctx, query.LatestIdentityLifecycleAtParams{
+						OrganizationID: sql.NullString{String: c.OrganizationID, Valid: true},
+						IdentityID:     sql.NullString{String: id, Valid: true},
+						AtOrder:        *issued,
+					})
+					if err != nil && !errors.Is(err, sql.ErrNoRows) {
+						return 0, "", "", false, err
+					}
+					if err == nil {
+						atIssuance = &Lifecycle{EventType: row.EventType, EventOrder: row.EventOrder}
+					}
 				}
 			}
-			if EndedByRetirement(retired, lifecycle, issued) {
+			if EndedByRetirement(retired, retiredOrder, issued, atIssuance) {
 				ended = id
 				break
 			}
@@ -287,17 +310,18 @@ func (r *Repair) Attempt(ctx context.Context, w *write.Writer, enter func() (fun
 	return true
 }
 
-// Loop is Attempt at once, then every interval until ctx ends: isolated
-// (a gate open, an upgrade's hold) makes it not ready first, since a
-// migration's transfer behind a gate brings rows the repair has not seen.
-// varlatchd runs it once its listener serves, so a long repair never holds
-// the start: Capabilities answer 503 until it has run, and everything else
-// is served meanwhile.
-func (r *Repair) Loop(ctx context.Context, every time.Duration, w *write.Writer, enter func() (func(), bool), isolated func() bool, now func() time.Time, log *slog.Logger) {
+// Loop is Attempt at once, then every interval until ctx ends: invalidates
+// (a non-capture gate open, an unreadable gate, or an upgrade's hold)
+// makes it not ready first, since a restore or migration behind a gate may
+// replace or bring in rows the repair has not seen; nothing changes behind
+// a backup capture. varlatchd runs it once its listener serves, so a long
+// repair never holds the start: Capabilities answer 503 until it has run,
+// and everything else is served meanwhile.
+func (r *Repair) Loop(ctx context.Context, every time.Duration, w *write.Writer, enter func() (func(), bool), invalidates func() bool, now func() time.Time, log *slog.Logger) {
 	t := time.NewTicker(every)
 	defer t.Stop()
 	for {
-		if isolated() {
+		if invalidates() {
 			r.Invalidate()
 		} else {
 			r.Attempt(ctx, w, enter, now, log)

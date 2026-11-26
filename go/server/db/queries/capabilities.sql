@@ -60,13 +60,25 @@ LIMIT sqlc.arg(batch);
 -- (disabled, not by an Organization's deletion).
 SELECT count(*) FROM identities WHERE id = ? AND disabled = 1 AND suspended_by_deletion IS NULL;
 
--- name: LatestIdentityLifecycle :one
--- capabilities.RevokeOfRetired: the identity's latest identity.retired or
--- identity.reactivated, by audit order: the last entry of
--- audit_events_identity_lifecycle_idx for it.
-SELECT event_type, event_order FROM audit_events
-WHERE organization_id = sqlc.arg(organization_id) AND event_type IN ('identity.retired', 'identity.reactivated')
+-- name: LatestIdentityRetirement :one
+-- capabilities.RevokeOfRetired: the identity's latest identity.retired,
+-- by audit order, through audit_events_identity_lifecycle_idx.
+SELECT event_order FROM audit_events
+WHERE organization_id = sqlc.arg(organization_id)
+  AND event_type IN ('identity.retired', 'identity.reactivated')
+  AND event_type = 'identity.retired'
   AND json_extract(resource, '$.identityId') = sqlc.arg(identity_id)
+ORDER BY event_order DESC LIMIT 1;
+
+-- name: LatestIdentityLifecycleAt :one
+-- capabilities.RevokeOfRetired: the identity's latest identity.retired or
+-- identity.reactivated at or before at_order, by audit order, through
+-- audit_events_identity_lifecycle_idx.
+SELECT event_type, event_order FROM audit_events
+WHERE organization_id = sqlc.arg(organization_id)
+  AND event_type IN ('identity.retired', 'identity.reactivated')
+  AND json_extract(resource, '$.identityId') = sqlc.arg(identity_id)
+  AND event_order <= sqlc.arg(at_order)
 ORDER BY event_order DESC LIMIT 1;
 
 -- name: CapabilityIssuedOrder :one

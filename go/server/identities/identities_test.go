@@ -206,3 +206,36 @@ func TestIssueAndRetireRaceToNoLiveCredential(t *testing.T) {
 		}
 	}
 }
+
+// Reactivating an already-enabled identity changes nothing and records no
+// identity.reactivated audit event; reactivating a retired one records it
+// once.
+func TestReactivateEnabledRecordsNoAuditEvent(t *testing.T) {
+	wd := newWorld(t)
+	ctx := context.Background()
+	id := wd.create("svc")
+	reactivatedEvents := func() int {
+		return wd.count(`SELECT count(*) FROM audit_events WHERE event_type = 'identity.reactivated' AND json_extract(resource, '$.identityId') = ?`, id)
+	}
+	if _, err := identities.Reactivate(ctx, wd.w, wd.approvals, identities.Request{Principal: alice()}, wd.org, id, time.Now); err != nil {
+		t.Fatal(err)
+	}
+	if n := reactivatedEvents(); n != 0 {
+		t.Fatalf("reactivating an enabled identity recorded %d events, want 0", n)
+	}
+	if _, err := identities.Retire(ctx, wd.w, alice(), wd.org, id, time.Now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := identities.Reactivate(ctx, wd.w, wd.approvals, identities.Request{Principal: alice()}, wd.org, id, time.Now); err != nil {
+		t.Fatal(err)
+	}
+	if n := reactivatedEvents(); n != 1 {
+		t.Fatalf("reactivating a retired identity recorded %d events, want 1", n)
+	}
+	if _, err := identities.Reactivate(ctx, wd.w, wd.approvals, identities.Request{Principal: alice()}, wd.org, id, time.Now); err != nil {
+		t.Fatal(err)
+	}
+	if n := reactivatedEvents(); n != 1 {
+		t.Fatalf("reactivating an already-reactivated identity recorded %d events, want 1", n)
+	}
+}

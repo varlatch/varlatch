@@ -148,31 +148,57 @@ func (q *Queries) InsertCapability(ctx context.Context, arg InsertCapabilityPara
 	return err
 }
 
-const latestIdentityLifecycle = `-- name: LatestIdentityLifecycle :one
+const latestIdentityLifecycleAt = `-- name: LatestIdentityLifecycleAt :one
 SELECT event_type, event_order FROM audit_events
-WHERE organization_id = ?1 AND event_type IN ('identity.retired', 'identity.reactivated')
+WHERE organization_id = ?1
+  AND event_type IN ('identity.retired', 'identity.reactivated')
   AND json_extract(resource, '$.identityId') = ?2
+  AND event_order <= ?3
 ORDER BY event_order DESC LIMIT 1
 `
 
-type LatestIdentityLifecycleParams struct {
+type LatestIdentityLifecycleAtParams struct {
 	OrganizationID sql.NullString
 	IdentityID     sql.NullString
+	AtOrder        int64
 }
 
-type LatestIdentityLifecycleRow struct {
+type LatestIdentityLifecycleAtRow struct {
 	EventType  string
 	EventOrder int64
 }
 
 // capabilities.RevokeOfRetired: the identity's latest identity.retired or
-// identity.reactivated, by audit order: the last entry of
-// audit_events_identity_lifecycle_idx for it.
-func (q *Queries) LatestIdentityLifecycle(ctx context.Context, arg LatestIdentityLifecycleParams) (LatestIdentityLifecycleRow, error) {
-	row := q.db.QueryRowContext(ctx, latestIdentityLifecycle, arg.OrganizationID, arg.IdentityID)
-	var i LatestIdentityLifecycleRow
+// identity.reactivated at or before at_order, by audit order, through
+// audit_events_identity_lifecycle_idx.
+func (q *Queries) LatestIdentityLifecycleAt(ctx context.Context, arg LatestIdentityLifecycleAtParams) (LatestIdentityLifecycleAtRow, error) {
+	row := q.db.QueryRowContext(ctx, latestIdentityLifecycleAt, arg.OrganizationID, arg.IdentityID, arg.AtOrder)
+	var i LatestIdentityLifecycleAtRow
 	err := row.Scan(&i.EventType, &i.EventOrder)
 	return i, err
+}
+
+const latestIdentityRetirement = `-- name: LatestIdentityRetirement :one
+SELECT event_order FROM audit_events
+WHERE organization_id = ?1
+  AND event_type IN ('identity.retired', 'identity.reactivated')
+  AND event_type = 'identity.retired'
+  AND json_extract(resource, '$.identityId') = ?2
+ORDER BY event_order DESC LIMIT 1
+`
+
+type LatestIdentityRetirementParams struct {
+	OrganizationID sql.NullString
+	IdentityID     sql.NullString
+}
+
+// capabilities.RevokeOfRetired: the identity's latest identity.retired,
+// by audit order, through audit_events_identity_lifecycle_idx.
+func (q *Queries) LatestIdentityRetirement(ctx context.Context, arg LatestIdentityRetirementParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, latestIdentityRetirement, arg.OrganizationID, arg.IdentityID)
+	var event_order int64
+	err := row.Scan(&event_order)
+	return event_order, err
 }
 
 const listCapabilities = `-- name: ListCapabilities :many

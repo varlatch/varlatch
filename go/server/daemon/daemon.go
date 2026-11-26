@@ -699,11 +699,13 @@ func serve(opts Options, h *hooks) int {
 	// has run, inside the maintenance admission. It starts once the
 	// listener serves, in bounded write jobs, so it never holds the start;
 	// then every two seconds while it has not run: behind a gate, an
-	// upgrade's hold or after a failure. A gate makes it run again.
+	// upgrade's hold or after a failure. A non-capture gate (a restore or
+	// migration, or an unreadable gate) or an upgrade's hold makes it run
+	// again; nothing changes behind a backup capture.
 	repairDone := make(chan struct{})
 	go func() {
 		defer close(repairDone)
-		capRepair.Loop(ctx, 2*time.Second, writer, admission.Enter, admission.Isolated, time.Now, log)
+		capRepair.Loop(ctx, 2*time.Second, writer, admission.Enter, admission.InvalidatesRepair, time.Now, log)
 	}()
 	defer func() { cancel(); <-repairDone }()
 	var publicServers []*http.Server

@@ -41,7 +41,8 @@ func TestRepairQueriesUseTheirIndexes(t *testing.T) {
 		query, index string
 		args         []any
 	}{
-		{"LatestIdentityLifecycle", "audit_events_identity_lifecycle_idx", []any{"org_a", "idn_a"}},
+		{"LatestIdentityRetirement", "audit_events_identity_lifecycle_idx", []any{"org_a", "idn_a"}},
+		{"LatestIdentityLifecycleAt", "audit_events_identity_lifecycle_idx", []any{"org_a", "idn_a", int64(10)}},
 		{"CapabilityIssuedOrder", "audit_events_capability_issued_idx", []any{"org_a", "cap_a"}},
 		{"LiveCapabilitiesForRepair", "capabilities_live_idx", []any{int64(1), "org_a", "cap_a", int64(200)}},
 	} {

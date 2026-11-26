@@ -9,13 +9,19 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/varlatch/varlatch/go/lib/backup"
+	"github.com/varlatch/varlatch/go/lib/storage"
+	"github.com/varlatch/varlatch/go/server/audit"
 	"github.com/varlatch/varlatch/go/server/capabilities"
 	"github.com/varlatch/varlatch/go/server/httpserver"
+	"github.com/varlatch/varlatch/go/server/jsvalue"
 	"github.com/varlatch/varlatch/go/server/maintenance"
 	"github.com/varlatch/varlatch/go/server/write"
 )
@@ -293,6 +299,72 @@ func TestRevokeOfRetiredRetiredNow(t *testing.T) {
 	}
 }
 
+// TestRevokeOfRetiredKeepsLiveCapabilitiesAfterEnabledReactivate:
+// reactivating an already-enabled identity with live Capabilities neither
+// records identity.reactivated nor causes the repair to revoke them; nor
+// does a spurious identity.reactivated left by an earlier release on a
+// never-retired identity or after a post-reactivation issuance. A
+// Capability issued while the identity was retired and then reactivated
+// is still revoked.
+func TestRevokeOfRetiredKeepsLiveCapabilitiesAfterEnabledReactivate(t *testing.T) {
+	r := newRetireHarness(t)
+	ctx := audit.WithClock(context.Background(), r.now)
+	org := r.fill("{org:cap}")
+	agent := r.fill("{idn:agent}")
+	recordEvent := func(eventType string, resource jsvalue.Object) {
+		t.Helper()
+		action := "identity.manage"
+		if err := r.w.Job(ctx, nil, func(ctx context.Context, tx *storage.Tx) error {
+			_, err := audit.Record(ctx, tx, audit.Event{
+				Type: eventType, Decision: audit.Info, OrganizationID: &org, Action: &action, Resource: resource,
+			})
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	liveCap := r.issue()
+	r.reactivate("agent")
+	if n, err := capabilities.RevokeOfRetired(context.Background(), r.w, r.now); err != nil || n != 0 {
+		t.Fatalf("revoked %d (%v) after reactivating an enabled identity, want 0", n, err)
+	}
+	if !r.live(liveCap) {
+		t.Fatal("reactivating an enabled identity caused the repair to revoke its live Capability")
+	}
+	if got := r.count("SELECT count(*) FROM audit_events WHERE event_type = 'identity.reactivated' AND json_extract(resource, '$.identityId') = ?", agent); got != 0 {
+		t.Fatalf("reactivating an enabled identity recorded %d identity.reactivated events, want 0", got)
+	}
+	// A spurious identity.reactivated recorded by an earlier release on a
+	// never-retired identity still leaves its live Capabilities live.
+	recordEvent("identity.reactivated", jsvalue.Object{{Key: "identityId", Value: agent}})
+	if n, err := capabilities.RevokeOfRetired(context.Background(), r.w, r.now); err != nil || n != 0 {
+		t.Fatalf("revoked %d (%v) for a never-retired identity with a spurious reactivation, want 0", n, err)
+	}
+	if !r.live(liveCap) {
+		t.Fatal("spurious reactivation on a never-retired identity revoked its live Capability")
+	}
+	// After a genuine retirement and reactivation, a valid Capability issued
+	// afterwards survives a later spurious identity.reactivated; a Capability
+	// whose issuance raced while retired and was then reactivated is revoked.
+	r.retire("agent")
+	// Simulate an issuance that raced while the Agent was retired (committed
+	// after identity.retired, before identity.reactivated).
+	r.imported(liveCap, "cap_raced_while_retired", 1)
+	recordEvent("capability.issued", jsvalue.Object{{Key: "capabilityId", Value: "cap_raced_while_retired"}})
+	r.reactivate("agent")
+	validAfter := r.issue()
+	recordEvent("identity.reactivated", jsvalue.Object{{Key: "identityId", Value: agent}})
+	if n, err := capabilities.RevokeOfRetired(context.Background(), r.w, r.now); err != nil || n != 1 {
+		t.Fatalf("revoked %d (%v), want 1 (only the raced Capability)", n, err)
+	}
+	if r.live("cap_raced_while_retired") {
+		t.Fatal("the Capability issued while retired and then reactivated stayed live")
+	}
+	if !r.live(validAfter) {
+		t.Fatal("the Capability issued after reactivation was revoked by a later spurious reactivation")
+	}
+}
+
 func admitted() (func(), bool) { return func() {}, true }
 
 // TestCapabilitiesWaitForTheRepair: issuance and exercise answer 503
@@ -364,7 +436,9 @@ func TestRepairLoopStartsAtOnce(t *testing.T) {
 
 // TestRepairWaitsForTheAdmission: the repair runs inside the maintenance
 // admission: not while an upgrade holds varlatchd, at once when it ends;
-// a gate makes it wait and run again.
+// a backup capture does not invalidate a ready repair (nothing changes
+// behind a capture), while a non-capture gate (a migration or restore)
+// makes it wait and run again.
 func TestRepairWaitsForTheAdmission(t *testing.T) {
 	r := newRetireHarness(t)
 	admission := maintenance.Open(t.TempDir(), nil)
@@ -382,7 +456,7 @@ func TestRepairWaitsForTheAdmission(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		repair.Loop(ctx, 5*time.Millisecond, r.w, admission.Enter, admission.Isolated, r.now, log)
+		repair.Loop(ctx, 5*time.Millisecond, r.w, admission.Enter, admission.InvalidatesRepair, r.now, log)
 	}()
 	defer func() { cancel(); <-done }()
 	time.Sleep(30 * time.Millisecond)
@@ -403,16 +477,116 @@ func TestRepairWaitsForTheAdmission(t *testing.T) {
 	if runs.Load() != 1 {
 		t.Fatalf("ran %d times, want 1", runs.Load())
 	}
+	// A backup capture changes nothing: it must not invalidate the repair or
+	// trigger another run once it ends.
 	g, err := admission.Begin(time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
-	wait(false)
+	time.Sleep(30 * time.Millisecond)
+	if !repair.Ready() {
+		t.Fatal("a backup capture invalidated a ready repair")
+	}
 	if err := admission.End(g.ID); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(30 * time.Millisecond)
+	if !repair.Ready() || runs.Load() != 1 {
+		t.Fatalf("after a backup capture: ready %v, runs %d, want true and 1", repair.Ready(), runs.Load())
+	}
+	// An unready repair still waits behind a capture gate (Enter refuses)
+	// and runs once the capture ends.
+	g2, err := admission.Begin(time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repair.Invalidate()
+	time.Sleep(30 * time.Millisecond)
+	if repair.Ready() || runs.Load() != 1 {
+		t.Fatalf("an unready repair ran behind a capture gate: ready %v, runs %d", repair.Ready(), runs.Load())
+	}
+	if err := admission.End(g2.ID); err != nil {
 		t.Fatal(err)
 	}
 	wait(true)
 	if runs.Load() != 2 {
-		t.Fatalf("ran %d times, want 2", runs.Load())
+		t.Fatalf("ran %d times after unready capture ended, want 2", runs.Load())
+	}
+	// A non-capture gate (migration barrier) invalidates the repair and
+	// runs it again once released.
+	if _, err := admission.BeginBarrier("mig_aaaaaaaaaaaaaaaaaaaaaaaaaa"); err != nil {
+		t.Fatal(err)
+	}
+	wait(false)
+	if err := admission.ReleaseBarrier("mig_aaaaaaaaaaaaaaaaaaaaaaaaaa"); err != nil {
+		t.Fatal(err)
+	}
+	wait(true)
+	if runs.Load() != 3 {
+		t.Fatalf("ran %d times, want 3", runs.Load())
+	}
+}
+
+// TestRepairSurvivesUnreadableAdmission: an unreadable maintenance gate file
+// keeps Capabilities waiting (never admits an attempt and invalidates a
+// ready repair), and once the file is fixed and reopened the repair runs.
+func TestRepairSurvivesUnreadableAdmission(t *testing.T) {
+	r := newRetireHarness(t)
+	dir := t.TempDir()
+	gatePath := filepath.Join(dir, backup.GateFile)
+	if err := os.WriteFile(gatePath, []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	admission := maintenance.Open(dir, nil)
+	if !admission.InvalidatesRepair() {
+		t.Fatal("an unreadable maintenance file did not invalidate the repair")
+	}
+	var runs atomic.Int32
+	repair := &capabilities.Repair{Run: func(ctx context.Context, w *write.Writer, now func() time.Time) (int, error) {
+		runs.Add(1)
+		return 0, nil
+	}}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	if repair.Attempt(context.Background(), r.w, admission.Enter, r.now, log) || runs.Load() != 0 || repair.Ready() {
+		t.Fatalf("attempt under unreadable admission: ready %v, runs %d, want false and 0", repair.Ready(), runs.Load())
+	}
+	// Even if ready beforehand, the loop under an unreadable admission
+	// invalidates it and never runs while the file cannot be read.
+	if !repair.Attempt(context.Background(), r.w, admitted, r.now, log) || !repair.Ready() {
+		t.Fatal("setup: could not mark repair ready")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		repair.Loop(ctx, 5*time.Millisecond, r.w, admission.Enter, admission.InvalidatesRepair, r.now, log)
+	}()
+	for i := 0; i < 400 && repair.Ready(); i++ {
+		time.Sleep(5 * time.Millisecond)
+	}
+	time.Sleep(30 * time.Millisecond)
+	cancel()
+	<-done
+	if repair.Ready() || runs.Load() != 1 {
+		t.Fatalf("under unreadable admission: ready %v, runs %d, want false and 1", repair.Ready(), runs.Load())
+	}
+	// Once the unreadable gate file is removed and admission reopens, the
+	// repair runs and becomes ready.
+	if err := os.Remove(gatePath); err != nil {
+		t.Fatal(err)
+	}
+	clean := maintenance.Open(dir, nil)
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	done2 := make(chan struct{})
+	go func() {
+		defer close(done2)
+		repair.Loop(ctx2, 5*time.Millisecond, r.w, clean.Enter, clean.InvalidatesRepair, r.now, log)
+	}()
+	defer func() { cancel2(); <-done2 }()
+	for i := 0; i < 400 && !repair.Ready(); i++ {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !repair.Ready() || runs.Load() != 2 {
+		t.Fatalf("after removing unreadable gate: ready %v, runs %d, want true and 2", repair.Ready(), runs.Load())
 	}
 }
