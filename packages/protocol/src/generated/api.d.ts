@@ -1224,6 +1224,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/me/sessions/sign-out-others": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Sign out every other browser of the caller: end each of the caller's browser sessions but the one the presenting browser bearer comes from. A session's browser bearers are revoked with it, each a credential.revoked event (reason session-ended), so a signed-out browser cannot mint another; one whose bearers all expired is signed out too. CLI credentials, including those from the browser hand-off, and other tokens are left alone: DELETE /me/credentials/{credential} revokes them. Restricted to browser session bearers. */
+        post: operations["signOutOtherSessions"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/me/passkeys": {
         parameters: {
             query?: never;
@@ -6831,6 +6848,31 @@ export interface operations {
                     "application/json": components["schemas"]["IssuedCliCredential"];
                 };
             };
+            default: components["responses"]["Error"];
+        };
+    };
+    signOutOtherSessions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The other browser sessions were ended */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description How many browser sessions were ended */
+                        endedSessions: number;
+                    };
+                };
+            };
+            429: components["responses"]["RequestWindow"];
             default: components["responses"]["Error"];
         };
     };

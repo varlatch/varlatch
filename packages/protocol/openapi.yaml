@@ -2699,6 +2699,36 @@ paths:
               schema: { $ref: "#/components/schemas/IssuedCliCredential" }
         default: { $ref: "#/components/responses/Error" }
 
+  /me/sessions/sign-out-others:
+    post:
+      tags: [identities]
+      operationId: signOutOtherSessions
+      summary: >
+        Sign out every other browser of the caller: end each of the caller's
+        browser sessions but the one the presenting browser bearer comes
+        from. A session's browser bearers are revoked with it, each a
+        credential.revoked event (reason session-ended), so a signed-out
+        browser cannot mint another; one whose bearers all expired is
+        signed out too. CLI credentials, including those from the browser
+        hand-off, and other tokens are left alone: DELETE
+        /me/credentials/{credential} revokes them. Restricted to browser
+        session bearers.
+      responses:
+        "200":
+          description: The other browser sessions were ended
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [endedSessions]
+                properties:
+                  endedSessions:
+                    type: integer
+                    minimum: 0
+                    description: How many browser sessions were ended
+        "429": { $ref: "#/components/responses/RequestWindow" }
+        default: { $ref: "#/components/responses/Error" }
+
   /me/passkeys:
     get:
       tags: [identities]

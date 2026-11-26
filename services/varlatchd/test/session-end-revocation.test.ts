@@ -250,3 +250,56 @@ describe("revoking a browser credential from Active sessions (DELETE /v1/me/cred
     expect(await sessions()).toEqual(["ses_a", "ses_b"]);
   });
 });
+
+describe("signing out the other browsers (POST /v1/me/sessions/sign-out-others)", () => {
+  let current: { identityId: string; sessionId: string } | null;
+  let app: ReturnType<typeof buildApp>;
+  beforeEach(async () => {
+    current = null;
+    const humanAuth: HumanAuth = {
+      handler: async () => new Response(null, { status: 404 }),
+      sessionFor: async () => current,
+      close: async () => undefined,
+    };
+    app = buildApp(ctx, { humanAuth });
+    for (const id of ["ses_c", "ses_d"]) await session(id);
+  });
+  const mint = async (sessionId: string) => {
+    current = { identityId: personId, sessionId };
+    const res = await app.request("/auth/varlatch-token", { method: "POST" });
+    expect(res.status).toBe(200);
+    return ((await res.json()) as { token: string }).token;
+  };
+  const canMint = async (sessionId: string) => {
+    current = { identityId: personId, sessionId };
+    return (await app.request("/auth/varlatch-token", { method: "POST" })).status;
+  };
+  const signOutOthers = (as: string) =>
+    app.request("/v1/me/sessions/sign-out-others", { method: "POST", headers: { Authorization: `Bearer ${as}` } });
+  const sessions = async () => ((await ctx.db.query(`SELECT id FROM "session" ORDER BY id`)).rows as { id: string }[]).map((r) => r.id);
+
+  it("ends every other browser session, minted or not, once each, and keeps this browser and the CLI", async () => {
+    // ses_b minted a bearer; ses_c never did; ses_d's only bearer went to the CLI handoff.
+    const theirs = await mint("ses_b");
+    const handoff = await issueCredential(ctx.db, { identityId: personId, kind: "cli", authSessionId: "ses_d" });
+    const cli = await issueCredential(ctx.db, { identityId: personId, kind: "cli" });
+    const mine = await mint("ses_a");
+    const before = (await revocations()).length;
+
+    expect((await signOutOthers(cli.token)).status).toBe(403);
+    expect((await signOutOthers(handoff.token)).status).toBe(403);
+    const res = await signOutOthers(mine);
+    expect(res.status, await res.clone().text()).toBe(200);
+    expect(await res.json()).toEqual({ endedSessions: 3 });
+
+    expect(await sessions()).toEqual(["ses_a"]);
+    for (const id of ["ses_b", "ses_c", "ses_d"]) expect(await canMint(id)).toBe(401);
+    expect(await works(theirs)).toBe(false);
+    for (const token of [mine, handoff.token, cli.token]) expect(await works(token)).toBe(true);
+    expect(await canMint("ses_a")).toBe(200);
+    // One credential.revoked: ses_b's live bearer, by the session-end trigger.
+    const lines = (await revocations()).slice(before);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({ metadata: { kind: "browser", reason: "session-ended" } });
+  });
+});
