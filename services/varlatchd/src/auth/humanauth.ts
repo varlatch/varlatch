@@ -2,10 +2,12 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { hkdfSync } from "node:crypto";
 import { betterAuth } from "better-auth";
+import { getSessionCookie } from "better-auth/cookies";
 import { passkey } from "@better-auth/passkey";
 import { APIError, createAuthMiddleware, isAPIError } from "better-auth/api";
 import pg from "pg";
 import type { Querier } from "../db/migrate.js";
+import { withTx } from "../db/tx.js";
 import type { AppCtx } from "../domain/ctx.js";
 import { consumeSetupGrant, peekSetupGrant } from "../domain/bootstrap.js";
 import { DomainError } from "../domain/errors.js";
@@ -38,6 +40,13 @@ export interface HumanAuth {
    * the session's id (which device sign-in approval challenges bind to).
    */
   sessionFor: (headers: Headers) => Promise<{ identityId: string; sessionId: string } | null>;
+  /**
+   * POST /auth/sign-out: ends the browser's session by its cookie. Better
+   * Auth's own sign-out logs a failed deletion and answers success, clearing
+   * the cookie of a session that still lives: here the deletion commits
+   * first and a failure is the answer; the cookie is cleared only then.
+   */
+  signOut: (request: Request) => Promise<Response>;
   /** End Better Auth's own connection pool (tests; the daemon keeps it for its lifetime). */
   close: () => Promise<void>;
 }
@@ -349,9 +358,46 @@ export function buildHumanAuth(deps: HumanAuthDeps): HumanAuth {
     ],
   });
 
+  const handler = (request: Request) => ceremonies.run({}, () => auth.handler(request));
   return {
     // Each request gets its own ceremony state (see CeremonyState).
-    handler: (request) => ceremonies.run({}, () => auth.handler(request)),
+    handler,
+    signOut: async (request) => {
+      // A browser's cookies ride along with a request from any site: as
+      // Better Auth's origin check, a sign-out with cookies comes from the
+      // dashboard's own origin (Origin, or Referer without it).
+      const headers = request.headers;
+      if (headers.has("cookie")) {
+        const origin = headers.get("origin");
+        const sameOriginNull = origin === "null" && headers.get("sec-fetch-site") === "same-origin";
+        let from: string | null = null;
+        try {
+          from = new URL(origin || headers.get("referer") || "").origin;
+        } catch {
+          from = null;
+        }
+        if (!sameOriginNull && from !== url.origin) throw new DomainError("PERMISSION_DENIED", "Invalid origin");
+      }
+      // The session the cookie names (its signed value: token.signature):
+      // deleted in a transaction of its own, which the session-end trigger
+      // (migration 43) joins, revoking its browser bearers. Any failure is
+      // the answer, and the cookie stays.
+      const cookie = getSessionCookie(headers);
+      if (cookie) {
+        let value = cookie;
+        try {
+          value = decodeURIComponent(cookie);
+        } catch {
+          value = cookie;
+        }
+        const dot = value.lastIndexOf(".");
+        const token = dot > 0 ? value.slice(0, dot) : value;
+        await withTx(ctx.db, (db) => db.query(`DELETE FROM "session" WHERE token = $1`, [token]));
+      }
+      // Committed: Better Auth's sign-out now finds no session, and clears
+      // the cookies as it always does.
+      return handler(request);
+    },
     sessionFor: async (headers) => {
       const session = await auth.api.getSession({ headers });
       if (!session?.user?.id || !session.session?.id) return null;
