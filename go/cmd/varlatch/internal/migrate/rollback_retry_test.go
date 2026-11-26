@@ -556,12 +556,11 @@ func TestRollbackRepairKeepsVarlatchdStoppedBeforeServing(t *testing.T) {
 	}
 }
 
-// P1 (second review): a 0.50.0 journal whose undo began after the rebuilt
-// release may have served (0.50.0's defect). The undo goes on, since part
-// of it may be done, but keeps the fresh volumes: the installation goes
-// back on its own volumes, the fresh ones are journalled (KeptVolumes) and
-// left for the operator, on --resume and --abort alike, with a serving
-// timestamp or without (an undo from a legacy transfer).
+// A 0.50.0 journal whose undo began (0.50.0's defect after it served).
+// The undo goes on, since part of it may be done, but does not delete the
+// fresh volumes: the installation goes back on its own volumes, the fresh
+// ones are journalled (KeptVolumes) and left for the operator, on --resume
+// and --abort alike, with a serving timestamp or without.
 func TestRollbackUndoBegunBy050KeepsTheFreshVolumes(t *testing.T) {
 	for _, verified := range []bool{true, false} {
 		for _, abort := range []bool{false, true} {
@@ -594,38 +593,47 @@ func TestRollbackUndoBegunBy050KeepsTheFreshVolumes(t *testing.T) {
 			})
 		}
 	}
-	// An undo a 0.50.0 CLI began before the transfer removes them, as
-	// before: nothing could have served.
-	t.Run("before the transfer", func(t *testing.T) {
-		w, src, j := rolledWorld(t, RollbackChecked, Public)
-		j.Rollback.Undoing, j.Rollback.RecordsServing = true, false
-		if err := writeJournal(w.src.dir, j); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := w.eng.Resume(t.Context()); err == nil || !strings.Contains(err.Error(), "the reverse was undone") {
-			t.Fatalf("--resume: %v", err)
-		}
-		after, _ := readJournal(w.src.dir)
-		if !slices.Contains(src.did, "undo p_postgres-data-abcdefgh") || len(after.Rollback.KeptVolumes) != 0 {
-			t.Fatalf("did=%v kept=%v", src.did, after.Rollback.KeptVolumes)
-		}
-	})
+	// Before the transfer too: 0.50.0's printed volume repair started
+	// varlatchd, so the phase does not prove nothing served. A reverse of
+	// this release (marked) before it records a start removes them, as
+	// before.
+	for _, marked := range []bool{false, true} {
+		t.Run(map[bool]string{false: "before the transfer, 0.50.0", true: "before the transfer, 0.50.1"}[marked], func(t *testing.T) {
+			w, src, j := rolledWorld(t, RollbackChecked, Coolify)
+			j.Rollback.Undoing, j.Rollback.RecordsServing = true, marked
+			if err := writeJournal(w.src.dir, j); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := w.eng.Resume(t.Context()); err == nil || !strings.Contains(err.Error(), "the reverse was undone") {
+				t.Fatalf("--resume: %v", err)
+			}
+			after, _ := readJournal(w.src.dir)
+			removed := slices.Contains(src.did, "undo p_postgres-data-abcdefgh")
+			if removed != marked || slices.Contains(src.did, "undo, keeping p_postgres-data-abcdefgh") == marked || (len(after.Rollback.KeptVolumes) == 0) != marked {
+				t.Fatalf("did=%v kept=%v", src.did, after.Rollback.KeptVolumes)
+			}
+		})
+	}
 }
 
-// The open retry (finishRestore): 0.50.0 undid a reverse from its
-// transfer after it served, Go open, but could not put the TypeScript
-// installation back (Unrestored). --resume puts it back and keeps the fresh
-// volumes.
+// The open retry (finishRestore): 0.50.0 undid a reverse, Go open, but
+// could not put the TypeScript installation back (Unrestored). --resume
+// puts it back and does not delete the fresh volumes, whatever phase the
+// undo began in.
 func TestRollbackOpenRetryOfA050UndoKeepsTheFreshVolumes(t *testing.T) {
-	for _, verified := range []bool{true, false} {
-		t.Run(map[bool]string{true: "verified", false: "no timestamp"}[verified], func(t *testing.T) {
+	for _, c := range []struct {
+		name     string
+		verified bool
+		from     Phase
+	}{{"verified", true, RollbackTransfer}, {"no timestamp", false, RollbackTransfer}, {"undone before the transfer", false, RollbackChecked}} {
+		t.Run(c.name, func(t *testing.T) {
 			w, src, j := rolledWorld(t, Open, Public)
-			if verified {
+			if c.verified {
 				j.Rollback.VerifiedAt = "2026-11-25T10:05:00Z"
 			}
 			j.Rollback.RecordsServing = false
 			j.Rollback.Unrestored = "putting the TypeScript installation back: docker: failed"
-			j.Rollback.Undone = &UndoneRecord{From: RollbackTransfer, Why: "x", At: "2026-11-25T10:06:00Z", Released: true}
+			j.Rollback.Undone = &UndoneRecord{From: c.from, Why: "x", At: "2026-11-25T10:06:00Z", Released: true}
 			if err := writeJournal(w.src.dir, j); err != nil {
 				t.Fatal(err)
 			}

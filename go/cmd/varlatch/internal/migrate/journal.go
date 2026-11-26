@@ -168,10 +168,10 @@ type RollbackRecord struct {
 	// neither resumes nor undoes a reverse of this release.
 	RecordsServing bool   `json:"recordsServing,omitempty"`
 	VerifiedAt     string `json:"verifiedAt,omitempty"`
-	// KeptVolumes are the fresh volumes an undo left in place instead of
-	// removing them (keepFresh: an undo a 0.50.0 CLI began after the
-	// rebuilt release may have served), journalled before it put the
-	// installation back, for the operator to reconcile and remove.
+	// KeptVolumes are the fresh volumes an undo does not delete (keepFresh:
+	// a reverse a 0.50.0 CLI began, or one that may have served),
+	// journalled before it puts the installation back, for the operator to
+	// reconcile and remove. An earlier run may have deleted some already.
 	KeptVolumes []string `json:"keptVolumes,omitempty"`
 	// Archives are the Go (format 3) archives made since the switch,
 	// listed in the report and never deleted (decision 17).

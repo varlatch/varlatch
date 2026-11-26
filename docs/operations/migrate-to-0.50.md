@@ -748,10 +748,14 @@ until the address moves back:
    the journal protects the new volumes.
 6. Rolled back: the new server never starts on that data directory again.
 
-Until the rollback records that it starts the rebuilt TypeScript release
-(just before it starts it, in step 5), an interruption, a failed check or
-`--abort` undoes the rollback, and the new server goes on serving. From
-that record on, the rebuilt release may have accepted writes that the new
+Before step 5, an interruption, a failed check or `--abort` undoes the
+rollback, and the new server goes on serving. In step 5, until the
+rollback records that it starts the rebuilt TypeScript release (just
+before it starts it), `--resume` goes on with the move, and a failed check
+of the volumes (the application deployed again, for example) leaves the
+rollback pending: repair it as `--resume` says and run `--resume` again,
+or run `--abort`, which undoes it while nothing is recorded as started.
+From that record on, the rebuilt release may have accepted writes that the new
 server's copy does not have, so the rollback goes forward only: a failure,
 including a failed start of the rebuilt release, stops with the rebuilt
 volumes and journal phase kept so you can fix the cause and run `--resume`

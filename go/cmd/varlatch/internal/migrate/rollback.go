@@ -1012,28 +1012,20 @@ func (e *Engine) restoreSource(ctx context.Context, j *Journal, rs ReverseSource
 				return err
 			}
 		}
-		e.say("The fresh volumes %s are kept, not removed: the rebuilt installation may have accepted writes on them, which the TypeScript installation put back on its own volumes does not have. Reconcile them by hand, then remove them (docker volume rm) once nothing on them is needed.", strings.Join(plan.Volumes, ", "))
+		e.say("This undo does not delete the fresh volumes %s: the rebuilt installation may have accepted writes on them, which the TypeScript installation put back on its own volumes does not have. An earlier run may have deleted some of them already: check which still exist (docker volume inspect), reconcile them by hand, then remove them (docker volume rm) once nothing on them is needed.", strings.Join(plan.Volumes, ", "))
 	}
 	return rs.UndoRebuild(ctx, plan, sourceGate(j), !sidecarOwned(j))
 }
 
-// keepFresh is an undo that keeps the fresh volumes: one that may follow a
-// start of the rebuilt release, which only a 0.50.0 CLI began (this
-// release refuses it): a serving timestamp, or an undo from the transfer
-// of a journal without RecordsServing (servedAt).
+// keepFresh is an undo that does not delete the fresh volumes: one that may
+// follow writes to the rebuilt installation. That is a serving timestamp,
+// or any journal without RecordsServing (a reverse a 0.50.0 CLI began),
+// whatever phase its undo began in: 0.50.0's printed volume repair started
+// varlatchd, so the phase does not prove nothing served. A reverse of this
+// release before it records a start removes them, as before.
 func keepFresh(j *Journal) bool {
 	rb := j.Rollback
-	if rb.ServedAt != "" || rb.VerifiedAt != "" {
-		return true
-	}
-	if rb.RecordsServing {
-		return false
-	}
-	from := j.Phase
-	if rb.Undone != nil {
-		from = rb.Undone.From
-	}
-	return from == RollbackTransfer
+	return rb.ServedAt != "" || rb.VerifiedAt != "" || !rb.RecordsServing
 }
 
 // finishRestore puts back a source that an undone reverse could not
