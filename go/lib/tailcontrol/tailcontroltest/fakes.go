@@ -82,7 +82,19 @@ type Tailscale struct {
 	// the fake's lock held: set changes another device's name (a third
 	// device taking a name the rename freed, say).
 	AfterRename func(id, name string, set func(id, name string))
-	pending     map[string]string // device id -> name a lagged rename sets
+	// ReleaseRenames and ReleaseDelay make a name a rename freed stay
+	// reserved, as Tailscale's control plane keeps it for a moment: a
+	// rename to it meanwhile, by any device, is accepted and applied with
+	// a dedup suffix (<name>-1, or the lowest number no other device
+	// holds), though no device lists the name. It is released after
+	// ReleaseRenames such renames, or, when ReleaseDelay is set, once
+	// ReleaseDelay has passed. Zero both: a freed name is free at once.
+	ReleaseRenames int
+	ReleaseDelay   time.Duration
+	// Deduped counts the renames applied with a dedup suffix.
+	Deduped  int
+	pending  map[string]string // device id -> name a lagged rename sets
+	reserved map[string]*reservation
 
 	mu        sync.Mutex
 	nodes     []*Node
@@ -100,6 +112,52 @@ func NewTailscale(nodes ...Node) *Tailscale {
 	}
 	f.Server = httptest.NewTLSServer(http.HandlerFunc(f.serve))
 	return f
+}
+
+// reservation is a freed name the fake does not give out yet.
+type reservation struct {
+	at      time.Time
+	renames int
+}
+
+// ReleaseAll releases every reserved name at once.
+func (f *Tailscale) ReleaseAll() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.reserved = nil
+}
+
+// SetReleaseRenames sets ReleaseRenames under the fake's lock.
+func (f *Tailscale) SetReleaseRenames(n int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ReleaseRenames = n
+}
+
+// unreleased reports whether name is reserved still, counting this rename
+// to it; a reservation that has run out is dropped.
+func (f *Tailscale) unreleased(name string) bool {
+	key := strings.ToLower(name)
+	r, ok := f.reserved[key]
+	if !ok {
+		return false
+	}
+	if f.ReleaseDelay > 0 && time.Since(r.at) >= f.ReleaseDelay || f.ReleaseDelay <= 0 && r.renames >= f.ReleaseRenames {
+		delete(f.reserved, key)
+		return false
+	}
+	r.renames++
+	return true
+}
+
+// dedup is name with the lowest suffix -<n> no device but target holds.
+func (f *Tailscale) dedup(target *Node, name string) string {
+	for i := 1; ; i++ {
+		c := fmt.Sprintf("%s-%d", name, i)
+		if !slices.ContainsFunc(f.nodes, func(n *Node) bool { return n != target && strings.EqualFold(n.Name, c) }) {
+			return c
+		}
+	}
 }
 
 // SetName renames a device directly, as another actor on the tailnet
@@ -243,6 +301,16 @@ func (f *Tailscale) serve(w http.ResponseWriter, r *http.Request) {
 				f.fail(w, r, http.StatusConflict, "machine name already in use")
 				return
 			}
+		}
+		if !strings.EqualFold(target.Name, stored) && f.unreleased(stored) {
+			stored = f.dedup(target, stored)
+			f.Deduped++
+		}
+		if (f.ReleaseRenames > 0 || f.ReleaseDelay > 0) && !strings.EqualFold(target.Name, stored) {
+			if f.reserved == nil {
+				f.reserved = map[string]*reservation{}
+			}
+			f.reserved[strings.ToLower(target.Name)] = &reservation{at: time.Now()}
 		}
 		if f.LagRenames {
 			if f.pending == nil {

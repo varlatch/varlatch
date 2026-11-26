@@ -368,6 +368,7 @@ func (e *Engine) handoffEngine(j *Journal, slot handoffSlot) (*tailhandoff.Engin
 		Deadline:   cmp.Or(testHandoffDeadline, o.Deadline),
 		UndoWait:   cmp.Or(testHandoffUndoWait, o.UndoWait),
 		RetryEvery: o.RetryEvery,
+		Waiting:    e.waitingForName,
 		// Real time, never the migration's clock: the handoff's deadlines
 		// are contexts', and its issuance count's week is the CA's.
 	}, nil

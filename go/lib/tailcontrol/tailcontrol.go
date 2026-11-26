@@ -14,7 +14,8 @@
 // On top of either: canonical temporary names (TempName), the
 // case-insensitive collision checks made before a handoff (CheckNames), and
 // a rename that counts only once the control plane reports the exact name
-// (RenameAndReadBack). Errors name the operation and the device, never a
+// (RenameAndReadBack), and one that waits for the control plane to release
+// a name another device let go of a moment ago (RenameReleased). Errors name the operation and the device, never a
 // credential (OpError, scrub).
 //
 // The handoffs themselves (forward, reverse, restore, their undo and
@@ -298,6 +299,89 @@ func RenameAndReadBack(ctx context.Context, cp ControlPlane, deviceID, name stri
 		}
 	}
 	return last, &OpError{Plane: cp.Kind(), Op: "read back", Device: deviceID, Err: mismatch}
+}
+
+// ReleaseWaits are the waits between renames to a name the control plane
+// has not released yet (RenameReleased), the last repeated.
+var ReleaseWaits = []time.Duration{time.Second, 2 * time.Second, 3 * time.Second, 5 * time.Second}
+
+// ReleaseBudget is how long RenameReleased keeps renaming to a name the
+// control plane has not released yet; the caller's context bounds it too.
+var ReleaseBudget = 45 * time.Second
+
+// Suffixed reports whether got is want with a dedup suffix, as Tailscale
+// applies when the name is not free: want-<digits>.
+func Suffixed(got, want string) bool {
+	rest, ok := strings.CutPrefix(got, want+"-")
+	if !ok || rest == "" {
+		return false
+	}
+	for i := 0; i < len(rest); i++ {
+		if rest[i] < '0' || rest[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// RenameReleased is RenameAndReadBack for a name another device let go of
+// a moment ago. Tailscale's control plane does not make a released name
+// available again at once: a rename to it in the meantime is accepted and
+// applied with a dedup suffix (<name>-1), though no device lists the name.
+// So, on Tailscale, while the device reads back as the name with such a
+// suffix, or the rename is refused as taken, and no other device lists the
+// name, it waits (ReleaseWaits) and renames again, until the name reads
+// back exactly or ReleaseBudget or ctx runs out; then the last failure
+// stands. waiting, when not nil, is called once, before the first wait. A
+// name another device lists, or any other read-back, is final at once, as
+// in RenameAndReadBack. Headscale releases a name at once: there it is
+// RenameAndReadBack.
+func RenameReleased(ctx context.Context, cp ControlPlane, deviceID, name string, waiting func()) (Device, error) {
+	d, err := RenameAndReadBack(ctx, cp, deviceID, name)
+	if cp.Kind() != "tailscale" {
+		return d, err
+	}
+	until := time.Now().Add(ReleaseBudget)
+	if dl, ok := ctx.Deadline(); ok && dl.Before(until) {
+		until = dl
+	}
+	for i := 0; err != nil && unreleased(ctx, cp, deviceID, name, err); i++ {
+		wait := ReleaseWaits[min(i, len(ReleaseWaits)-1)]
+		if time.Now().Add(wait).After(until) {
+			break
+		}
+		if i == 0 && waiting != nil {
+			waiting()
+		}
+		select {
+		case <-ctx.Done():
+			return d, errors.Join(err, ctx.Err())
+		case <-time.After(wait):
+		}
+		d, err = RenameAndReadBack(ctx, cp, deviceID, name)
+	}
+	return d, err
+}
+
+// unreleased reports whether a failed rename is the control plane holding
+// a name no device lists: the device read back as the name with a dedup
+// suffix, or the name refused as taken, while a fresh listing shows no
+// other device under the name (case-insensitively).
+func unreleased(ctx context.Context, cp ControlPlane, deviceID, name string, err error) bool {
+	var rb *ReadBackError
+	if !(errors.As(err, &rb) && !rb.Missing && Suffixed(rb.Got, name)) && !errors.Is(err, ErrNameTaken) {
+		return false
+	}
+	devices, lerr := cp.Devices(ctx)
+	if lerr != nil {
+		return false
+	}
+	for _, d := range devices {
+		if d.ID != deviceID && strings.EqualFold(d.Name, name) {
+			return false
+		}
+	}
+	return true
 }
 
 // checkName refuses a rename to a name not in canonical form, in every

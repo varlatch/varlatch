@@ -29,6 +29,20 @@ fixes.
   by `--status`): check which still exist, then reconcile and remove them.
   A 0.50.0 CLI does not read a rollback journal of 0.50.1: use 0.50.1 to
   resume it.
+- **The tailnet handoff of `varlatch migrate` waits for Tailscale to free
+  the name.** Tailscale does not make a machine name free again the moment
+  a node lets go of it: a rename to it a second later is accepted, but
+  applied as `<name>-1`. In 0.50.0 the handoff renamed the new node right
+  after the old one, so the name could read back as `<name>-1`, the
+  handoff failed, and its undo could fail the same way giving the old node
+  its name back, leaving both installations closed until the name was
+  renamed by hand. Now, on Tailscale, a rename that reads back as the name
+  with such a number, while no other device holds the name, is made again
+  after 1, 2, 3 and then every 5 seconds, for up to 45 seconds within the
+  handoff's deadline, and the CLI prints `Waiting for the tailnet to
+  release the name <name>`. This holds for the migration, its undo and the
+  rollback. A name another device holds, or any other name read back,
+  still fails at once. Nothing changes on Headscale.
 
 ## 0.50.0 (2026-11-25)
 
