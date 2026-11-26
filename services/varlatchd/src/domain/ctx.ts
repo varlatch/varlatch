@@ -25,4 +25,10 @@ export interface AppCtx {
    * Absent: on, its default.
    */
   auditExport?: boolean;
+  /**
+   * Whether the repair of Capabilities earlier retirements left live has
+   * run (capabilityrepair.ts): until it has, Capabilities are neither
+   * issued nor exercised. Absent: not waited for (tests, tools).
+   */
+  capabilityRepair?: import("./capabilityrepair.js").CapabilityRepair;
 }

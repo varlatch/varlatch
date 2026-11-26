@@ -20,7 +20,7 @@ import { startAuditExportLoop } from "./domain/auditexport.js";
 import { startExposureBackfillLoop } from "./domain/exposure.js";
 import { startDeletionLoop } from "./domain/orgdeletion.js";
 import { startRegistrationSweepLoop } from "./domain/githubapps.js";
-import { revokeCapabilitiesOfRetiredIdentities } from "./domain/capabilityrepair.js";
+import { CapabilityRepair } from "./domain/capabilityrepair.js";
 import { ACCESS_COUNTS, startSecurityReportLoop } from "./domain/securityreport.js";
 import { DomainError } from "./domain/errors.js";
 import { ConfigError, loadConfig, type VarlatchdConfig } from "./config.js";
@@ -121,7 +121,10 @@ async function serveCommand(): Promise<void> {
   });
   // The outbound policy (ADR-0057): VARLATCH_OUTBOUND_ALLOW, read once here.
   const outbound = new OutboundPolicy(config.outboundAllow);
-  const ctx: AppCtx = { db, rootKek, maintenance, accessCountDb, outbound, auditExport: config.auditExport };
+  // Capabilities wait for the repair of what earlier retirements left live
+  // (capabilityrepair.ts): 503 until it has run on this database.
+  const capabilityRepair = new CapabilityRepair();
+  const ctx: AppCtx = { db, rootKek, maintenance, accessCountDb, outbound, auditExport: config.auditExport, capabilityRepair };
   if (config.outboundAllow.length > 0) {
     console.log(`outbound allow list: ${config.outboundAllow.map((e) => e.text).join(", ")}`);
   }
@@ -151,15 +154,13 @@ async function serveCommand(): Promise<void> {
       );
     }
     // Before serving: Capabilities an earlier release's retirement left
-    // live are revoked (capabilityrepair.ts). A failure is reported and
-    // tried again at the next start, as the Go server does.
-    try {
-      const repaired = await revokeCapabilitiesOfRetiredIdentities(ctx);
-      if (repaired > 0) console.log(`revoked ${repaired} Capabilities of identities retired before this release`);
-    } catch (err) {
-      console.error("varlatchd: cannot revoke the Capabilities of retired identities; the next start tries again:", err);
-    }
+    // live are revoked. A failure leaves Capabilities refused, and is
+    // tried again below.
+    await capabilityRepair.attempt(ctx);
   }
+  // Behind a restore's gate, and after a failure, the repair is tried
+  // again until it has run; a restore makes it run again.
+  capabilityRepair.start(ctx);
   const issuer = config.issuer;
   const humanAuth = buildHumanAuth({
     ctx,

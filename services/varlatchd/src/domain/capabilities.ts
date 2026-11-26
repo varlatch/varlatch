@@ -14,6 +14,7 @@ import {
 import { newId } from "../db/ids.js";
 import { withTx } from "../db/tx.js";
 import { loadGrants, loadTailnetRequirements } from "../http/support.js";
+import { requireCapabilityRepair } from "./capabilityrepair.js";
 import type { AppCtx } from "./ctx.js";
 import { rootIdOf, type EnvironmentRow } from "./environments.js";
 import { DomainError } from "./errors.js";
@@ -68,7 +69,7 @@ function targetsOf(row: CapabilityRow): Record<string, string[]> | null {
   return typeof row.targets === "string" ? (JSON.parse(row.targets) as Record<string, string[]>) : row.targets;
 }
 
-export const MAX_TTL_SECONDS = 24 * 60 * 60;
+const MAX_TTL_SECONDS = 24 * 60 * 60;
 
 function hashCapabilitySecret(secret: string): string {
   return createHash("sha256").update(secret, "utf8").digest("hex");
@@ -210,6 +211,8 @@ export async function issueCapability(
   input: IssueCapabilityInput,
 ): Promise<IssuedCapability> {
   const { identityId: brokerIdentityId, credentialId: brokerCredentialId } = broker;
+  // Until the repair of earlier retirements has run (capabilityrepair.ts).
+  requireCapabilityRepair(ctx);
   if (input.items.length === 0) {
     throw new DomainError("VALIDATION_FAILED", "A Capability names explicit Config Items");
   }
@@ -506,6 +509,8 @@ export async function exerciseCapability(
     listener?: "ordinary" | "tailnet" | undefined;
   },
 ): Promise<ExerciseResult> {
+  // Until the repair of earlier retirements has run (capabilityrepair.ts).
+  requireCapabilityRepair(ctx);
   const { state, row } = captured;
   const { org, project, env } = state;
 

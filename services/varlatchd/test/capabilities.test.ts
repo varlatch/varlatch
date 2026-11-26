@@ -589,7 +589,7 @@ describe("reference expansion at exercise (ADR-0026)", () => {
   });
 });
 
-describe("the upgrade's repair of earlier retirements", () => {
+describe("the repair of earlier retirements", () => {
   const live = async (id: string) =>
     ((await ctx.db.query("SELECT revoked_at FROM capabilities WHERE id = $1", [id])).rows[0] as { revoked_at: unknown })
       .revoked_at === null;
@@ -603,6 +603,28 @@ describe("the upgrade's repair of earlier retirements", () => {
     expect((await post(`/v1/organizations/acme/identities/${identityId}/retire`, {})).status).toBe(200);
     await ctx.db.query("UPDATE capabilities SET revoked_at = NULL WHERE id = ANY($1::text[])", [capabilityIds]);
   };
+  const reactivate = async (identityId: string) =>
+    expect((await post(`/v1/organizations/acme/identities/${identityId}/reactivate`, {})).status).toBe(200);
+  /** An Organization's deletion, cancelled: what an identity it suspended names. */
+  const deletion = async () => {
+    const admin = (await ctx.db.query("SELECT id FROM identities WHERE installation_admin LIMIT 1")).rows[0] as { id: string };
+    await ctx.db.query(
+      `INSERT INTO organization_deletions (id, organization_id, requested_by, run_after, approval_required, cancelled_by, cancelled_at)
+       SELECT 'odl_test', id, $1, now() + interval '1 day', false, $1, now() FROM organizations WHERE slug = 'acme'`,
+      [admin.id],
+    );
+    return "odl_test";
+  };
+  /** A Capability row with no capability.issued: an imported one. */
+  const imported = async (from: string, id: string) =>
+    ctx.db.query(
+      `INSERT INTO capabilities
+       SELECT (jsonb_populate_record(NULL::capabilities, to_jsonb(c) || jsonb_build_object(
+         'id', $2::text, 'secret_hash', c.secret_hash || 'x', 'revoked_at', NULL,
+         'expires_at', now() + interval '3 days', 'created_at', now()))).*
+       FROM capabilities c WHERE id = $1`,
+      [from, id],
+    );
 
   it("revokes what an earlier retirement left live, and keeps what came after a reactivation or a suspension", async () => {
     const { revokeCapabilitiesOfRetiredIdentities } = await import("../src/domain/capabilityrepair.js");
@@ -613,7 +635,7 @@ describe("the upgrade's repair of earlier retirements", () => {
     const expired = await (await issue()).json();
     await ctx.db.query("UPDATE capabilities SET expires_at = now() - interval '1 second' WHERE id = $1", [expired.id]);
     await retireAsBefore(agentId, before.id, expired.id);
-    expect((await post(`/v1/organizations/acme/identities/${agentId}/reactivate`, {})).status).toBe(200);
+    await reactivate(agentId);
     expect((await exercise(before.id, before.secret)).status).toBe(200);
     // Issued after the reactivation.
     const after = await (await issue()).json();
@@ -626,7 +648,10 @@ describe("the upgrade's repair of earlier retirements", () => {
     // An Organization's deletion suspends an identity without retiring it.
     const suspended = await newAgent("suspended agent");
     const suspendedCap = await (await issue({ agentIdentityId: suspended })).json();
-    await ctx.db.query("UPDATE identities SET disabled = true WHERE id = $1", [suspended]);
+    await ctx.db.query("UPDATE identities SET disabled = true, suspended_by_deletion = $2 WHERE id = $1", [
+      suspended,
+      await deletion(),
+    ]);
     const revokedBefore = await auditCount("capability.revoked", "identity-retired");
 
     expect(await revokeCapabilitiesOfRetiredIdentities(ctx)).toBe(2);
@@ -655,5 +680,141 @@ describe("the upgrade's repair of earlier retirements", () => {
     );
     // Once repaired, it finds nothing.
     expect(await revokeCapabilitiesOfRetiredIdentities(ctx)).toBe(0);
+  });
+
+  it("orders an issuance by the audit log, not by its row's timestamp", async () => {
+    const { revokeCapabilitiesOfRetiredIdentities } = await import("../src/domain/capabilityrepair.js");
+    await grantUse();
+    expect((await post(`/v1/organizations/acme/identities/${agentId}/retire`, {})).status).toBe(200);
+    await reactivate(agentId);
+    const after = await (await issue()).json();
+    // Its created_at precedes the reactivation's occurred_at (a clock, or a
+    // transaction begun before the reactivation committed); its
+    // capability.issued comes after it.
+    await ctx.db.query("UPDATE capabilities SET created_at = created_at - interval '1 hour' WHERE id = $1", [after.id]);
+    expect(await revokeCapabilitiesOfRetiredIdentities(ctx)).toBe(0);
+    expect(await live(after.id)).toBe(true);
+  });
+
+  it("reads a retirement however old, for a Capability that outlives a day", async () => {
+    const { revokeCapabilitiesOfRetiredIdentities } = await import("../src/domain/capabilityrepair.js");
+    await grantUse();
+    const cap = await (await issue()).json();
+    await retireAsBefore(agentId, cap.id);
+    // An imported Capability, three days long, of an Agent retired three
+    // days ago and still retired.
+    await ctx.db.query(
+      "UPDATE capabilities SET created_at = now() - interval '4 days', expires_at = now() + interval '3 days' WHERE id = $1",
+      [cap.id],
+    );
+    await ctx.db.query(
+      `UPDATE audit_events SET occurred_at = now() - interval '3 days'
+       WHERE event_type = 'identity.retired' AND resource->>'identityId' = $1`,
+      [agentId],
+    );
+    expect(await revokeCapabilitiesOfRetiredIdentities(ctx)).toBe(1);
+    expect(await live(cap.id)).toBe(false);
+  });
+
+  it("revokes a Capability whose issuance its history does not show, once its identity was retired", async () => {
+    const { revokeCapabilitiesOfRetiredIdentities } = await import("../src/domain/capabilityrepair.js");
+    await grantUse();
+    const cap = await (await issue()).json();
+    const untouched = await newAgent("never retired");
+    const kept = await (await issue({ agentIdentityId: untouched })).json();
+    expect((await post(`/v1/organizations/acme/identities/${agentId}/retire`, {})).status).toBe(200);
+    await reactivate(agentId);
+    await imported(cap.id, "cap_imported_retired");
+    await imported(kept.id, "cap_imported_kept");
+    expect(await revokeCapabilitiesOfRetiredIdentities(ctx)).toBe(1);
+    expect(await live("cap_imported_retired")).toBe(false);
+    expect(await live("cap_imported_kept")).toBe(true);
+  });
+
+  it("revokes the Capabilities of an identity retired now, whatever its audit history", async () => {
+    const { revokeCapabilitiesOfRetiredIdentities } = await import("../src/domain/capabilityrepair.js");
+    await grantUse();
+    const cap = await (await issue()).json();
+    await imported(cap.id, "cap_imported");
+    await ctx.db.query("UPDATE identities SET disabled = true WHERE id = $1", [agentId]);
+    expect(await revokeCapabilitiesOfRetiredIdentities(ctx)).toBe(2);
+    expect(await live(cap.id)).toBe(false);
+    expect(await live("cap_imported")).toBe(false);
+  });
+});
+
+describe("Capabilities wait for the repair", () => {
+  const refusedUntilRepaired = async (res: Response) => {
+    expect(res.status).toBe(503);
+    expect((await res.json()).error.code).toBe("MAINTENANCE");
+  };
+
+  it("refuses issuance and exercise until the repair has run, and after it failed", async () => {
+    const { CapabilityRepair } = await import("../src/domain/capabilityrepair.js");
+    await grantUse();
+    const cap = await (await issue()).json();
+    let fail = true;
+    const errors: unknown[] = [];
+    const repair = new CapabilityRepair(
+      async () => {
+        if (fail) throw new Error("connection lost");
+        return 0;
+      },
+      { log: () => {}, error: (...args: unknown[]) => errors.push(args) },
+    );
+    ctx.capabilityRepair = repair;
+    await refusedUntilRepaired(await issue());
+    await refusedUntilRepaired(await exercise(cap.id, cap.secret));
+    expect(await repair.attempt(ctx)).toBe(false);
+    expect(errors).toHaveLength(1);
+    await refusedUntilRepaired(await issue());
+    await refusedUntilRepaired(await exercise(cap.id, cap.secret));
+    fail = false;
+    expect(await repair.attempt(ctx)).toBe(true);
+    expect((await issue()).status).toBe(201);
+    expect((await exercise(cap.id, cap.secret)).status).toBe(200);
+    // A restore brings back what was never repaired.
+    repair.invalidate();
+    await refusedUntilRepaired(await issue());
+  });
+
+  it("runs behind no maintenance gate, and once a restore's gate is gone", async () => {
+    const { mkdtempSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { Maintenance, prepareRestore } = await import("@varlatch/backup");
+    const { CapabilityRepair } = await import("../src/domain/capabilityrepair.js");
+    const dir = mkdtempSync(join(tmpdir(), "vl-caprepair-"));
+    try {
+      const maintenance = new Maintenance(dir);
+      const gate = prepareRestore(dir, "arc_test");
+      let runs = 0;
+      const repair = new CapabilityRepair(async () => {
+        runs++;
+        return 0;
+      });
+      const gated = { ...ctx, maintenance, capabilityRepair: repair };
+      expect(await repair.attempt(gated)).toBe(false);
+      expect(runs).toBe(0);
+      const stop = repair.start(gated, 10);
+      try {
+        await new Promise((r) => setTimeout(r, 50));
+        expect(runs).toBe(0);
+        expect(repair.ready).toBe(false);
+        maintenance.phase(gate.id, "reconciling");
+        maintenance.completeRestore(gate.id);
+        for (let i = 0; i < 100 && !repair.ready; i++) await new Promise((r) => setTimeout(r, 10));
+        expect(repair.ready).toBe(true);
+        expect(runs).toBe(1);
+        // A restore's gate seen again: not ready until it is gone and the repair ran again.
+        prepareRestore(dir, "arc_second");
+        for (let i = 0; i < 100 && repair.ready; i++) await new Promise((r) => setTimeout(r, 10));
+        expect(repair.ready).toBe(false);
+      } finally {
+        stop();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
