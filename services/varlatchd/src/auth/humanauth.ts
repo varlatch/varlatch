@@ -3,10 +3,11 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { hkdfSync } from "node:crypto";
 import { betterAuth } from "better-auth";
 import { passkey } from "@better-auth/passkey";
-import { APIError, createAuthMiddleware, isAPIError } from "better-auth/api";
+import { APIError, createAuthMiddleware, getSessionFromCtx, isAPIError } from "better-auth/api";
 import pg from "pg";
 import type { Querier } from "../db/migrate.js";
 import { withTx } from "../db/tx.js";
+import { endSessionsInOrder } from "./sessionend.js";
 import type { AppCtx } from "../domain/ctx.js";
 import { consumeSetupGrant, peekSetupGrant } from "../domain/bootstrap.js";
 import { DomainError } from "../domain/errors.js";
@@ -139,6 +140,8 @@ export async function completeEnrollment(
 export const DISABLED_AUTH_PATHS = ["/passkey/delete-passkey"] as const;
 
 const SIGN_OUT_PATH = "/sign-out";
+const REVOKE_SESSIONS_PATH = "/revoke-sessions";
+const REVOKE_OTHER_SESSIONS_PATH = "/revoke-other-sessions";
 
 /**
  * What one /auth request's WebAuthn ceremony proved, kept in request-local
@@ -273,6 +276,25 @@ export function buildHumanAuth(deps: HumanAuthDeps): HumanAuth {
             throw new APIError("INTERNAL_SERVER_ERROR", { message: "The session could not be ended; still signed in" });
           }
           return;
+        }
+        // Better Auth's bulk revocations end sessions in the lock order
+        // "Sign out everywhere else" takes (sessionend.ts): its own
+        // /revoke-sessions deletes them in scan order, which can wait on it
+        // in a cycle. The person is the one its session cookie signs in
+        // (as its sensitive-session check, the cookie cache aside); without
+        // one, its handler answers as it always does.
+        if (actx.path === REVOKE_SESSIONS_PATH || actx.path === REVOKE_OTHER_SESSIONS_PATH) {
+          const current = await getSessionFromCtx(actx, { disableCookieCache: true });
+          if (!current?.user?.id || !current.session?.id) return;
+          await withTx(ctx.db, (db) =>
+            endSessionsInOrder(db, { betterAuthUserId: current.user.id }, {
+              keep: actx.path === REVOKE_OTHER_SESSIONS_PATH ? current.session.id : null,
+            }),
+          ).catch((err: unknown) => {
+            console.error("varlatchd: the sessions could not be revoked:", err);
+            throw new APIError("INTERNAL_SERVER_ERROR", { message: "The sessions could not be revoked" });
+          });
+          return actx.json({ status: true });
         }
       }),
       // A new passkey's provenance, once its row exists (ADR-0054
