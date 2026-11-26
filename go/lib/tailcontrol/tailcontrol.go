@@ -340,9 +340,18 @@ func Suffixed(got, want string) bool {
 // other read-back, is final at once, as in RenameAndReadBack. Headscale
 // releases a name at once: there it is RenameAndReadBack.
 func RenameReleased(ctx context.Context, cp ControlPlane, deviceID, name string, waiting func()) (Device, error) {
-	d, err := RenameAndReadBack(ctx, cp, deviceID, name)
+	d, _, err := RenameReleasedSeen(ctx, cp, deviceID, name, waiting)
+	return d, err
+}
+
+// RenameReleasedSeen is RenameReleased, also reporting whether the last
+// listing of its wait that answered showed no other device under the name
+// (unlisted): what a caller says of a refusal when a listing of its own
+// cannot complete (the phase's deadline spent, say).
+func RenameReleasedSeen(ctx context.Context, cp ControlPlane, deviceID, name string, waiting func()) (d Device, unlisted bool, err error) {
+	d, err = RenameAndReadBack(ctx, cp, deviceID, name)
 	if err == nil || cp.Kind() != "tailscale" {
-		return d, err
+		return d, false, err
 	}
 	start := time.Now()
 	rctx, cancel := context.WithTimeout(ctx, ReleaseBudget)
@@ -351,31 +360,37 @@ func RenameReleased(ctx context.Context, cp ControlPlane, deviceID, name string,
 		return fmt.Errorf("%w (the tailnet did not release %q within %s: %v)", err, name, time.Since(start).Round(time.Millisecond), rctx.Err())
 	}
 	for i := 0; ; i++ {
-		if !unreleased(rctx, cp, deviceID, name, err) {
-			if rctx.Err() != nil && nameFailure(err) {
-				return d, expired()
-			}
-			return d, err
+		wait, listed := unreleased(rctx, cp, deviceID, name, err)
+		if listed {
+			unlisted = wait
 		}
-		wait := ReleaseWaits[min(i, len(ReleaseWaits)-1)]
-		if dl, _ := rctx.Deadline(); time.Now().Add(wait).After(dl) {
-			return d, expired()
+		if !wait {
+			if rctx.Err() != nil && nameFailure(err) {
+				return d, unlisted, expired()
+			}
+			return d, unlisted, err
+		}
+		pause := ReleaseWaits[min(i, len(ReleaseWaits)-1)]
+		if dl, _ := rctx.Deadline(); time.Now().Add(pause).After(dl) {
+			return d, unlisted, expired()
 		}
 		if i == 0 && waiting != nil {
 			waiting()
 		}
 		select {
 		case <-rctx.Done():
-			return d, expired()
-		case <-time.After(wait):
+			return d, unlisted, expired()
+		case <-time.After(pause):
 		}
 		nd, nerr := RenameAndReadBack(rctx, cp, deviceID, name)
-		if nerr != nil && rctx.Err() != nil && !nameFailure(nerr) {
-			// Cut short by the phase's end: the last name failure stands.
-			return d, expired()
+		if nerr != nil && rctx.Err() != nil && (!nameFailure(nerr) || errors.Is(nerr, rctx.Err())) {
+			// Cut short by the phase's end: the last confirmed name failure
+			// stands, not a call's, nor a read-back's interrupted before its
+			// second listing (whose first may have been stale).
+			return d, unlisted, expired()
 		}
 		if nerr == nil {
-			return nd, nil
+			return nd, unlisted, nil
 		}
 		d, err = nd, nerr
 	}
@@ -391,22 +406,23 @@ func nameFailure(err error) bool {
 // unreleased reports whether a failed rename is the control plane holding
 // a name no device lists: the device read back as the name with a dedup
 // suffix, or the name refused as taken, while a fresh listing shows no
-// other device under the name (case-insensitively).
-func unreleased(ctx context.Context, cp ControlPlane, deviceID, name string, err error) bool {
+// other device under the name (case-insensitively). listed is whether that
+// listing answered.
+func unreleased(ctx context.Context, cp ControlPlane, deviceID, name string, err error) (wait, listed bool) {
 	var rb *ReadBackError
 	if !(errors.As(err, &rb) && !rb.Missing && Suffixed(rb.Got, name)) && !errors.Is(err, ErrNameTaken) {
-		return false
+		return false, false
 	}
 	devices, lerr := cp.Devices(ctx)
 	if lerr != nil {
-		return false
+		return false, false
 	}
 	for _, d := range devices {
 		if d.ID != deviceID && strings.EqualFold(d.Name, name) {
-			return false
+			return false, true
 		}
 	}
-	return true
+	return true, true
 }
 
 // checkName refuses a rename to a name not in canonical form, in every
