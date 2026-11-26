@@ -131,9 +131,10 @@ func Issue(ctx context.Context, w *write.Writer, p *auth.Principal, s Scope, in 
 		// Broker's gate exclusive while it disables it, revokes its
 		// credentials and its Capabilities: with the gate held here, a
 		// retirement is either seen or comes after this Capability, which
-		// it then revokes.
+		// it then revokes. Its expiry is read against the clock now, in the
+		// job: the request may have waited for the gates past it.
 		live, err := query.New(tx).LiveRequesterCredential(ctx, query.LiveRequesterCredentialParams{
-			ID: p.Credential.ID, IdentityID: broker, Now: sql.NullInt64{Int64: at.UnixMicro(), Valid: true},
+			ID: p.Credential.ID, IdentityID: broker, Now: sql.NullInt64{Int64: now().UnixMicro(), Valid: true},
 		})
 		if err != nil {
 			return err

@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -36,9 +37,18 @@ type retireHarness struct {
 	vs    *values.Service
 	fill  func(string) string
 	now   func() time.Time
+	// skew moves now on (microseconds).
+	skew *atomic.Int64
 }
 
 func newRetireHarness(t *testing.T) *retireHarness {
+	t.Helper()
+	return newRetireHarnessWith(t, nil)
+}
+
+// newRetireHarnessWith is newRetireHarness with the server's options
+// changed by opts.
+func newRetireHarnessWith(t *testing.T, opts func(*httpserver.Options)) *retireHarness {
 	t.Helper()
 	f, err := paritytest.Read(paritytest.Path("capabilities-v0.22.0.json"))
 	if err != nil {
@@ -60,18 +70,23 @@ func newRetireHarness(t *testing.T) *retireHarness {
 	public, _ := url.Parse("http://127.0.0.1:8686")
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	w := &write.Writer{Store: store, Gates: write.NewGates()}
-	now := paritytest.HourClock()
+	base, skew := paritytest.HourClock(), &atomic.Int64{}
+	now := func() time.Time { return base().Add(time.Duration(skew.Load()) * time.Microsecond) }
 	approvals := auth.New(store, auth.Options{Log: log, RootKEK: rootKEK, PublicURL: public, PersonGate: w.Gates.PersonGate, Now: now})
 	vs := values.New(store, rootKEK, values.Options{Log: log, Approvals: approvals, Gates: w.Gates, Now: now})
-	h, err := httpserver.New(httpserver.Options{
+	o := httpserver.Options{
 		Version: f.Version(), Backend: daemon.NewBackend(store, rootKEK), Log: log, PublicURL: public,
 		Auth: approvals, Values: vs, Writer: w, RootKEK: rootKEK, Now: now,
-	})
+	}
+	if opts != nil {
+		opts(&o)
+	}
+	h, err := httpserver.New(o)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(vs.Settled)
-	return &retireHarness{t: t, f: f, store: store, w: w, h: h, vs: vs, fill: fillPath(f, nil), now: now}
+	return &retireHarness{t: t, f: f, store: store, w: w, h: h, vs: vs, fill: fillPath(f, nil), now: now, skew: skew}
 }
 
 func (r *retireHarness) call(method, path, credential, body string) (int, string) {
@@ -300,5 +315,47 @@ func TestIssuanceByABrokerRetiredMeanwhile(t *testing.T) {
 	}
 	if n := r.count("SELECT count(*) FROM capabilities WHERE broker_identity_id = ? AND revoked_at IS NULL", r.fill("{idn:broker}")); n != 0 {
 		t.Fatalf("%d of the retired Broker's Capabilities are live", n)
+	}
+}
+
+// TestIssuanceByABrokerExpiredMeanwhile: the Broker's credential is read
+// against the clock inside the write job, not the request's: one that
+// expires while the issuance waits for its gates is refused.
+func TestIssuanceByABrokerExpiredMeanwhile(t *testing.T) {
+	r := newRetireHarness(t)
+	broker := r.fill("{idn:broker}")
+	r.exec("UPDATE credentials SET expires_at = ? WHERE identity_id = ?", r.now().Add(time.Minute).UnixMicro(), broker)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_, release, err := r.w.Gates.Acquire(ctx, write.Person(broker, write.Exclusive))
+	if err != nil {
+		t.Fatal(err)
+	}
+	type answer struct {
+		code int
+		body string
+	}
+	issued := make(chan answer, 1)
+	go func() {
+		code, body := r.call(http.MethodPost, issuances, "broker", r.fill(issuance))
+		issued <- answer{code, body}
+	}()
+	for waited := false; !waited; {
+		if ctx.Err() != nil {
+			t.Fatal("the issuance never waited on the Broker's gate")
+		}
+		for _, g := range r.w.Gates.Waiting() {
+			waited = waited || g.Key == broker && g.Mode == write.Shared
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	r.skew.Add((2 * time.Minute).Microseconds())
+	release()
+	a := <-issued
+	if a.code != http.StatusUnauthorized || !strings.Contains(a.body, "INVALID_CREDENTIAL") {
+		t.Fatalf("issuance: %d %s, want 401 (INVALID_CREDENTIAL)", a.code, a.body)
+	}
+	if n := r.count("SELECT count(*) FROM capabilities WHERE broker_identity_id = ? AND created_at > ?", broker, r.now().Add(-time.Hour).UnixMicro()); n != 0 {
+		t.Fatalf("%d Capabilities issued by the expired Broker", n)
 	}
 }
