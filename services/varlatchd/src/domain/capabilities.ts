@@ -206,9 +206,10 @@ export async function issueCapability(
   org: OrgRow,
   project: ProjectRow,
   env: EnvironmentRow,
-  brokerIdentityId: string,
+  broker: { identityId: string; credentialId: string },
   input: IssueCapabilityInput,
 ): Promise<IssuedCapability> {
+  const { identityId: brokerIdentityId } = broker;
   if (input.items.length === 0) {
     throw new DomainError("VALIDATION_FAILED", "A Capability names explicit Config Items");
   }
@@ -282,6 +283,16 @@ export async function issueCapability(
     // created_by) and the agent at step 2, before the Project and the
     // Environment.
     await lockLiveScope(db, { organizationId: org.id, people: [brokerIdentityId, agent.id], projectId: project.id, environmentIds: [env.id] });
+    // The agent was read before these locks. Retirement holds the identity
+    // FOR UPDATE until it commits, revoking its Capabilities: now that the
+    // agent is held, a retirement either committed (and is seen here) or
+    // waits for this issuance, whose Capability it then revokes.
+    const agentNow = (await db.query("SELECT disabled FROM identities WHERE id = $1", [agent.id])).rows[0] as
+      | { disabled: boolean }
+      | undefined;
+    if (!agentNow || agentNow.disabled) {
+      throw new DomainError("VALIDATION_FAILED", "Agent identity is disabled");
+    }
     await db.query(
       `INSERT INTO capabilities
          (id, organization_id, broker_identity_id, agent_identity_id, project_id,

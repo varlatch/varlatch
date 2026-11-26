@@ -2509,7 +2509,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         }
         preflight = checked.items;
       }
-      const issued = await issueCapability(ctx, org, project, env, principal.identity.id, input);
+      const issued = await issueCapability(ctx, org, project, env, { identityId: principal.identity.id, credentialId: principal.credentialId }, input);
       c.header("Cache-Control", "no-store");
       return c.json(preflight ? { ...issued, preflightItems: preflight } : issued, 201);
     },
