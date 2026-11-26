@@ -266,6 +266,37 @@ describe.skipIf(!url)("the migration's import", () => {
     expect((different as Error).message).toMatch(/the database is not empty/);
   }, 180_000);
 
+  it("a retry of a bundle an earlier release imported at migration 52 applies the pending index-only migration and finishes", async () => {
+    const path = write("reverse.jsonl", reverseOf(await exportOf(source)));
+    expect((await importReverse(target, { path, rootKek: ctx.rootKek })).alreadyImported).toBe(false);
+    // As the release before migration 53 left it: its rows, migration 53 not applied.
+    const repairIndexes = `SELECT indexname FROM pg_indexes WHERE schemaname = 'public'
+      AND indexname IN ('audit_events_identity_lifecycle_idx', 'audit_events_capability_issued_idx', 'capabilities_live_idx') ORDER BY 1`;
+    await target.query("DROP INDEX audit_events_identity_lifecycle_idx, audit_events_capability_issued_idx, capabilities_live_idx");
+    await target.query("DELETE FROM varlatch_migrations WHERE id = 53");
+    const rowsOf = async () => (await target.query("SELECT count(*)::int AS n, max(event_order)::text AS p FROM audit_events")).rows;
+    const before = await rowsOf();
+
+    // Another bundle of the same installation is still refused, and nothing is migrated.
+    const other = reverseOf(await exportOf(source)).split("\n").slice(0, -2);
+    const roles = other.indexOf('{"table":"roles","rows":1}');
+    other.splice(roles, 2, '{"table":"roles","rows":0}');
+    const refused = await importReverse(target, { path: write("other.jsonl", finish(other)), rootKek: ctx.rootKek }).catch((e: unknown) => e);
+    expect((refused as Error).message).toMatch(/the database is not empty/);
+    expect((await target.query(repairIndexes)).rows).toEqual([]);
+    expect((await target.query("SELECT max(id) AS id FROM varlatch_migrations")).rows).toEqual([{ id: 52 }]);
+
+    // Its own bundle: verified as the rows it holds, migration 53 applied, finished.
+    expect((await importReverse(target, { path, rootKek: ctx.rootKek })).alreadyImported).toBe(true);
+    expect((await target.query(repairIndexes)).rows).toEqual([
+      { indexname: "audit_events_capability_issued_idx" },
+      { indexname: "audit_events_identity_lifecycle_idx" },
+      { indexname: "capabilities_live_idx" },
+    ]);
+    expect((await target.query("SELECT max(id) AS id FROM varlatch_migrations")).rows).toEqual([{ id: 53 }]);
+    expect(await rowsOf()).toEqual(before);
+  }, 180_000);
+
   it("refuses a second import while one holds the database, cleanly", async () => {
     const path = write("reverse.jsonl", reverseOf(await exportOf(source)));
     // The lock another import holds, from its first look to its commit.

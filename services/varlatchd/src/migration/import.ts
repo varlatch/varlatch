@@ -407,17 +407,20 @@ export async function importReverse(db: PoolQuerier, opts: { path: string; rootK
         `SELECT relname FROM pg_class WHERE relnamespace = 'public'::regnamespace AND relkind IN ('r', 'p') ORDER BY relname`,
       )).rows.map((r) => (r as { relname: string }).relname));
       if (holding.length > 0) {
-        if (status.pending.length === 0 && (await holdsThisBundle(client, bundle))) return { bundle, alreadyImported: true };
+        // This bundle, imported already: by this release, or by an earlier
+        // one before an index-only migration (indexesOnly) existed. Those
+        // change no table or column the bundle filled, so once its rows
+        // are found to be the bundle's, they are applied here, under the
+        // import's lock, and the import is finished. Anything else pending
+        // is an older schema: refused as it is.
+        if (status.pending.every((m) => m.indexesOnly) && (await holdsThisBundle(client, bundle))) {
+          if (status.pending.length > 0) await migrate(client);
+          return { bundle, alreadyImported: true };
+        }
         throw notEmpty(holding);
       }
     }
-    try {
-      await runMigrations(client);
-    } catch (err) {
-      // Its message carries PostgreSQL's text: only the migration is named.
-      const step = /^Migration ([0-9]+) \(([a-z0-9_]+)\) failed/.exec(err instanceof Error ? err.message : "");
-      throw new ImportRefused(`the schema could not be built at this release's level${step ? ` (migration ${step[1]}, ${step[2]})` : ""}; nothing was loaded`);
-    }
+    await migrate(client);
     const sequences = (await client.query(
       `SELECT count(*)::int AS n FROM pg_class WHERE relnamespace = 'public'::regnamespace AND relkind = 'S'`,
     )).rows[0] as { n: number };
@@ -489,6 +492,17 @@ async function tablesHoldingRows(client: Client, tables: string[]): Promise<stri
     if (n > (SEEDED[t] ?? 0)) holding.push(t);
   }
   return holding;
+}
+
+/** This release's migrations on the import's connection; a failure names only the migration. */
+async function migrate(client: Client): Promise<void> {
+  try {
+    await runMigrations(client);
+  } catch (err) {
+    // Its message carries PostgreSQL's text: only the migration is named.
+    const step = /^Migration ([0-9]+) \(([a-z0-9_]+)\) failed/.exec(err instanceof Error ? err.message : "");
+    throw new ImportRefused(`the schema could not be built at this release's level${step ? ` (migration ${step[1]}, ${step[2]})` : ""}; nothing was loaded`);
+  }
 }
 
 const notEmpty = (holding: string[]) =>
