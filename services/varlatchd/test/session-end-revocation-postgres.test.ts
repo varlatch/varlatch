@@ -224,6 +224,50 @@ describe.skipIf(!url)("signing out revokes browser bearers on real PostgreSQL", 
     }
   });
 
+  it("a sign-out whose deletion fails answers the failure, and keeps the session and its cookie", async () => {
+    const { browser } = await bootstrapAdmin();
+    const token = await browser.bearer();
+    const cookies = new Map(browser.cookies);
+    await db.query(`CREATE FUNCTION refuse_session_delete() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN RAISE EXCEPTION 'injected session deletion failure'; END $$`);
+    await db.query(`CREATE TRIGGER refuse_session_delete BEFORE DELETE ON "session" FOR EACH ROW EXECUTE FUNCTION refuse_session_delete()`);
+    const errors = console.error;
+    console.error = () => {};
+    let refused: Awaited<ReturnType<Browser["request"]>>;
+    try {
+      refused = await browser.request("POST", "/auth/sign-out", {});
+    } finally {
+      console.error = errors;
+    }
+    expect(refused.status).toBe(500);
+    // The cookie was not cleared, and the session and its bearer still live:
+    // the dashboard says it could not sign out, which is the truth.
+    expect(browser.cookies).toEqual(cookies);
+    expect(await rows(`SELECT id FROM "session" WHERE id = $1`, [browser.sessionId])).toHaveLength(1);
+    expect(await works(token)).toBe(200);
+
+    await db.query(`DROP TRIGGER refuse_session_delete ON "session"`);
+    expect((await browser.request("POST", "/auth/sign-out", {})).status).toBe(200);
+    expect([...browser.cookies.keys()].filter((k) => k.includes("session_token"))).toEqual([]);
+    expect(await rows(`SELECT id FROM "session" WHERE id = $1`, [browser.sessionId])).toEqual([]);
+    expect(await works(token)).toBe(401);
+  });
+
+  it("a sign-out with the browser's cookies from another origin, or none, is refused", async () => {
+    const { browser } = await bootstrapAdmin();
+    const cookie = [...browser.cookies].map(([k, v]) => `${k}=${v}`).join("; ");
+    for (const origin of [{ Origin: "https://evil.example" }, { Referer: "https://evil.example/page" }, {}]) {
+      const res = await app.request(`${PUBLIC_URL}/auth/sign-out`, {
+        method: "POST",
+        headers: { ...origin, Cookie: cookie, "Content-Type": "application/json" },
+        body: "{}",
+      });
+      expect(res.status, JSON.stringify(origin)).toBe(403);
+      expect(res.headers.getSetCookie()).toEqual([]);
+    }
+    expect(await rows(`SELECT id FROM "session" WHERE id = $1`, [browser.sessionId])).toHaveLength(1);
+  });
+
   describe("against an approval consumption (lock order: session, then credential, then audit)", () => {
     let identityId: string;
     let browser: Browser;
