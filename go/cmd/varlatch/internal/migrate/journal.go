@@ -168,6 +168,11 @@ type RollbackRecord struct {
 	// neither resumes nor undoes a reverse of this release.
 	RecordsServing bool   `json:"recordsServing,omitempty"`
 	VerifiedAt     string `json:"verifiedAt,omitempty"`
+	// KeptVolumes are the fresh volumes an undo left in place instead of
+	// removing them (keepFresh: an undo a 0.50.0 CLI began after the
+	// rebuilt release may have served), journalled before it put the
+	// installation back, for the operator to reconcile and remove.
+	KeptVolumes []string `json:"keptVolumes,omitempty"`
 	// Archives are the Go (format 3) archives made since the switch,
 	// listed in the report and never deleted (decision 17).
 	Archives []ArchiveInfo `json:"archives,omitempty"`
@@ -206,6 +211,9 @@ type RebuildRecord struct {
 	// Made are those, once made. An undo removes only what matches both.
 	Owner string         `json:"owner,omitempty"`
 	Made  []VolumeRecord `json:"made,omitempty"`
+	// keep, set on restoreSource's copy only (never journalled), has
+	// UndoRebuild leave the fresh volumes instead of removing them.
+	keep bool
 	// Retained are the Postgres and the Convex volume the installation ran
 	// on before the reverse, as they were then: --finish --delete-old-data
 	// removes these, and nothing by a name it makes up.

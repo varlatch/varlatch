@@ -20,11 +20,13 @@ fixes.
   stops with the fresh volumes and the `rollback-transfer` phase kept: fix
   the cause, then run `varlatch migrate --resume`. `--abort` refuses from
   that state. Before then, a failure or `--abort` undoes the rollback as
-  before. When `--resume` is told to repair the volumes before that record,
-  its commands keep `varlatchd` stopped. A rollback begun by 0.50.0 and
-  interrupted in its transfer counts as started, and `--resume` records it
-  so at once. A 0.50.0 CLI does not read a rollback journal of 0.50.1: use
-  0.50.1 to resume it.
+  before, and every repair it prints keeps `varlatchd` stopped. A rollback
+  begun by 0.50.0 and interrupted in its transfer counts as started, and
+  `--resume` records it so at once. An undo that a 0.50.0 CLI began after
+  that point puts the TypeScript installation back on its own volumes but
+  keeps the fresh ones (`rollback.keptVolumes`, shown by `--status`) for you
+  to reconcile and remove. A 0.50.0 CLI does not read a rollback journal of
+  0.50.1: use 0.50.1 to resume it.
 
 ## 0.50.0 (2026-11-25)
 

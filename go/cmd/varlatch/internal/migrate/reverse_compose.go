@@ -889,7 +889,7 @@ func (c *Compose) rebuiltHelp(p *ComposeProject, plan RebuildRecord, daemon bool
 	files := append(slices.Clone(p.Files), path)
 	args := shellArgs(c.globalArgs(p, files))
 	if !daemon {
-		return fmt.Sprintf("to run it on them again: 1. set COMPOSE_FILE=%s in %s; 2. docker %s stop %s; 3. docker %s up -d --no-deps postgres convex-backend (it makes those that are on another volume again; no volume is removed). Do not start %s: varlatch migrate --resume starts it once the journal records that it may serve",
+		return fmt.Sprintf("to run it on them again: 1. set COMPOSE_FILE=%s in %s; 2. docker %s stop %s; 3. docker %s up -d --no-deps postgres convex-backend (it makes those that are on another volume again; no volume is removed). Do not start %s by hand: varlatch migrate --resume starts it once the journal records a start of the rebuilt release (or, undoing the reverse, behind its gate)",
 			value, c.envPath(), args, service, args, service)
 	}
 	return fmt.Sprintf("to run it on them again: 1. set COMPOSE_FILE=%s in %s; 2. docker %s up -d --no-deps postgres convex-backend %s (it makes those that are on another volume again; no volume is removed)",
@@ -999,7 +999,8 @@ func (c *Compose) StopFront(ctx context.Context, kind Ingress) error {
 
 // UndoRebuild: what holds the database stopped; COMPOSE_FILE as it was and
 // migrate's file removed, so Compose names the old volumes again; Postgres
-// and Convex back on them, the fresh volumes removed by their names; with
+// and Convex back on them, the fresh volumes removed by their names (but
+// with plan.keep, which leaves them); with
 // start, varlatchd started behind the gate, which is there already
 // (HoldGate), as the forward migration left it.
 func (c *Compose) UndoRebuild(ctx context.Context, plan RebuildRecord, gate GateRef, start bool) error {
@@ -1024,6 +1025,10 @@ func (c *Compose) UndoRebuild(ctx context.Context, plan RebuildRecord, gate Gate
 		return err
 	}
 	for i, name := range plan.Volumes {
+		if plan.keep {
+			// Kept for the operator (restoreSource): named by nothing now.
+			break
+		}
 		// Only a volume this migration made (its label, and, once it is
 		// journalled, the very one): whatever else has the name is left.
 		v, err := c.volume(ctx, name)

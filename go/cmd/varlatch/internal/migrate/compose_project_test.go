@@ -1337,8 +1337,19 @@ func TestTheRebuildRunsOnTheFreshVolume(t *testing.T) {
 			if !errors.As(err, &nr) {
 				t.Errorf("%s: %T is no notRebuiltError", c.name, err)
 			} else if kept := nr.daemonKept().Error(); !strings.Contains(kept, " stop varlatchd; 3. docker ") || !strings.Contains(kept, " up -d --no-deps postgres convex-backend (") ||
-				strings.Contains(kept, "convex-backend varlatchd") || !strings.Contains(kept, "Do not start varlatchd: varlatch migrate --resume starts it") {
+				strings.Contains(kept, "convex-backend varlatchd") || !strings.Contains(kept, "Do not start varlatchd by hand: varlatch migrate --resume starts it") {
 				t.Errorf("%s, varlatchd kept stopped: %s", c.name, kept)
+			}
+		}
+		// The engine, before the transfer, with an undo that stops (its gate
+		// not held): the refusal it reports keeps varlatchd stopped too.
+		if strings.HasPrefix(c.name, "deployed again") {
+			w, src, j := rolledWorld(t, RollbackChecked, Coolify)
+			src.checkErr, src.holdErr = err, errors.New("the gate's state volume is not the migration's")
+			got := w.eng.reverseTransfer(t.Context(), j)
+			if got == nil || !strings.Contains(got.Error(), "undoing stopped") || !strings.Contains(got.Error(), " stop varlatchd; 3. docker ") ||
+				!strings.Contains(got.Error(), " up -d --no-deps postgres convex-backend (") || strings.Contains(got.Error(), "convex-backend varlatchd") {
+				t.Errorf("%s, before the transfer: %v", c.name, got)
 			}
 		}
 		if len(run.ran) > 0 && !slices.Equal(run.ran, []string{"docker compose config --no-interpolate --format json"}) {
@@ -1430,7 +1441,11 @@ func (r *reverseFake) StopServing(context.Context, Ingress) error {
 	return r.servingErr
 }
 func (r *reverseFake) UndoRebuild(_ context.Context, p RebuildRecord, g GateRef, start bool) error {
-	r.do("undo " + p.Volumes[0])
+	if p.keep {
+		r.do("undo, keeping " + p.Volumes[0])
+	} else {
+		r.do("undo " + p.Volumes[0])
+	}
 	r.gates = append(r.gates, g)
 	r.started = start
 	return r.undoErr

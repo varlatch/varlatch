@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/varlatch/varlatch/go/lib/tailhandoff"
@@ -404,7 +405,7 @@ func (e *Engine) reverse(ctx context.Context, j *Journal) error {
 	// Never an import into the retained volume: refused before it, and
 	// undone.
 	if err := rs.CheckRebuilt(ctx, plan, false); err != nil {
-		return e.undoReverse(ctx, j, fmt.Errorf("the fresh database: %w; nothing was imported", err))
+		return e.undoReverse(ctx, j, fmt.Errorf("the fresh database: %w; nothing was imported", daemonKept(err)))
 	}
 	imp, err := rs.ImportReverse(ctx, out)
 	if err != nil {
@@ -418,7 +419,7 @@ func (e *Engine) reverse(ctx context.Context, j *Journal) error {
 		return e.undoReverse(ctx, j, fmt.Errorf("the Convex reset: %w", err))
 	}
 	if err := rs.CheckRebuilt(ctx, plan, true); err != nil {
-		return e.undoReverse(ctx, j, fmt.Errorf("the fresh database: %w", err))
+		return e.undoReverse(ctx, j, fmt.Errorf("the fresh database: %w", daemonKept(err)))
 	}
 	if err := e.enter(ctx, j, RollbackImported); err != nil {
 		return e.undoReverse(ctx, j, err)
@@ -559,7 +560,11 @@ func (e *Engine) reverseTransfer(ctx context.Context, j *Journal) error {
 	}
 	if kind != Coolify {
 		e.say("Address back: Go stops serving %s; the TypeScript release starts on it.", originOf(j))
-		if ok, err := stopGo("Then varlatch migrate --resume starts the TypeScript release on the address; or --abort undoes the reverse."); !ok || err != nil {
+		then := "Then varlatch migrate --resume starts the TypeScript release on the address"
+		if servedAt(j) == "" {
+			then += "; or --abort undoes the reverse"
+		}
+		if ok, err := stopGo(then + "."); !ok || err != nil {
 			return err
 		}
 		crashPoint("rollback go stopped")
@@ -641,20 +646,32 @@ func (e *Engine) checkRebuilt(ctx context.Context, j *Journal) error {
 			}
 			then := "then varlatch migrate --resume."
 			if j.Phase == RollbackTransfer && servedAt(j) == "" {
-				// varlatchd is started by --resume, after it records that
-				// (StartServing): started by hand, it could take writes that
-				// an --abort would remove.
-				var nr *notRebuiltError
-				if errors.As(err, &nr) {
-					err = nr.daemonKept()
-				}
 				then += " (varlatch migrate --abort undoes the reverse instead: it gives the address back to Go and removes the fresh volumes.)"
 			}
-			return fmt.Errorf("the TypeScript installation is not on the fresh volumes the reverse rebuilt it on: %w; %s; %s", err, what, then)
+			return fmt.Errorf("the TypeScript installation is not on the fresh volumes the reverse rebuilt it on: %w; %s; %s", daemonKeptUnlessServed(j, err), what, then)
 		}
-		return fmt.Errorf("the fresh database: %w", err)
+		return fmt.Errorf("the fresh database: %w", daemonKeptUnlessServed(j, err))
 	}
 	return nil
+}
+
+// daemonKept is CheckRebuilt's refusal with its repair keeping varlatchd
+// stopped: before the journal records a start of the rebuilt release,
+// varlatchd started by hand could take writes that an undo removes.
+// --resume starts it after that record (or an undo, behind its gate).
+func daemonKept(err error) error {
+	var nr *notRebuiltError
+	if errors.As(err, &nr) {
+		return nr.daemonKept()
+	}
+	return err
+}
+
+func daemonKeptUnlessServed(j *Journal, err error) error {
+	if servedAt(j) != "" {
+		return err
+	}
+	return daemonKept(err)
 }
 
 // tailnetReturn is the reverse's tailnet handoff (nil for none).
@@ -849,7 +866,7 @@ func (e *Engine) undoReverse(ctx context.Context, j *Journal, cause error) error
 	}
 	unrestored := ""
 	if j.Rollback.Rebuild != nil {
-		if err := e.restoreSource(ctx, j, rs); err != nil {
+		if err := e.restoreSource(ctx, j, rs, func() error { return e.save(ctx, j) }); err != nil {
 			unrestored = fmt.Errorf("putting the TypeScript installation back: %w", err).Error()
 		}
 	} else if len(j.Rollback.Started) > 0 {
@@ -982,8 +999,41 @@ func (e undoneError) Unwrap() error { return e.error }
 // restoreSource puts the rebuilt source back, as the forward migration left
 // it: its server started again, but where a sidecar that the forward handoff
 // stopped has its network.
-func (e *Engine) restoreSource(ctx context.Context, j *Journal, rs ReverseSource) error {
-	return rs.UndoRebuild(ctx, *j.Rollback.Rebuild, sourceGate(j), !sidecarOwned(j))
+func (e *Engine) restoreSource(ctx context.Context, j *Journal, rs ReverseSource, save func() error) error {
+	plan := *j.Rollback.Rebuild
+	if keepFresh(j) {
+		// Journalled, then said, before anything is put back: the
+		// installation goes back on its own volumes, the fresh ones are
+		// left (named nowhere any more), for the operator to reconcile.
+		plan.keep = true
+		if !slices.Equal(j.Rollback.KeptVolumes, plan.Volumes) {
+			j.Rollback.KeptVolumes = slices.Clone(plan.Volumes)
+			if err := save(); err != nil {
+				return err
+			}
+		}
+		e.say("The fresh volumes %s are kept, not removed: the rebuilt installation may have accepted writes on them, which the TypeScript installation put back on its own volumes does not have. Reconcile them by hand, then remove them (docker volume rm) once nothing on them is needed.", strings.Join(plan.Volumes, ", "))
+	}
+	return rs.UndoRebuild(ctx, plan, sourceGate(j), !sidecarOwned(j))
+}
+
+// keepFresh is an undo that keeps the fresh volumes: one that may follow a
+// start of the rebuilt release, which only a 0.50.0 CLI began (this
+// release refuses it): a serving timestamp, or an undo from the transfer
+// of a journal without RecordsServing (servedAt).
+func keepFresh(j *Journal) bool {
+	rb := j.Rollback
+	if rb.ServedAt != "" || rb.VerifiedAt != "" {
+		return true
+	}
+	if rb.RecordsServing {
+		return false
+	}
+	from := j.Phase
+	if rb.Undone != nil {
+		from = rb.Undone.From
+	}
+	return from == RollbackTransfer
 }
 
 // finishRestore puts back a source that an undone reverse could not
@@ -1004,7 +1054,7 @@ func (e *Engine) finishRestore(ctx context.Context, j *Journal) error {
 	if err := e.checkHeld(ctx, j, rs); err != nil {
 		return fmt.Errorf("the TypeScript installation is not held behind its gate: %w; nothing of it was started. Go serves: do not start the TypeScript installation", err)
 	}
-	if err := e.restoreSource(ctx, j, rs); err != nil {
+	if err := e.restoreSource(ctx, j, rs, func() error { return writeJournal(e.Source.Dir(), j) }); err != nil {
 		return fmt.Errorf("the TypeScript installation is still not put back: %w; Go serves; varlatch migrate --resume tries again", errors.Join(err, rs.StopServers(ctx)))
 	}
 	j.Rollback.Unrestored = ""

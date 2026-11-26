@@ -556,30 +556,110 @@ func TestRollbackRepairKeepsVarlatchdStoppedBeforeServing(t *testing.T) {
 	}
 }
 
-// A 0.50.0 journal whose undo began after the rebuilt release was verified
-// (0.50.0's defect): an undo already begun goes on, since part of it may be
-// done already, on --resume and on --abort alike.
-func TestRollbackUndoBegunBy050GoesOn(t *testing.T) {
-	for _, abort := range []bool{false, true} {
-		t.Run(map[bool]string{false: "resume", true: "abort"}[abort], func(t *testing.T) {
-			w, src, j := rolledWorld(t, RollbackTransfer, Public)
-			tgt := w.eng.Target.(*reverseTargetFake)
-			j.Rollback.VerifiedAt = "2026-11-25T10:05:00Z"
-			j.Rollback.Undoing, j.Rollback.RecordsServing = true, false
+// P1 (second review): a 0.50.0 journal whose undo began after the rebuilt
+// release may have served (0.50.0's defect). The undo goes on, since part
+// of it may be done, but keeps the fresh volumes: the installation goes
+// back on its own volumes, the fresh ones are journalled (KeptVolumes) and
+// left for the operator, on --resume and --abort alike, with a serving
+// timestamp or without (an undo from a legacy transfer).
+func TestRollbackUndoBegunBy050KeepsTheFreshVolumes(t *testing.T) {
+	for _, verified := range []bool{true, false} {
+		for _, abort := range []bool{false, true} {
+			name := map[bool]string{false: "resume", true: "abort"}[abort] + map[bool]string{true: ", verified", false: ", no timestamp"}[verified]
+			t.Run(name, func(t *testing.T) {
+				w, src, j := rolledWorld(t, RollbackTransfer, Public)
+				tgt := w.eng.Target.(*reverseTargetFake)
+				if verified {
+					j.Rollback.VerifiedAt = "2026-11-25T10:05:00Z"
+				}
+				j.Rollback.Undoing, j.Rollback.RecordsServing = true, false
+				if err := writeJournal(w.src.dir, j); err != nil {
+					t.Fatal(err)
+				}
+				if abort {
+					if _, err := w.eng.Abort(t.Context()); err != nil {
+						t.Fatalf("--abort: %v", err)
+					}
+				} else if _, err := w.eng.Resume(t.Context()); err == nil || !strings.Contains(err.Error(), "the reverse was undone") {
+					t.Fatalf("--resume: %v", err)
+				}
+				after, err := readJournal(w.src.dir)
+				if err != nil || after.Phase != Open || after.Rollback.Undone == nil || tgt.released != 1 {
+					t.Fatalf("not undone: %+v %v released=%d", after, err, tgt.released)
+				}
+				if slices.Contains(src.did, "undo p_postgres-data-abcdefgh") || !slices.Contains(src.did, "undo, keeping p_postgres-data-abcdefgh") ||
+					!slices.Equal(after.Rollback.KeptVolumes, []string{"p_postgres-data-abcdefgh", "p_convex-data-abcdefgh"}) {
+					t.Fatalf("the fresh volumes: did=%v kept=%v", src.did, after.Rollback.KeptVolumes)
+				}
+			})
+		}
+	}
+	// An undo a 0.50.0 CLI began before the transfer removes them, as
+	// before: nothing could have served.
+	t.Run("before the transfer", func(t *testing.T) {
+		w, src, j := rolledWorld(t, RollbackChecked, Public)
+		j.Rollback.Undoing, j.Rollback.RecordsServing = true, false
+		if err := writeJournal(w.src.dir, j); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.eng.Resume(t.Context()); err == nil || !strings.Contains(err.Error(), "the reverse was undone") {
+			t.Fatalf("--resume: %v", err)
+		}
+		after, _ := readJournal(w.src.dir)
+		if !slices.Contains(src.did, "undo p_postgres-data-abcdefgh") || len(after.Rollback.KeptVolumes) != 0 {
+			t.Fatalf("did=%v kept=%v", src.did, after.Rollback.KeptVolumes)
+		}
+	})
+}
+
+// The open retry (finishRestore): 0.50.0 undid a reverse from its
+// transfer after it served, Go open, but could not put the TypeScript
+// installation back (Unrestored). --resume puts it back and keeps the fresh
+// volumes.
+func TestRollbackOpenRetryOfA050UndoKeepsTheFreshVolumes(t *testing.T) {
+	for _, verified := range []bool{true, false} {
+		t.Run(map[bool]string{true: "verified", false: "no timestamp"}[verified], func(t *testing.T) {
+			w, src, j := rolledWorld(t, Open, Public)
+			if verified {
+				j.Rollback.VerifiedAt = "2026-11-25T10:05:00Z"
+			}
+			j.Rollback.RecordsServing = false
+			j.Rollback.Unrestored = "putting the TypeScript installation back: docker: failed"
+			j.Rollback.Undone = &UndoneRecord{From: RollbackTransfer, Why: "x", At: "2026-11-25T10:06:00Z", Released: true}
 			if err := writeJournal(w.src.dir, j); err != nil {
 				t.Fatal(err)
 			}
-			if abort {
-				_, err := w.eng.Abort(t.Context())
-				if err != nil {
-					t.Fatalf("--abort: %v", err)
-				}
-			} else if _, err := w.eng.Resume(t.Context()); err == nil || !strings.Contains(err.Error(), "the reverse was undone") {
+			w.tgt.journal = &JournalHead{ID: j.ID, Phase: Open}
+			if _, err := w.eng.Resume(t.Context()); err != nil {
 				t.Fatalf("--resume: %v", err)
 			}
 			after, err := readJournal(w.src.dir)
-			if err != nil || after.Phase != Open || after.Rollback.Undone == nil || !slices.Contains(src.did, "undo p_postgres-data-abcdefgh") || tgt.released != 1 {
-				t.Fatalf("not undone: %+v %v did=%v released=%d", after, err, src.did, tgt.released)
+			if err != nil || after.Rollback.Unrestored != "" || slices.Contains(src.did, "undo p_postgres-data-abcdefgh") || !slices.Contains(src.did, "undo, keeping p_postgres-data-abcdefgh") ||
+				!slices.Equal(after.Rollback.KeptVolumes, []string{"p_postgres-data-abcdefgh", "p_convex-data-abcdefgh"}) {
+				t.Fatalf("%+v %v did=%v", after, err, src.did)
+			}
+		})
+	}
+}
+
+// P3 (second review): the public shape's "stop Go by hand" prompt offers
+// --abort only while the reverse may still be undone.
+func TestRollbackStopGoPromptOffersAbortOnlyBeforeServing(t *testing.T) {
+	for _, served := range []bool{false, true} {
+		t.Run(map[bool]string{false: "not yet", true: "adopted 0.50.0 transfer"}[served], func(t *testing.T) {
+			w, _, j := rolledWorld(t, RollbackTransfer, Public)
+			w.tgt.human = true
+			if served {
+				j.Rollback.RecordsServing = false
+				j.History = append(j.History, Step{Phase: RollbackTransfer, At: "2026-11-25T10:01:00Z"})
+			}
+			err := w.eng.reverseTransfer(t.Context(), j)
+			if !errors.Is(err, ErrAwaitingOperator) {
+				t.Fatalf("reverseTransfer: %v", err)
+			}
+			said := strings.Join(w.said, "\n")
+			if strings.Contains(said, "--abort undoes the reverse") == served || !strings.Contains(said, "Then varlatch migrate --resume starts the TypeScript release on the address") {
+				t.Fatalf("served %v said:\n%s", served, said)
 			}
 		})
 	}

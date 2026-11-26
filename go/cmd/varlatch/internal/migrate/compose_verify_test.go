@@ -750,6 +750,15 @@ func TestTheUndoRemovesOnlyVolumesOfTheMigration(t *testing.T) {
 			}
 			p.Owner = ""
 		}, nil},
+		// An undo a 0.50.0 CLI began after the rebuilt release may have
+		// served (restoreSource's keep): put back, the fresh ones left.
+		{"made and journalled, kept", func(t *testing.T, c *Compose, h *labelled, p *RebuildRecord) {
+			var err error
+			if p.Made, err = c.MakeVolumes(t.Context(), *p); err != nil {
+				t.Fatal(err)
+			}
+			p.keep = true
+		}, nil},
 	} {
 		cmp, host, plan := newPlan(t)
 		c.do(t, cmp, host, &plan)

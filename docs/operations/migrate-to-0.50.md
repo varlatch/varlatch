@@ -731,7 +731,10 @@ until the address moves back:
    TypeScript application: Coolify starts it from its own Compose file,
    which names the volumes from before the migration, without what was
    written since. It would answer as the same installation and release.
-   Restarting its containers (`docker restart`) is fine.
+   Once `varlatch migrate --status` shows that a start of the rebuilt
+   release was recorded, restarting its containers (`docker restart`) is
+   fine. Before that, start none of them by hand: `--resume` starts them
+   after it records the start.
 
    The address moves by the route you put in before (see
    [the way back on Coolify](#the-way-back-on-coolify)): the TypeScript

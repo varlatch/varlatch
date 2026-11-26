@@ -484,7 +484,7 @@ func (w *world) recover(said string) {
 	t := w.t
 	t.Helper()
 	m := regexp.MustCompile(`set (COMPOSE_FILE=\S+) in \S+; 2\. docker (compose .*? stop varlatchd); 3\. docker (compose .*? up -d --no-deps postgres convex-backend) \(`).FindStringSubmatch(said)
-	if m == nil || !strings.Contains(said, "Do not start varlatchd: varlatch migrate --resume starts it") {
+	if m == nil || !strings.Contains(said, "Do not start varlatchd by hand: varlatch migrate --resume starts it") {
 		t.Fatalf("no recovery said:\n%s", said)
 	}
 	f, err := os.OpenFile(filepath.Join(w.compose, ".env"), os.O_WRONLY|os.O_APPEND, 0)

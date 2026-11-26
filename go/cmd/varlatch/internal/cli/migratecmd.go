@@ -512,6 +512,9 @@ func (r *Run) showJournal(j *migrate.Journal, asJSON bool) error {
 		if rb.ServedAt != "" {
 			fmt.Fprintf(&b, " a start of the rebuilt TypeScript release was recorded at %s (it may have accepted writes since: forward only);", rb.ServedAt)
 		}
+		if len(rb.KeptVolumes) > 0 {
+			fmt.Fprintf(&b, " the fresh volumes %s were kept by its undo (they may hold writes the TypeScript installation does not have: reconcile, then remove them by hand);", strings.Join(rb.KeptVolumes, ", "))
+		}
 		if rb.VerifiedAt != "" {
 			fmt.Fprintf(&b, " the public URL answered from the TypeScript release at %s;", rb.VerifiedAt)
 		} else if rb.Asked {
