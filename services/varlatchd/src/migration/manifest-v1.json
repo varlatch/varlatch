@@ -3,7 +3,7 @@
   "version": 1,
   "encoding": "canonical-v1",
   "source": {
-    "release": "0.23.0",
+    "release": "0.23.1",
     "schema": "v0.22.0",
     "migrations": [
       "0001_initial",

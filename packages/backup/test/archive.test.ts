@@ -100,4 +100,11 @@ describe('authenticated installation archives', () => {
     expect(EMBEDDED_RELEASE.migrationVersion).toBeGreaterThanOrEqual(42);
     expect(compatible(published, EMBEDDED_RELEASE)).toBe(true);
   });
+  it('restores archives declaring (0.22.0, 52), (0.22.0, 53) and (0.23.0, 52), while keeping exact-pair checks', () => {
+    expect(compatible({ ...EMBEDDED_RELEASE, version: '0.22.0', migrationVersion: 52, supportedRestoreSources: [] }, EMBEDDED_RELEASE)).toBe(true);
+    expect(compatible({ ...EMBEDDED_RELEASE, version: '0.22.0', migrationVersion: 53, supportedRestoreSources: [] }, EMBEDDED_RELEASE)).toBe(true);
+    expect(compatible({ ...EMBEDDED_RELEASE, version: '0.23.0', migrationVersion: 52, supportedRestoreSources: [] }, EMBEDDED_RELEASE)).toBe(true);
+    expect(compatible({ ...EMBEDDED_RELEASE, version: '0.22.0', migrationVersion: 51, supportedRestoreSources: [] }, EMBEDDED_RELEASE)).toBe(false);
+    expect(compatible({ ...EMBEDDED_RELEASE, version: '0.22.0', migrationVersion: 54, supportedRestoreSources: [] }, EMBEDDED_RELEASE)).toBe(false);
+  });
 });

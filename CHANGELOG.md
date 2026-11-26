@@ -5,6 +5,37 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
+## 0.23.1 (2026-11-26)
+
+A security fix release on the 0.23 line.
+
+### Server
+
+- **Retiring an identity revokes its Capabilities.** Retiring an identity
+  now revokes its Capabilities; a one-time cleanup at first start revokes
+  any an earlier release left live. Capabilities are unavailable (503)
+  until that cleanup finishes.
+- Reactivating an already-enabled identity no longer records an
+  `identity.reactivated` audit event.
+
+### Upgrading
+
+Database schema: migration 53 (indexes only, applied automatically by
+`varlatch upgrade` or the migrate job). Check `SHA256SUMS` and its
+signature as [Verifying a release](docs/operations/verify-release.md)
+describes.
+
+- The CLI: replace it with `varlatch-cli-0.23.1.cjs`, run `varlatch
+  self-update`, or `brew upgrade varlatch`.
+- The server: to move an installation to 0.23.1, follow the 0.22.1 notes
+  below with the 0.23.1 CLI and version.
+- Coolify: before deploying 0.23.1, set the four variables of this
+  release's `coolify-image-digests.env` (checked against `SHA256SUMS`) in
+  the resource's environment, then update the repository ref as usual
+  ([Deploying on Coolify](infra/coolify/README.md#upgrades)).
+
+Backups: archives of 0.23.0 and earlier still restore into this release.
+
 ## 0.23.0 (2026-11-22)
 
 The last release of the current server line: the 0.50 line replaces it.
