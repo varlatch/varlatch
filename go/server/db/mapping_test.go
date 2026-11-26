@@ -85,6 +85,7 @@ type mapping struct {
 	SeedRows  map[string]target   `json:"seedRows"`
 	Added     struct {
 		Tables   map[string]string `json:"tables"`
+		Indexes  map[string]string `json:"indexes"`
 		Triggers map[string]string `json:"triggers"`
 	} `json:"added"`
 }
@@ -770,8 +771,9 @@ func TestMapping(t *testing.T) {
 			}
 		}
 		for ix, info := range lt.indexes {
-			if !usedIndexes[name+"."+ix] {
-				t.Errorf("index %s (%s on %s): nothing in PostgreSQL maps to it", ix, info.origin, name)
+			_, added := m.Added.Indexes[ix]
+			if added == usedIndexes[name+"."+ix] {
+				t.Errorf("index %s (%s on %s): must be either mapped from PostgreSQL or listed as added, not both or neither", ix, info.origin, name)
 			}
 		}
 		for i := range lt.fks {
@@ -788,6 +790,17 @@ func TestMapping(t *testing.T) {
 	for name := range m.Added.Tables {
 		if lite.tables[name] == nil {
 			t.Errorf("table %s: listed as added, but schema.sql has no such table", name)
+		}
+	}
+	for name := range m.Added.Indexes {
+		found := false
+		for _, lt := range lite.tables {
+			if _, ok := lt.indexes[name]; ok {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("index %s: listed as added, but schema.sql has no such index", name)
 		}
 	}
 	// A table guarded against REPLACE has no hidden rowid to collide on:

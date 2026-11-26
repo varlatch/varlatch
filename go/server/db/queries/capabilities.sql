@@ -46,11 +46,13 @@ UPDATE capabilities SET revoked_at = sqlc.arg(now)
 WHERE (agent_identity_id = sqlc.arg(identity_id) OR broker_identity_id = sqlc.arg(identity_id)) AND revoked_at IS NULL;
 
 -- name: LiveCapabilitiesForRepair :many
--- capabilities.RevokeOfRetired: the unexpired, unrevoked Capabilities, by
--- Organization and id.
-SELECT id, organization_id, agent_identity_id, broker_identity_id, created_at FROM capabilities
+-- capabilities.RevokeOfRetired: the next at most batch unexpired, unrevoked
+-- Capabilities after (after_org, after_id), by Organization and id.
+SELECT id, organization_id, agent_identity_id, broker_identity_id FROM capabilities
 WHERE revoked_at IS NULL AND expires_at > sqlc.arg(now)
-ORDER BY organization_id, id;
+  AND (organization_id > sqlc.arg(after_org) OR (organization_id = sqlc.arg(after_org) AND id > sqlc.arg(after_id)))
+ORDER BY organization_id, id
+LIMIT sqlc.arg(batch);
 
 -- name: IdentityRetiredNow :one
 -- capabilities.RevokeOfRetired: whether the identity is retired now
@@ -59,7 +61,8 @@ SELECT count(*) FROM identities WHERE id = ? AND disabled = 1 AND suspended_by_d
 
 -- name: LatestIdentityLifecycle :one
 -- capabilities.RevokeOfRetired: the identity's latest identity.retired or
--- identity.reactivated, by audit order.
+-- identity.reactivated, by audit order: the last entry of
+-- audit_events_identity_lifecycle_idx for it.
 SELECT event_type, event_order FROM audit_events
 WHERE organization_id = sqlc.arg(organization_id) AND event_type IN ('identity.retired', 'identity.reactivated')
   AND json_extract(resource, '$.identityId') = sqlc.arg(identity_id)
@@ -67,8 +70,9 @@ ORDER BY event_order DESC LIMIT 1;
 
 -- name: CapabilityIssuedOrder :one
 -- capabilities.RevokeOfRetired: where the Capability's capability.issued
--- stands in the audit order, looked for around its created_at.
+-- stands in the audit order, by audit_events_capability_issued_idx (its
+-- whole history, not a window around its created_at).
 SELECT event_order FROM audit_events
-WHERE organization_id = sqlc.arg(organization_id) AND occurred_at >= sqlc.arg(from_at) AND occurred_at <= sqlc.arg(to_at)
-  AND event_type = 'capability.issued' AND json_extract(resource, '$.capabilityId') = sqlc.arg(capability_id)
+WHERE organization_id = sqlc.arg(organization_id) AND event_type = 'capability.issued'
+  AND json_extract(resource, '$.capabilityId') = sqlc.arg(capability_id)
 ORDER BY event_order LIMIT 1;

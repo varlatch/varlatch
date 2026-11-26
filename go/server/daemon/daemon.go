@@ -479,18 +479,6 @@ func serve(opts Options, h *hooks) int {
 	if h.writer != nil {
 		h.writer(writer)
 	}
-	// Capabilities wait for the repair of what earlier releases'
-	// retirements left live (capabilities.Repair): 503 MAINTENANCE until it
-	// has run, inside the maintenance admission. Tried once before
-	// serving, then every two seconds while it has not run: behind a gate,
-	// an upgrade's hold or after a failure. A gate makes it run again.
-	capRepair.Attempt(ctx, writer, admission.Enter, time.Now, log)
-	repairDone := make(chan struct{})
-	go func() {
-		defer close(repairDone)
-		capRepair.Loop(ctx, 2*time.Second, writer, admission.Enter, admission.Isolated, time.Now, log)
-	}()
-	defer func() { cancel(); <-repairDone }()
 	// The Security Control report summary (feature-parity decision 10):
 	// every minute, each hour's report counts become audit events once the
 	// hour has been over for 10 minutes. A stop ends it before the
@@ -706,6 +694,18 @@ func serve(opts Options, h *hooks) int {
 	go func() { served <- srv.Serve(ln) }()
 	env.serving.Store(true)
 	log.Info("varlatchd is serving", "version", buildinfo.Version, "address", ln.Addr().String(), "installationId", inst.ID)
+	// Capabilities wait for the repair of what earlier releases'
+	// retirements left live (capabilities.Repair): 503 MAINTENANCE until it
+	// has run, inside the maintenance admission. It starts once the
+	// listener serves, in bounded write jobs, so it never holds the start;
+	// then every two seconds while it has not run: behind a gate, an
+	// upgrade's hold or after a failure. A gate makes it run again.
+	repairDone := make(chan struct{})
+	go func() {
+		defer close(repairDone)
+		capRepair.Loop(ctx, 2*time.Second, writer, admission.Enter, admission.Isolated, time.Now, log)
+	}()
+	defer func() { cancel(); <-repairDone }()
 	var publicServers []*http.Server
 	publicDone := make(chan struct{})
 	if public != nil {

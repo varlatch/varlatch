@@ -181,6 +181,68 @@ func TestRevokeOfRetiredByAuditOrder(t *testing.T) {
 	}
 }
 
+// TestRevokeOfRetiredFindsAFarIssuance: an issuance after a reactivation is
+// found however far its row's created_at is from its capability.issued (an
+// imported Capability's), not only within a window around it.
+func TestRevokeOfRetiredFindsAFarIssuance(t *testing.T) {
+	r := newRetireHarness(t)
+	r.retire("agent")
+	r.reactivate("agent")
+	after := r.issue()
+	r.exec("UPDATE capabilities SET created_at = created_at - ? WHERE id = ?", (3 * 24 * time.Hour).Microseconds(), after)
+	if n, err := capabilities.RevokeOfRetired(context.Background(), r.w, r.now); err != nil || n != 0 {
+		t.Fatalf("revoked %d (%v), want 0", n, err)
+	}
+	if !r.live(after) {
+		t.Fatal("the Capability issued after the reactivation was revoked")
+	}
+}
+
+// TestRevokeOfRetiredInBatches: the repair holds the writer for at most a
+// batch of Capabilities at a time, and repairs them all.
+func TestRevokeOfRetiredInBatches(t *testing.T) {
+	r := newRetireHarness(t)
+	var ended []string
+	for range 5 {
+		ended = append(ended, r.issue())
+	}
+	r.retire("agent")
+	r.exec("UPDATE capabilities SET revoked_at = NULL WHERE agent_identity_id = ?", r.fill("{idn:agent}"))
+	r.reactivate("agent")
+	var kept []string
+	for range 3 {
+		kept = append(kept, r.issue())
+	}
+	live := r.count("SELECT count(*) FROM capabilities WHERE revoked_at IS NULL AND expires_at > ?", r.now().UnixMicro())
+	var batches []int
+	capabilities.SetAfterBatch(func(n int) { batches = append(batches, n) })
+	defer capabilities.SetAfterBatch(nil)
+	n, err := capabilities.RevokeOfRetiredInBatches(context.Background(), r.w, r.now, 2)
+	if err != nil || n < len(ended) {
+		t.Fatalf("revoked %d (%v), want at least %d", n, err, len(ended))
+	}
+	for _, id := range ended {
+		if r.live(id) {
+			t.Fatalf("%s is live", id)
+		}
+	}
+	for _, id := range kept {
+		if !r.live(id) {
+			t.Fatalf("%s was revoked", id)
+		}
+	}
+	total := 0
+	for _, b := range batches {
+		if b > 2 {
+			t.Fatalf("a batch of %d (%v)", b, batches)
+		}
+		total += b
+	}
+	if total != live || len(batches) != live/2+1 {
+		t.Fatalf("batches %v for %d live Capabilities", batches, live)
+	}
+}
+
 // TestRevokeOfRetiredReadsAllHistory: a retirement older than two days
 // still ends a Capability that outlives a day (an imported one).
 func TestRevokeOfRetiredReadsAllHistory(t *testing.T) {
@@ -275,6 +337,29 @@ func TestCapabilitiesWaitForTheRepair(t *testing.T) {
 	repair.Invalidate()
 	code, body = r.call(http.MethodPost, issuances, "broker", r.fill(issuance))
 	refused("issue once invalidated", code, body)
+}
+
+// TestRepairLoopStartsAtOnce: the loop attempts the repair when it starts,
+// not after its first interval.
+func TestRepairLoopStartsAtOnce(t *testing.T) {
+	r := newRetireHarness(t)
+	repair := &capabilities.Repair{Run: func(ctx context.Context, w *write.Writer, now func() time.Time) (int, error) {
+		return 0, nil
+	}}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		repair.Loop(ctx, time.Hour, r.w, admitted, func() bool { return false }, r.now, log)
+	}()
+	defer func() { cancel(); <-done }()
+	for i := 0; i < 400 && !repair.Ready(); i++ {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !repair.Ready() {
+		t.Fatal("the loop waited for its first interval")
+	}
 }
 
 // TestRepairWaitsForTheAdmission: the repair runs inside the maintenance

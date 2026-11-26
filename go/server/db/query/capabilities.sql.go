@@ -37,27 +37,21 @@ func (q *Queries) CapabilityAgent(ctx context.Context, arg CapabilityAgentParams
 
 const capabilityIssuedOrder = `-- name: CapabilityIssuedOrder :one
 SELECT event_order FROM audit_events
-WHERE organization_id = ?1 AND occurred_at >= ?2 AND occurred_at <= ?3
-  AND event_type = 'capability.issued' AND json_extract(resource, '$.capabilityId') = ?4
+WHERE organization_id = ?1 AND event_type = 'capability.issued'
+  AND json_extract(resource, '$.capabilityId') = ?2
 ORDER BY event_order LIMIT 1
 `
 
 type CapabilityIssuedOrderParams struct {
 	OrganizationID sql.NullString
-	FromAt         int64
-	ToAt           int64
 	CapabilityID   sql.NullString
 }
 
 // capabilities.RevokeOfRetired: where the Capability's capability.issued
-// stands in the audit order, looked for around its created_at.
+// stands in the audit order, by audit_events_capability_issued_idx (its
+// whole history, not a window around its created_at).
 func (q *Queries) CapabilityIssuedOrder(ctx context.Context, arg CapabilityIssuedOrderParams) (int64, error) {
-	row := q.db.QueryRowContext(ctx, capabilityIssuedOrder,
-		arg.OrganizationID,
-		arg.FromAt,
-		arg.ToAt,
-		arg.CapabilityID,
-	)
+	row := q.db.QueryRowContext(ctx, capabilityIssuedOrder, arg.OrganizationID, arg.CapabilityID)
 	var event_order int64
 	err := row.Scan(&event_order)
 	return event_order, err
@@ -172,7 +166,8 @@ type LatestIdentityLifecycleRow struct {
 }
 
 // capabilities.RevokeOfRetired: the identity's latest identity.retired or
-// identity.reactivated, by audit order.
+// identity.reactivated, by audit order: the last entry of
+// audit_events_identity_lifecycle_idx for it.
 func (q *Queries) LatestIdentityLifecycle(ctx context.Context, arg LatestIdentityLifecycleParams) (LatestIdentityLifecycleRow, error) {
 	row := q.db.QueryRowContext(ctx, latestIdentityLifecycle, arg.OrganizationID, arg.IdentityID)
 	var i LatestIdentityLifecycleRow
@@ -235,23 +230,36 @@ func (q *Queries) ListCapabilities(ctx context.Context, arg ListCapabilitiesPara
 }
 
 const liveCapabilitiesForRepair = `-- name: LiveCapabilitiesForRepair :many
-SELECT id, organization_id, agent_identity_id, broker_identity_id, created_at FROM capabilities
+SELECT id, organization_id, agent_identity_id, broker_identity_id FROM capabilities
 WHERE revoked_at IS NULL AND expires_at > ?1
+  AND (organization_id > ?2 OR (organization_id = ?2 AND id > ?3))
 ORDER BY organization_id, id
+LIMIT ?4
 `
+
+type LiveCapabilitiesForRepairParams struct {
+	Now      int64
+	AfterOrg string
+	AfterID  string
+	Batch    int64
+}
 
 type LiveCapabilitiesForRepairRow struct {
 	ID               string
 	OrganizationID   string
 	AgentIdentityID  string
 	BrokerIdentityID string
-	CreatedAt        int64
 }
 
-// capabilities.RevokeOfRetired: the unexpired, unrevoked Capabilities, by
-// Organization and id.
-func (q *Queries) LiveCapabilitiesForRepair(ctx context.Context, now int64) ([]LiveCapabilitiesForRepairRow, error) {
-	rows, err := q.db.QueryContext(ctx, liveCapabilitiesForRepair, now)
+// capabilities.RevokeOfRetired: the next at most batch unexpired, unrevoked
+// Capabilities after (after_org, after_id), by Organization and id.
+func (q *Queries) LiveCapabilitiesForRepair(ctx context.Context, arg LiveCapabilitiesForRepairParams) ([]LiveCapabilitiesForRepairRow, error) {
+	rows, err := q.db.QueryContext(ctx, liveCapabilitiesForRepair,
+		arg.Now,
+		arg.AfterOrg,
+		arg.AfterID,
+		arg.Batch,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -264,7 +272,6 @@ func (q *Queries) LiveCapabilitiesForRepair(ctx context.Context, now int64) ([]L
 			&i.OrganizationID,
 			&i.AgentIdentityID,
 			&i.BrokerIdentityID,
-			&i.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
