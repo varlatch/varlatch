@@ -362,14 +362,16 @@ func (s *Service) RevokeOwnCredential(ctx context.Context, p *Principal, credent
 // replaced by the next POST /auth/varlatch-token of the same browser, for
 // as long as its session lasts. An older bearer of the caller's own
 // session is only revoked ("Sign out everywhere else" leaves this browser
-// signed in); the presenting bearer ends it ("Sign out this browser"). A
-// CLI credential from the browser hand-off carries the session too, and
-// leaves it alone (ADR-0024).
+// signed in); the presenting bearer ends it ("Sign out this browser"). Only
+// a browser bearer is of its own session: a CLI credential from the browser
+// hand-off carries the session too, but revoking a browser bearer with it
+// ends the session; revoking that CLI credential leaves the session alone
+// (ADR-0024).
 func endsSession(p *Principal, credentialID, kind string, session sql.NullString) bool {
 	if kind != KindBrowser || !session.Valid {
 		return false
 	}
-	own := p.Credential.AuthSessionID != nil && *p.Credential.AuthSessionID == session.String
+	own := p.Credential.Kind == KindBrowser && p.Credential.AuthSessionID != nil && *p.Credential.AuthSessionID == session.String
 	return !own || credentialID == p.Credential.ID
 }
 

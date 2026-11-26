@@ -130,3 +130,35 @@ func TestRevokingAnExpiredBrowserCredentialEndsItsSession(t *testing.T) {
 		t.Fatalf("the idle browser minted a new bearer: %d %s", w.Code, w.Body.String())
 	}
 }
+
+// The same-session exception is the browser's own: a CLI credential from
+// the browser hand-off carries its session too, but revoking a browser
+// bearer of that session with it ends the session, as it would from any
+// other credential. Revoking the hand-off credential leaves the session.
+func TestACLICallerRevokingABrowserCredentialEndsItsSession(t *testing.T) {
+	s, ta := browserServer(t, browserOrigin)
+	mine := newBrowser(t, s, browserOrigin)
+	_, key := enrollWithKey(t, mine, ta)
+	var cli struct{ ID, Token string }
+	decodeInto(t, do(s, "POST", "/v1/me/credentials/cli", `{}`, map[string]string{"Authorization": "Bearer " + mint(t, mine), "Content-Type": "application/json"}), &cli)
+	bearer := credentialOf(t, s, mint(t, mine))
+	if w := do(s, "DELETE", "/v1/me/credentials/"+bearer, "", map[string]string{"Authorization": "Bearer " + cli.Token}); w.Code != 204 {
+		t.Fatalf("revoke the browser's bearer with the CLI credential: %d %s", w.Code, w.Body.String())
+	}
+	if w := mine.post("/auth/varlatch-token", nil); w.Code != 401 {
+		t.Fatalf("the browser minted a new bearer after the CLI revoked its credential: %d %s", w.Code, w.Body.String())
+	}
+	if n := countRows(t, ta, "SELECT count(*) FROM auth_sessions"); n != 0 {
+		t.Fatalf("%d sessions, want none", n)
+	}
+
+	// The hand-off credential revoked from a browser leaves the browser's
+	// session alone.
+	other := newBrowser(t, s, browserOrigin)
+	signInWith(t, other, key)
+	decodeInto(t, do(s, "POST", "/v1/me/credentials/cli", `{}`, map[string]string{"Authorization": "Bearer " + mint(t, other), "Content-Type": "application/json"}), &cli)
+	if w := do(s, "DELETE", "/v1/me/credentials/"+cli.ID, "", map[string]string{"Authorization": "Bearer " + mint(t, other)}); w.Code != 204 {
+		t.Fatalf("revoke the hand-off credential: %d %s", w.Code, w.Body.String())
+	}
+	mint(t, other)
+}
