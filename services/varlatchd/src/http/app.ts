@@ -799,9 +799,6 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       return c.json({ token: issued.token, identityId, expiresAt });
     });
 
-    // Sign-out ends the session before it clears the cookie, and says so
-    // when it cannot (humanauth.ts).
-    app.post("/auth/sign-out", (c) => humanAuth.signOut(c.req.raw));
     app.all("/auth/*", (c) => humanAuth.handler(c.req.raw));
 
     app.get("/enroll", (c) => c.html(ENROLL_HTML));
