@@ -289,8 +289,18 @@ export function buildHumanAuth(deps: HumanAuthDeps): HumanAuth {
           await withTx(ctx.db, (db) =>
             endSessionsInOrder(db, { betterAuthUserId: current.user.id }, {
               keep: actx.path === REVOKE_OTHER_SESSIONS_PATH ? current.session.id : null,
+              // The session was read before these locks: once they are
+              // held, it must still be live. A browser another one signed
+              // out meanwhile revokes nothing.
+              check: async (tx) => {
+                const live = (
+                  await tx.query(`SELECT 1 FROM session WHERE id = $1 AND "expiresAt" > clock_timestamp()`, [current.session.id])
+                ).rows[0];
+                if (!live) throw new APIError("UNAUTHORIZED", { message: "Unauthorized", code: "UNAUTHORIZED" });
+              },
             }),
           ).catch((err: unknown) => {
+            if (isAPIError(err)) throw err;
             console.error("varlatchd: the sessions could not be revoked:", err);
             throw new APIError("INTERNAL_SERVER_ERROR", { message: "The sessions could not be revoked" });
           });
