@@ -74,6 +74,10 @@ type Options struct {
 	// Held, when set, is whether a restore's hold stands (backup.Hold):
 	// /readyz says so. A held installation is ready.
 	Held func() bool
+	// Capabilities, when set, admits Capability issuance and exercise
+	// (capabilities.Repair): an error answers instead, until the repair of
+	// earlier retirements has run.
+	Capabilities interface{ Require() error }
 	// Backups, when set, is the backup status getInstallationBackups
 	// answers (ADR-0059 step 4.14).
 	Backups BackupStatus

@@ -12,63 +12,6 @@ import (
 	"database/sql"
 )
 
-const capabilitiesEndedByRetirement = `-- name: CapabilitiesEndedByRetirement :many
-SELECT c.id FROM capabilities c
-WHERE c.organization_id = ?1
-  AND (c.agent_identity_id = ?2 OR c.broker_identity_id = ?2)
-  AND c.revoked_at IS NULL AND c.expires_at > ?3
-  AND EXISTS (
-    SELECT 1 FROM audit_events r
-    WHERE r.organization_id = ?1 AND r.occurred_at > ?4
-      AND r.event_type = 'identity.retired' AND json_extract(r.resource, '$.identityId') = ?2
-      AND r.occurred_at > COALESCE((
-        SELECT max(a.occurred_at) FROM audit_events a
-        WHERE a.organization_id = ?1 AND a.occurred_at > ?4
-          AND a.occurred_at <= c.created_at
-          AND a.event_type = 'identity.reactivated' AND json_extract(a.resource, '$.identityId') = ?2
-      ), ?4))
-ORDER BY c.id
-`
-
-type CapabilitiesEndedByRetirementParams struct {
-	OrganizationID string
-	IdentityID     string
-	Now            int64
-	Since          int64
-}
-
-// revokeCapabilitiesOfRetiredIdentities: the identity's unexpired, unrevoked
-// Capabilities (as Agent or Broker) that one of its retirements since since
-// ends: one after the Capability was issued, or one before it with no
-// reactivation in between.
-func (q *Queries) CapabilitiesEndedByRetirement(ctx context.Context, arg CapabilitiesEndedByRetirementParams) ([]string, error) {
-	rows, err := q.db.QueryContext(ctx, capabilitiesEndedByRetirement,
-		arg.OrganizationID,
-		arg.IdentityID,
-		arg.Now,
-		arg.Since,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		items = append(items, id)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const capabilityAgent = `-- name: CapabilityAgent :one
 SELECT id, kind, disabled FROM identities WHERE id = ? AND organization_id = ?
 `
@@ -90,6 +33,34 @@ func (q *Queries) CapabilityAgent(ctx context.Context, arg CapabilityAgentParams
 	var i CapabilityAgentRow
 	err := row.Scan(&i.ID, &i.Kind, &i.Disabled)
 	return i, err
+}
+
+const capabilityIssuedOrder = `-- name: CapabilityIssuedOrder :one
+SELECT event_order FROM audit_events
+WHERE organization_id = ?1 AND occurred_at >= ?2 AND occurred_at <= ?3
+  AND event_type = 'capability.issued' AND json_extract(resource, '$.capabilityId') = ?4
+ORDER BY event_order LIMIT 1
+`
+
+type CapabilityIssuedOrderParams struct {
+	OrganizationID sql.NullString
+	FromAt         int64
+	ToAt           int64
+	CapabilityID   sql.NullString
+}
+
+// capabilities.RevokeOfRetired: where the Capability's capability.issued
+// stands in the audit order, looked for around its created_at.
+func (q *Queries) CapabilityIssuedOrder(ctx context.Context, arg CapabilityIssuedOrderParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, capabilityIssuedOrder,
+		arg.OrganizationID,
+		arg.FromAt,
+		arg.ToAt,
+		arg.CapabilityID,
+	)
+	var event_order int64
+	err := row.Scan(&event_order)
+	return event_order, err
 }
 
 const capabilityOf = `-- name: CapabilityOf :one
@@ -124,6 +95,19 @@ func (q *Queries) CapabilityOf(ctx context.Context, arg CapabilityOfParams) (Cap
 		&i.Targets,
 	)
 	return i, err
+}
+
+const identityRetiredNow = `-- name: IdentityRetiredNow :one
+SELECT count(*) FROM identities WHERE id = ? AND disabled = 1 AND suspended_by_deletion IS NULL
+`
+
+// capabilities.RevokeOfRetired: whether the identity is retired now
+// (disabled, not by an Organization's deletion).
+func (q *Queries) IdentityRetiredNow(ctx context.Context, id string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, identityRetiredNow, id)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
 }
 
 const insertCapability = `-- name: InsertCapability :exec
@@ -170,6 +154,32 @@ func (q *Queries) InsertCapability(ctx context.Context, arg InsertCapabilityPara
 	return err
 }
 
+const latestIdentityLifecycle = `-- name: LatestIdentityLifecycle :one
+SELECT event_type, event_order FROM audit_events
+WHERE organization_id = ?1 AND event_type IN ('identity.retired', 'identity.reactivated')
+  AND json_extract(resource, '$.identityId') = ?2
+ORDER BY event_order DESC LIMIT 1
+`
+
+type LatestIdentityLifecycleParams struct {
+	OrganizationID sql.NullString
+	IdentityID     sql.NullString
+}
+
+type LatestIdentityLifecycleRow struct {
+	EventType  string
+	EventOrder int64
+}
+
+// capabilities.RevokeOfRetired: the identity's latest identity.retired or
+// identity.reactivated, by audit order.
+func (q *Queries) LatestIdentityLifecycle(ctx context.Context, arg LatestIdentityLifecycleParams) (LatestIdentityLifecycleRow, error) {
+	row := q.db.QueryRowContext(ctx, latestIdentityLifecycle, arg.OrganizationID, arg.IdentityID)
+	var i LatestIdentityLifecycleRow
+	err := row.Scan(&i.EventType, &i.EventOrder)
+	return i, err
+}
+
 const listCapabilities = `-- name: ListCapabilities :many
 SELECT id, organization_id, broker_identity_id, agent_identity_id, project_id, environment_id, items, destinations, secret_hash, run_id, expires_at, revoked_at, created_by, created_at, targets FROM capabilities
 WHERE organization_id = ?1 AND environment_id = ?2
@@ -210,6 +220,51 @@ func (q *Queries) ListCapabilities(ctx context.Context, arg ListCapabilitiesPara
 			&i.CreatedBy,
 			&i.CreatedAt,
 			&i.Targets,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const liveCapabilitiesForRepair = `-- name: LiveCapabilitiesForRepair :many
+SELECT id, organization_id, agent_identity_id, broker_identity_id, created_at FROM capabilities
+WHERE revoked_at IS NULL AND expires_at > ?1
+ORDER BY organization_id, id
+`
+
+type LiveCapabilitiesForRepairRow struct {
+	ID               string
+	OrganizationID   string
+	AgentIdentityID  string
+	BrokerIdentityID string
+	CreatedAt        int64
+}
+
+// capabilities.RevokeOfRetired: the unexpired, unrevoked Capabilities, by
+// Organization and id.
+func (q *Queries) LiveCapabilitiesForRepair(ctx context.Context, now int64) ([]LiveCapabilitiesForRepairRow, error) {
+	rows, err := q.db.QueryContext(ctx, liveCapabilitiesForRepair, now)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LiveCapabilitiesForRepairRow
+	for rows.Next() {
+		var i LiveCapabilitiesForRepairRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrganizationID,
+			&i.AgentIdentityID,
+			&i.BrokerIdentityID,
+			&i.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -274,44 +329,6 @@ func (q *Queries) LiveCapability(ctx context.Context, arg LiveCapabilityParams) 
 	var id string
 	err := row.Scan(&id)
 	return id, err
-}
-
-const recentlyRetiredIdentities = `-- name: RecentlyRetiredIdentities :many
-SELECT DISTINCT o.id AS organization_id, CAST(json_extract(e.resource, '$.identityId') AS TEXT) AS identity_id
-FROM organizations o JOIN audit_events e ON e.organization_id = o.id
-WHERE e.occurred_at > ?1 AND e.event_type = 'identity.retired'
-  AND json_extract(e.resource, '$.identityId') IS NOT NULL
-ORDER BY o.id, identity_id
-`
-
-type RecentlyRetiredIdentitiesRow struct {
-	OrganizationID string
-	IdentityID     string
-}
-
-// revokeCapabilitiesOfRetiredIdentities: per Organization, through
-// audit_events_org_time_idx, the identities retired since since.
-func (q *Queries) RecentlyRetiredIdentities(ctx context.Context, since int64) ([]RecentlyRetiredIdentitiesRow, error) {
-	rows, err := q.db.QueryContext(ctx, recentlyRetiredIdentities, since)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []RecentlyRetiredIdentitiesRow
-	for rows.Next() {
-		var i RecentlyRetiredIdentitiesRow
-		if err := rows.Scan(&i.OrganizationID, &i.IdentityID); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const revokeCapabilitiesOfIdentity = `-- name: RevokeCapabilitiesOfIdentity :exec

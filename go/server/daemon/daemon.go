@@ -394,7 +394,8 @@ func serve(opts Options, h *hooks) int {
 		}
 		defer public.Close()
 	}
-	env := &hostEnv{cfg: cfg, store: store, rootKEK: rootKEK, gates: gates, admission: admission, log: log, tune: h.backups, public: public,
+	capRepair := &capabilities.Repair{}
+	env := &hostEnv{cfg: cfg, store: store, rootKEK: rootKEK, gates: gates, admission: admission, capabilityRepair: capRepair, log: log, tune: h.backups, public: public,
 		serving: &atomic.Bool{}, ready: (&backend{store: store, rootKEK: rootKEK}).Ready,
 		// Host commands are served before the hub is made.
 		endStreams: func() {
@@ -478,42 +479,17 @@ func serve(opts Options, h *hooks) int {
 	if h.writer != nil {
 		h.writer(writer)
 	}
-	// Before serving: Capabilities an earlier release's retirement left
-	// live are revoked (capabilities.RevokeOfRetired). While a restore's
-	// hold or an upgrade's stands, once it ends.
+	// Capabilities wait for the repair of what earlier releases'
+	// retirements left live (capabilities.Repair): 503 MAINTENANCE until it
+	// has run, inside the maintenance admission. Tried once before
+	// serving, then every two seconds while it has not run: behind a gate,
+	// an upgrade's hold or after a failure. A gate makes it run again.
+	capRepair.Attempt(ctx, writer, admission.Enter, time.Now, log)
 	repairDone := make(chan struct{})
-	repair := func() bool {
-		leave, ok := admission.EnterWork()
-		if !ok {
-			return false
-		}
-		defer leave()
-		if n, err := capabilities.RevokeOfRetired(ctx, writer, time.Now); err != nil {
-			log.Error("cannot revoke the Capabilities of retired identities; the next start tries again", "error", err)
-		} else if n > 0 {
-			log.Info("revoked the Capabilities of identities retired before this release", "capabilities", n)
-		}
-		return true
-	}
-	if repair() {
-		close(repairDone)
-	} else {
-		go func() {
-			defer close(repairDone)
-			for t := time.NewTicker(10 * time.Second); ; {
-				select {
-				case <-ctx.Done():
-					t.Stop()
-					return
-				case <-t.C:
-					if repair() {
-						t.Stop()
-						return
-					}
-				}
-			}
-		}()
-	}
+	go func() {
+		defer close(repairDone)
+		capRepair.Loop(ctx, 2*time.Second, writer, admission.Enter, admission.Isolated, time.Now, log)
+	}()
 	defer func() { cancel(); <-repairDone }()
 	// The Security Control report summary (feature-parity decision 10):
 	// every minute, each hour's report counts become audit events once the
@@ -637,6 +613,7 @@ func serve(opts Options, h *hooks) int {
 		RootKEK:         rootKEK,
 		Maintenance:     admission,
 		Held:            admission.Held,
+		Capabilities:    capRepair,
 		Backups:         env.backups,
 		Log:             log,
 	}
