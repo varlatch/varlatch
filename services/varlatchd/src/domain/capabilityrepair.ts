@@ -5,7 +5,7 @@ import { withTx } from "../db/tx.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
 
-/** An identity's latest identity.retired or identity.reactivated, by audit order. */
+/** An identity's identity.retired or identity.reactivated event, by audit order. */
 export interface Lifecycle {
   eventType: "identity.retired" | "identity.reactivated";
   eventOrder: bigint;
@@ -18,45 +18,63 @@ export interface Lifecycle {
  *
  * - an identity retired now (disabled, not by an Organization's deletion)
  *   ends it;
- * - an identity with no retirement or reactivation in its history keeps it
- *   (a suspension by an Organization's deletion records neither, and
- *   cancelling the deletion restores the identity with its Capabilities);
- * - otherwise it is kept only when the identity's latest such event is a
- *   reactivation that precedes the Capability's capability.issued. A
- *   latest retirement ends it, and so does a reactivation after the
- *   issuance (the identity was retired when it was issued, or since), or
- *   an issuance whose event is not found: its history cannot show it valid.
+ * - an identity with no identity.retired in its history keeps it (a
+ *   suspension by an Organization's deletion records none, cancelling the
+ *   deletion restores the identity with its Capabilities, and an earlier
+ *   release's reactivation of an already-enabled identity is no retirement);
+ * - otherwise, with the identity's latest identity.retired at latestRetired,
+ *   the Capability is ended when its capability.issued is not found (its
+ *   history cannot show it post-reactivation), precedes latestRetired, or
+ *   has identity.retired as the identity's latest lifecycle event at or
+ *   before issuedOrder (atIssuance, catching an issuance that raced while
+ *   retired and was later reactivated).
  *
- * Every issuance records capability.issued in its own transaction, and a
+ * Every issuance records capability.issued in its own transaction,
+ * reactivating an already-enabled identity records no event, and a
  * retirement since this release revokes the identity's Capabilities, so a
  * Capability issued by this release is never ended by this rule unless a
  * retirement ended it already: the repair is safe to run again.
  */
 export function endedByRetirement(
-  identity: { retiredNow: boolean; lifecycle: Lifecycle | null },
+  identity: { retiredNow: boolean; latestRetired: bigint | null; atIssuance: Lifecycle | null },
   issuedOrder: bigint | null,
 ): boolean {
   if (identity.retiredNow) return true;
-  const { lifecycle } = identity;
-  if (!lifecycle) return false;
-  if (lifecycle.eventType === "identity.retired") return true;
-  return issuedOrder === null || issuedOrder < lifecycle.eventOrder;
+  if (identity.latestRetired === null) return false;
+  if (issuedOrder === null || issuedOrder < identity.latestRetired) return true;
+  return identity.atIssuance?.eventType === "identity.retired";
 }
 
 /** How many Capabilities one repair transaction holds at most. */
 export const REPAIR_BATCH = 200;
 
 /**
- * Each identity's latest identity.retired or identity.reactivated in the
- * Organization ($1), for the identities $2: one backward step of
- * audit_events_identity_lifecycle_idx (migration 53) each.
+ * Each identity's latest identity.retired in the Organization ($1), for the
+ * identities $2: backward along audit_events_identity_lifecycle_idx
+ * (migration 53).
  */
-export const LIFECYCLE_SQL = `SELECT i.id AS identity_id, e.event_type, e.event_order::text AS event_order
+export const LATEST_RETIRED_SQL = `SELECT i.id AS identity_id, e.event_order::text AS event_order
   FROM unnest($2::text[]) AS i(id)
+  CROSS JOIN LATERAL (
+    SELECT event_order FROM audit_events
+    WHERE organization_id = $1 AND event_type IN ('identity.retired', 'identity.reactivated')
+      AND event_type = 'identity.retired'
+      AND resource->>'identityId' = i.id
+    ORDER BY event_order DESC LIMIT 1) e`;
+
+/**
+ * Each (identity_id, issued_order) pair's ($2, $3) latest identity.retired
+ * or identity.reactivated at or before issued_order in the Organization ($1):
+ * one backward step of audit_events_identity_lifecycle_idx (migration 53)
+ * each.
+ */
+export const LIFECYCLE_AT_SQL = `SELECT p.identity_id, p.issued_order::text AS issued_order, e.event_type, e.event_order::text AS event_order
+  FROM unnest($2::text[], $3::bigint[]) AS p(identity_id, issued_order)
   CROSS JOIN LATERAL (
     SELECT event_type, event_order FROM audit_events
     WHERE organization_id = $1 AND event_type IN ('identity.retired', 'identity.reactivated')
-      AND resource->>'identityId' = i.id
+      AND resource->>'identityId' = p.identity_id
+      AND event_order <= p.issued_order
     ORDER BY event_order DESC LIMIT 1) e`;
 
 /**
@@ -98,8 +116,8 @@ export const LIVE_BATCH_SQL = `SELECT id, agent_identity_id, broker_identity_id 
  *
  * Batches are safe one after another: no Capability is issued until the
  * repair has run, a retirement since revokes its identity's Capabilities
- * itself, and a reactivation since leaves the latest event a reactivation
- * after the issuance, which still ends it. Returns how many it revoked.
+ * itself, and a reactivation since commits after the issuance and cannot
+ * clear a retirement before or at issuance. Returns how many it revoked.
  */
 export async function revokeCapabilitiesOfRetiredIdentities(
   ctx: AppCtx,
@@ -160,29 +178,74 @@ async function repairBatch(
       )
     ).rows.map((r) => (r as { id: string }).id),
   );
-  const lifecycle = new Map(
-    (await db.query(LIFECYCLE_SQL, [organizationId, identityIds])).rows.map((r) => {
-      const row = r as { identity_id: string; event_type: Lifecycle["eventType"]; event_order: string };
-      return [row.identity_id, { eventType: row.event_type, eventOrder: BigInt(row.event_order) }] as const;
-    }),
-  );
-  // Only a Capability whose identity was reactivated needs its issuance's place.
-  const reactivated = caps.filter((c) =>
-    [c.agent_identity_id, c.broker_identity_id].some((i) => lifecycle.get(i)?.eventType === "identity.reactivated"),
+  const notRetiredNow = identityIds.filter((i) => !retiredNow.has(i));
+  const latestRetired = new Map<string, bigint>();
+  if (notRetiredNow.length > 0) {
+    for (const r of (await db.query(LATEST_RETIRED_SQL, [organizationId, notRetiredNow])).rows as {
+      identity_id: string;
+      event_order: string;
+    }[]) {
+      latestRetired.set(r.identity_id, BigInt(r.event_order));
+    }
+  }
+  // Only a Capability whose non-retired identity has a retirement in its
+  // history needs its issuance's place.
+  const needIssued = caps.filter((c) =>
+    [c.agent_identity_id, c.broker_identity_id].some((i) => !retiredNow.has(i) && latestRetired.has(i)),
   );
   const issued = new Map<string, bigint>();
-  if (reactivated.length > 0) {
-    for (const r of (await db.query(ISSUED_SQL, [organizationId, reactivated.map((c) => c.id)])).rows as {
+  if (needIssued.length > 0) {
+    for (const r of (await db.query(ISSUED_SQL, [organizationId, needIssued.map((c) => c.id)])).rows as {
       capability_id: string;
       event_order: string;
     }[]) {
       issued.set(r.capability_id, BigInt(r.event_order));
     }
   }
+  // Only a Capability issued at or after its identity's latest retirement
+  // needs the lifecycle state at issuance (to catch an issuance while
+  // retired that was later reactivated, without tripping on a spurious
+  // reactivation after a valid issuance).
+  const atPairIds: string[] = [];
+  const atPairOrders: string[] = [];
+  const atPairsSeen = new Set<string>();
+  for (const c of needIssued) {
+    const issuedOrder = issued.get(c.id);
+    if (issuedOrder === undefined) continue;
+    for (const i of [c.agent_identity_id, c.broker_identity_id]) {
+      if (retiredNow.has(i)) continue;
+      const rOrder = latestRetired.get(i);
+      if (rOrder === undefined || issuedOrder < rOrder) continue;
+      const k = `${i}:${issuedOrder}`;
+      if (atPairsSeen.has(k)) continue;
+      atPairsSeen.add(k);
+      atPairIds.push(i);
+      atPairOrders.push(issuedOrder.toString());
+    }
+  }
+  const atIssuance = new Map<string, Lifecycle>();
+  if (atPairIds.length > 0) {
+    for (const r of (await db.query(LIFECYCLE_AT_SQL, [organizationId, atPairIds, atPairOrders])).rows as {
+      identity_id: string;
+      issued_order: string;
+      event_type: Lifecycle["eventType"];
+      event_order: string;
+    }[]) {
+      atIssuance.set(`${r.identity_id}:${r.issued_order}`, { eventType: r.event_type, eventOrder: BigInt(r.event_order) });
+    }
+  }
   const ended: { id: string; identityId: string }[] = [];
   for (const c of caps) {
+    const issuedOrder = issued.get(c.id) ?? null;
     const by = [c.agent_identity_id, c.broker_identity_id].find((i) =>
-      endedByRetirement({ retiredNow: retiredNow.has(i), lifecycle: lifecycle.get(i) ?? null }, issued.get(c.id) ?? null),
+      endedByRetirement(
+        {
+          retiredNow: retiredNow.has(i),
+          latestRetired: latestRetired.get(i) ?? null,
+          atIssuance: issuedOrder === null ? null : (atIssuance.get(`${i}:${issuedOrder}`) ?? null),
+        },
+        issuedOrder,
+      ),
     );
     if (by) ended.push({ id: c.id, identityId: by });
   }

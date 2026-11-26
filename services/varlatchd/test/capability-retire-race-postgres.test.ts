@@ -4,7 +4,7 @@ import { issueCredential } from "../src/auth/credentials.js";
 import { createPgQuerier } from "../src/db/pg.js";
 import { runMigrations } from "../src/db/migrate.js";
 import { withTx } from "../src/db/tx.js";
-import { CapabilityRepair, ISSUED_SQL, LIFECYCLE_SQL, LIVE_BATCH_SQL } from "../src/domain/capabilityrepair.js";
+import { CapabilityRepair, ISSUED_SQL, LATEST_RETIRED_SQL, LIFECYCLE_AT_SQL, LIVE_BATCH_SQL } from "../src/domain/capabilityrepair.js";
 import { consumeSetupGrant, ensureInstallation, issueBootstrapGrant } from "../src/domain/bootstrap.js";
 import type { AppCtx } from "../src/domain/ctx.js";
 import { retireIdentity } from "../src/domain/identities.js";
@@ -222,11 +222,17 @@ describe.skipIf(!url)("Capability issuance racing an identity's retirement on re
       await client.query("SET LOCAL enable_bitmapscan = off");
       const plan = async (text: string) =>
         (
-          await client.query(`EXPLAIN ${text.replace("$1", "'" + orgId + "'").replace("$2::text[]", "ARRAY['x']::text[]")}`)
+          await client.query(
+            `EXPLAIN ${text
+              .replace("$1", "'" + orgId + "'")
+              .replace("$2::text[]", "ARRAY['x']::text[]")
+              .replace("$3::bigint[]", "ARRAY[10]::bigint[]")}`,
+          )
         ).rows
           .map((r) => (r as { "QUERY PLAN": string })["QUERY PLAN"])
           .join("\n");
-      expect(await plan(LIFECYCLE_SQL)).toContain("audit_events_identity_lifecycle_idx");
+      expect(await plan(LATEST_RETIRED_SQL)).toContain("audit_events_identity_lifecycle_idx");
+      expect(await plan(LIFECYCLE_AT_SQL)).toContain("audit_events_identity_lifecycle_idx");
       expect(await plan(ISSUED_SQL)).toContain("audit_events_capability_issued_idx");
       // A batch is a range of the live Capabilities' index from the cursor
       // on, never a sort of what remains of the Organization.
