@@ -15,8 +15,6 @@ A security fix release on the 0.23 line.
   now revokes its Capabilities; a one-time cleanup at first start revokes
   any an earlier release left live. Capabilities are unavailable (503)
   until that cleanup finishes.
-- Reactivating an already-enabled identity no longer records an
-  `identity.reactivated` audit event.
 - **Revoking a browser credential ends its session.** Revoking another
   browser's credential, or signing out everywhere else, used to leave that
   browser's session in place, so it could sign itself back in without its

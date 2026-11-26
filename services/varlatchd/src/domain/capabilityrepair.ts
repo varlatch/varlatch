@@ -20,8 +20,8 @@ export interface Lifecycle {
  *   ends it;
  * - an identity with no identity.retired in its history keeps it (a
  *   suspension by an Organization's deletion records none, cancelling the
- *   deletion restores the identity with its Capabilities, and an earlier
- *   release's reactivation of an already-enabled identity is no retirement);
+ *   deletion restores the identity with its Capabilities, and reactivating
+ *   an already-enabled identity is no retirement);
  * - otherwise, with the identity's latest identity.retired at latestRetired,
  *   the Capability is ended when its capability.issued is not found (its
  *   history cannot show it post-reactivation), precedes latestRetired, or
@@ -29,11 +29,12 @@ export interface Lifecycle {
  *   before issuedOrder (atIssuance, catching an issuance that raced while
  *   retired and was later reactivated).
  *
- * Every issuance records capability.issued in its own transaction,
- * reactivating an already-enabled identity records no event, and a
- * retirement since this release revokes the identity's Capabilities, so a
- * Capability issued by this release is never ended by this rule unless a
- * retirement ended it already: the repair is safe to run again.
+ * Every issuance records capability.issued in its own transaction, a
+ * redundant identity.reactivated on an enabled identity never brackets an
+ * issuance with a retirement, and a retirement since this release revokes
+ * the identity's Capabilities, so a Capability issued by this release is
+ * never ended by this rule unless a retirement ended it already: the repair
+ * is safe to run again.
  */
 export function endedByRetirement(
   identity: { retiredNow: boolean; latestRetired: bigint | null; atIssuance: Lifecycle | null },
