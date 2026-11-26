@@ -17,6 +17,16 @@ A security fix release on the 0.23 line.
   until that cleanup finishes.
 - Reactivating an already-enabled identity no longer records an
   `identity.reactivated` audit event.
+- **Revoking a browser credential ends its session.** Revoking another
+  browser's credential, or signing out everywhere else, used to leave that
+  browser's session in place, so it could sign itself back in without its
+  passkey for as long as the session lasted. Now revoking a browser
+  credential ends the session it came from, and Sign out everywhere else
+  (the new `POST /v1/me/sessions/sign-out-others`) ends every other
+  browser's session, including browsers that held no valid credential at
+  the time. Signing out ends the session on the server, and if the server
+  cannot end it the page says so. Better Auth's origin check is kept on
+  explicitly.
 
 ### Upgrading
 
