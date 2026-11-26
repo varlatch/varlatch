@@ -138,8 +138,31 @@ func wordRune(r rune) bool {
 	return r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '_' || r > 0x7f && r != utf8.RuneError
 }
 
+// scanReportDir searches reportJSON and every regular file under dir for the
+// names in want.
+func scanReportDir(dir string, reportJSON []byte, want map[string]bool) (texts, found int, err error) {
+	all := []string{strings.ToLower(string(reportJSON))}
+	if resolved, rerr := filepath.EvalSymlinks(dir); rerr == nil {
+		dir = resolved
+	}
+	walked := filepath.WalkDir(dir, func(path string, d fs.DirEntry, werr error) error {
+		if werr != nil || !d.Type().IsRegular() {
+			return werr
+		}
+		b, rerr := os.ReadFile(path)
+		all = append(all, strings.ToLower(string(b)))
+		return rerr
+	})
+	for n := range want {
+		if slices.ContainsFunc(all, func(text string) bool { return named(text, n) }) {
+			found++
+		}
+	}
+	return len(all), found, walked
+}
+
 // checkNames is the run's last record: the report as it will be written, and
-// every file beside it (the log, the other runs').
+// every file in reportDir (the log, and any report already there).
 func checkNames(t *testing.T) {
 	copyNames.Lock()
 	defer copyNames.Unlock()
@@ -149,22 +172,8 @@ func checkNames(t *testing.T) {
 	report.Lock()
 	b, err := json.Marshal(&report)
 	report.Unlock()
-	texts := []string{strings.ToLower(string(b))}
-	walked := filepath.WalkDir(filepath.Dir(reportDir), func(path string, d fs.DirEntry, werr error) error {
-		if werr != nil || !d.Type().IsRegular() {
-			return werr
-		}
-		b, rerr := os.ReadFile(path)
-		texts = append(texts, strings.ToLower(string(b)))
-		return rerr
-	})
-	found := 0
-	for n := range copyNames.of {
-		if slices.ContainsFunc(texts, func(text string) bool { return named(text, n) }) {
-			found++
-		}
-	}
+	texts, found, walked := scanReportDir(reportDir, b, copyNames.of)
 	err = errors.Join(err, walked)
 	record(t, restoreItem, "no name of the copy's is in the report or the log", err == nil && len(copyNames.of) > 0 && found == 0,
-		fmt.Sprintf("%d names looked for in %d texts, %d found (%d more are words of this harness or anybody's, and left out)", len(copyNames.of), len(texts), found, len(copyNames.left)))
+		fmt.Sprintf("%d names looked for in %d texts, %d found (%d more are words of this harness or anybody's, and left out)", len(copyNames.of), texts, found, len(copyNames.left)))
 }
