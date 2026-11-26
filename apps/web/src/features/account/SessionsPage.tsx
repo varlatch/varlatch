@@ -44,6 +44,11 @@ export function SessionsPage() {
     .filter((c) => c.kind !== "browser")
     .sort((a, b) => Number(!live(a)) - Number(!live(b)) || b.createdAt.localeCompare(a.createdAt));
   const revocableOthers = others.filter(live);
+  // A browser idle for more than 15 minutes has only expired bearers, but
+  // its session still lasts: revoking one of them ends that session, so
+  // "Sign out everywhere else" sends them too. An expired bearer of this
+  // browser's own session is only revoked; this browser stays signed in.
+  const signOutOthers = [...revocableOthers, ...endedBrowsers.filter((c) => !c.revokedAt)];
 
   const revokeOne = async (c: OwnCredential) => {
     if (c.current) {
@@ -64,7 +69,7 @@ export function SessionsPage() {
       description="Revocation is immediate and per credential. Your passkeys are separate and stay valid."
       data-testid="credentials-list"
       actions={
-        revocableOthers.length > 0 && (
+        signOutOthers.length > 0 && (
           <Button
             variant="danger"
             icon={<LogOut size={14} />}
@@ -72,11 +77,14 @@ export function SessionsPage() {
             onClick={async () => {
               const ok = await confirm({
                 title: "Sign out everywhere else?",
-                description: `Revokes ${revocableOthers.length} other credential${revocableOthers.length === 1 ? "" : "s"}: browser sessions, CLI logins and tokens issued to you. This browser stays signed in.`,
+                description:
+                  revocableOthers.length > 0
+                    ? `Revokes ${revocableOthers.length} other credential${revocableOthers.length === 1 ? "" : "s"}: browser sessions, CLI logins and tokens issued to you, and signs out your other browsers. This browser stays signed in.`
+                    : "Signs out your other browsers. This browser stays signed in.",
                 confirmLabel: "Sign out everywhere else",
                 tone: "danger",
               });
-              if (ok) revoke.mutate(revocableOthers.map((c) => c.id));
+              if (ok) revoke.mutate(signOutOthers.map((c) => c.id));
             }}
           >
             Sign out everywhere else
