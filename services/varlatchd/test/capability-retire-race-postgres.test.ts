@@ -4,7 +4,7 @@ import { issueCredential } from "../src/auth/credentials.js";
 import { createPgQuerier } from "../src/db/pg.js";
 import { runMigrations } from "../src/db/migrate.js";
 import { withTx, type PoolQuerier } from "../src/db/tx.js";
-import { CapabilityRepair } from "../src/domain/capabilityrepair.js";
+import { CapabilityRepair, ISSUED_SQL, LIFECYCLE_SQL } from "../src/domain/capabilityrepair.js";
 import { consumeSetupGrant, ensureInstallation, issueBootstrapGrant } from "../src/domain/bootstrap.js";
 import type { AppCtx } from "../src/domain/ctx.js";
 import { retireIdentity } from "../src/domain/identities.js";
@@ -231,5 +231,26 @@ describe.skipIf(!url)("Capability issuance racing an identity's retirement on re
     // Repaired, the Capability is revoked.
     expect(await repair.attempt(ctx)).toBe(true);
     expect(((await db.query("SELECT revoked_at FROM capabilities WHERE id = $1", [cap.id])).rows[0] as { revoked_at: unknown }).revoked_at).not.toBeNull();
+  });
+
+  it("the repair reads the audit log by its indexes", async () => {
+    const orgId = (await getOrganization(ctx, "acme")).id;
+    const client = await db.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SET LOCAL enable_seqscan = off");
+      await client.query("SET LOCAL enable_bitmapscan = off");
+      const plan = async (text: string) =>
+        (
+          await client.query(`EXPLAIN ${text.replace("$1", "'" + orgId + "'").replace("$2::text[]", "ARRAY['x']::text[]")}`)
+        ).rows
+          .map((r) => (r as { "QUERY PLAN": string })["QUERY PLAN"])
+          .join("\n");
+      expect(await plan(LIFECYCLE_SQL)).toContain("audit_events_identity_lifecycle_idx");
+      expect(await plan(ISSUED_SQL)).toContain("audit_events_capability_issued_idx");
+    } finally {
+      await client.query("ROLLBACK");
+      client.release();
+    }
   });
 });

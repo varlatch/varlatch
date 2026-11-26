@@ -43,12 +43,34 @@ export function endedByRetirement(
   return issuedOrder === null || issuedOrder < lifecycle.eventOrder;
 }
 
+/** How many Capabilities one repair transaction holds at most. */
+export const REPAIR_BATCH = 200;
+
 /**
- * How far around a Capability's created_at its capability.issued is looked
- * for (same transaction; the margin only bounds the read). Not found within
- * it, the Capability's history cannot show it valid.
+ * Each identity's latest identity.retired or identity.reactivated in the
+ * Organization ($1), for the identities $2: one backward step of
+ * audit_events_identity_lifecycle_idx (migration 53) each.
  */
-const ISSUED_MARGIN = "1 day";
+export const LIFECYCLE_SQL = `SELECT i.id AS identity_id, e.event_type, e.event_order::text AS event_order
+  FROM unnest($2::text[]) AS i(id)
+  CROSS JOIN LATERAL (
+    SELECT event_type, event_order FROM audit_events
+    WHERE organization_id = $1 AND event_type IN ('identity.retired', 'identity.reactivated')
+      AND resource->>'identityId' = i.id
+    ORDER BY event_order DESC LIMIT 1) e`;
+
+/**
+ * Each Capability's capability.issued in the Organization ($1), for the
+ * Capabilities $2, by audit_events_capability_issued_idx (migration 53):
+ * its place in the audit order. Its whole history, not a window around its
+ * created_at; a Capability with none is not in the result.
+ */
+export const ISSUED_SQL = `SELECT c.id AS capability_id, e.event_order::text AS event_order
+  FROM unnest($2::text[]) AS c(id)
+  CROSS JOIN LATERAL (
+    SELECT event_order FROM audit_events
+    WHERE organization_id = $1 AND event_type = 'capability.issued' AND resource->>'capabilityId' = c.id
+    ORDER BY event_order LIMIT 1) e`;
 
 /**
  * The repair of Capabilities a retirement left live, run before Capabilities
@@ -57,15 +79,24 @@ const ISSUED_MARGIN = "1 day";
  * read its Broker and Agent again under their locks, so a retirement could
  * leave Capabilities live, and a reactivation made them work again.
  *
- * Per Organization with unexpired, unrevoked Capabilities, in one
- * transaction: those Capabilities locked, then each one a retirement of its
- * Agent or its Broker ends (endedByRetirement) revoked, audited as
- * retirement's own (capability.revoked, reason identity-retired), with no
- * actor. Its whole audit history is read, not a window: an imported
- * Capability may outlive a day, and a retirement may be older than the
- * Capability it ends. Returns how many it revoked.
+ * Per Organization with unexpired, unrevoked Capabilities, in batches of at
+ * most batchSize by id, each in its own transaction: the batch locked, then
+ * each one a retirement of its Agent or its Broker ends (endedByRetirement)
+ * revoked, audited as retirement's own (capability.revoked, reason
+ * identity-retired), with no actor. The audit reads go by index (migration
+ * 53), over the whole history, not a window: an imported Capability may
+ * outlive a day, and a retirement may be older than the Capability it ends.
+ *
+ * Batches are safe one after another: no Capability is issued until the
+ * repair has run, a retirement since revokes its identity's Capabilities
+ * itself, and a reactivation since leaves the latest event a reactivation
+ * after the issuance, which still ends it. Returns how many it revoked.
  */
-export async function revokeCapabilitiesOfRetiredIdentities(ctx: AppCtx): Promise<number> {
+export async function revokeCapabilitiesOfRetiredIdentities(
+  ctx: AppCtx,
+  opts: { batchSize?: number } = {},
+): Promise<number> {
+  const batchSize = opts.batchSize ?? REPAIR_BATCH;
   const orgs = (
     await ctx.db.query(
       `SELECT DISTINCT organization_id FROM capabilities
@@ -74,93 +105,95 @@ export async function revokeCapabilitiesOfRetiredIdentities(ctx: AppCtx): Promis
   ).rows as { organization_id: string }[];
   let revoked = 0;
   for (const { organization_id: organizationId } of orgs) {
-    revoked += await withTx(ctx.db, async (db) => {
-      // The lock order (liveness.ts): the Organization (step 1), which the
-      // audit events reference, then the Capabilities (step 10). A
-      // retirement holds them too while it revokes.
-      await lockRowsById(db, "organizations", [organizationId], "key share");
-      const caps = (
-        await lockedQuery(
-          db,
-          { table: "capabilities", mode: "no key update" },
-          `SELECT id, agent_identity_id, broker_identity_id FROM capabilities
-           WHERE organization_id = $1 AND revoked_at IS NULL AND expires_at > now()
-           ORDER BY id FOR NO KEY UPDATE`,
-          [organizationId],
-        )
-      ).rows as { id: string; agent_identity_id: string; broker_identity_id: string }[];
-      if (caps.length === 0) return 0;
-      const identityIds = [...new Set(caps.flatMap((c) => [c.agent_identity_id, c.broker_identity_id]))];
-      const retiredNow = new Set(
-        (
-          await db.query(
-            `SELECT id FROM identities
-             WHERE id = ANY($1::text[]) AND disabled AND suspended_by_deletion IS NULL`,
-            [identityIds],
-          )
-        ).rows.map((r) => (r as { id: string }).id),
-      );
-      const lifecycle = new Map(
-        (
-          await db.query(
-            `SELECT DISTINCT ON (resource->>'identityId') resource->>'identityId' AS identity_id, event_type,
-                    event_order::text AS event_order
-             FROM audit_events
-             WHERE organization_id = $1 AND event_type IN ('identity.retired', 'identity.reactivated')
-               AND resource->>'identityId' = ANY($2::text[])
-             ORDER BY resource->>'identityId', event_order DESC`,
-            [organizationId, identityIds],
-          )
-        ).rows.map((r) => {
-          const row = r as { identity_id: string; event_type: Lifecycle["eventType"]; event_order: string };
-          return [row.identity_id, { eventType: row.event_type, eventOrder: BigInt(row.event_order) }] as const;
-        }),
-      );
-      // Only a Capability whose identity was reactivated needs its issuance's place.
-      const reactivated = caps.filter((c) =>
-        [c.agent_identity_id, c.broker_identity_id].some((i) => lifecycle.get(i)?.eventType === "identity.reactivated"),
-      );
-      const issued = new Map<string, bigint>();
-      if (reactivated.length > 0) {
-        for (const r of (
-          await db.query(
-            `SELECT e.resource->>'capabilityId' AS capability_id, e.event_order::text AS event_order
-             FROM capabilities c JOIN audit_events e
-               ON e.organization_id = c.organization_id
-              AND e.occurred_at BETWEEN c.created_at - $3::interval AND c.created_at + $3::interval
-              AND e.event_type = 'capability.issued' AND e.resource->>'capabilityId' = c.id
-             WHERE c.organization_id = $1 AND c.id = ANY($2::text[])`,
-            [organizationId, reactivated.map((c) => c.id), ISSUED_MARGIN],
-          )
-        ).rows as { capability_id: string; event_order: string }[]) {
-          issued.set(r.capability_id, BigInt(r.event_order));
-        }
-      }
-      const ended: { id: string; identityId: string }[] = [];
-      for (const c of caps) {
-        const by = [c.agent_identity_id, c.broker_identity_id].find((i) =>
-          endedByRetirement({ retiredNow: retiredNow.has(i), lifecycle: lifecycle.get(i) ?? null }, issued.get(c.id) ?? null),
-        );
-        if (by) ended.push({ id: c.id, identityId: by });
-      }
-      if (ended.length === 0) return 0;
-      await db.query("UPDATE capabilities SET revoked_at = now() WHERE id = ANY($1::text[])", [ended.map((e) => e.id)]);
-      await recordAuditEvents(
-        db,
-        ended.map((e) => ({
-          eventType: "capability.revoked" as const,
-          decision: "info" as const,
-          actorIdentityId: null,
-          organizationId,
-          action: "secret.use",
-          resource: { capabilityId: e.id },
-          metadata: { reason: "identity-retired", identityId: e.identityId },
-        })),
-      );
-      return ended.length;
-    });
+    let after = "";
+    for (;;) {
+      const batch = await withTx(ctx.db, (db) => repairBatch(db, organizationId, after, batchSize));
+      revoked += batch.revoked;
+      if (batch.last === null) break;
+      after = batch.last;
+    }
   }
   return revoked;
+}
+
+/**
+ * One batch: the Organization's next at most batchSize live Capabilities
+ * after the id `after`. Returns how many it revoked, and the last id when
+ * the batch was full (more may follow).
+ */
+async function repairBatch(
+  db: AppCtx["db"],
+  organizationId: string,
+  after: string,
+  batchSize: number,
+): Promise<{ revoked: number; last: string | null }> {
+  // The lock order (liveness.ts): the Organization (step 1), which the
+  // audit events reference, then the Capabilities (step 10). A
+  // retirement holds them too while it revokes.
+  await lockRowsById(db, "organizations", [organizationId], "key share");
+  const caps = (
+    await lockedQuery(
+      db,
+      { table: "capabilities", mode: "no key update" },
+      `SELECT id, agent_identity_id, broker_identity_id FROM capabilities
+       WHERE organization_id = $1 AND id > $2 AND revoked_at IS NULL AND expires_at > now()
+       ORDER BY id LIMIT $3 FOR NO KEY UPDATE`,
+      [organizationId, after, batchSize],
+    )
+  ).rows as { id: string; agent_identity_id: string; broker_identity_id: string }[];
+  const last = caps.length === batchSize ? caps[caps.length - 1]!.id : null;
+  if (caps.length === 0) return { revoked: 0, last };
+  const identityIds = [...new Set(caps.flatMap((c) => [c.agent_identity_id, c.broker_identity_id]))];
+  const retiredNow = new Set(
+    (
+      await db.query(
+        `SELECT id FROM identities
+         WHERE id = ANY($1::text[]) AND disabled AND suspended_by_deletion IS NULL`,
+        [identityIds],
+      )
+    ).rows.map((r) => (r as { id: string }).id),
+  );
+  const lifecycle = new Map(
+    (await db.query(LIFECYCLE_SQL, [organizationId, identityIds])).rows.map((r) => {
+      const row = r as { identity_id: string; event_type: Lifecycle["eventType"]; event_order: string };
+      return [row.identity_id, { eventType: row.event_type, eventOrder: BigInt(row.event_order) }] as const;
+    }),
+  );
+  // Only a Capability whose identity was reactivated needs its issuance's place.
+  const reactivated = caps.filter((c) =>
+    [c.agent_identity_id, c.broker_identity_id].some((i) => lifecycle.get(i)?.eventType === "identity.reactivated"),
+  );
+  const issued = new Map<string, bigint>();
+  if (reactivated.length > 0) {
+    for (const r of (await db.query(ISSUED_SQL, [organizationId, reactivated.map((c) => c.id)])).rows as {
+      capability_id: string;
+      event_order: string;
+    }[]) {
+      issued.set(r.capability_id, BigInt(r.event_order));
+    }
+  }
+  const ended: { id: string; identityId: string }[] = [];
+  for (const c of caps) {
+    const by = [c.agent_identity_id, c.broker_identity_id].find((i) =>
+      endedByRetirement({ retiredNow: retiredNow.has(i), lifecycle: lifecycle.get(i) ?? null }, issued.get(c.id) ?? null),
+    );
+    if (by) ended.push({ id: c.id, identityId: by });
+  }
+  if (ended.length === 0) return { revoked: 0, last };
+  await db.query("UPDATE capabilities SET revoked_at = now() WHERE id = ANY($1::text[])", [ended.map((e) => e.id)]);
+  await recordAuditEvents(
+    db,
+    ended.map((e) => ({
+      eventType: "capability.revoked" as const,
+      decision: "info" as const,
+      actorIdentityId: null,
+      organizationId,
+      action: "secret.use",
+      resource: { capabilityId: e.id },
+      metadata: { reason: "identity-retired", identityId: e.identityId },
+    })),
+  );
+  return { revoked: ended.length, last };
 }
 
 /**
@@ -176,7 +209,7 @@ export async function revokeCapabilitiesOfRetiredIdentities(ctx: AppCtx): Promis
  *
  * Rolling upgrades on PostgreSQL: varlatchd has no fence against a process
  * of an earlier release still writing to the same database. The repair runs
- * at every start, so a varlatchd started after the last earlier-release
+ * at every start (once the listeners serve), so a varlatchd started after the last earlier-release
  * process stopped repairs what that process left; canonical Compose
  * replaces its single varlatchd, stopping the old one before the new one
  * starts.
@@ -242,12 +275,14 @@ export class CapabilityRepair {
   }
 
   /**
-   * Every intervalMs: a restore's or a migration's gate makes it not ready
-   * (what is behind it may be replaced), and, not ready, an attempt. Returns
-   * the stop.
+   * At once, then every intervalMs: a restore's or a migration's gate makes
+   * it not ready (what is behind it may be replaced), and, not ready, an
+   * attempt. varlatchd starts it once its listeners serve, so a long repair
+   * never holds the start: Capabilities answer 503 until it has run, and
+   * everything else is served meanwhile. Returns the stop.
    */
   start(ctx: AppCtx, intervalMs = 2000): () => void {
-    const timer = setInterval(() => {
+    const tick = () => {
       let kind: string | undefined;
       try {
         kind = ctx.maintenance?.gate?.kind as string | undefined;
@@ -261,9 +296,14 @@ export class CapabilityRepair {
       }
       if (kind !== undefined && kind !== "capture") this.invalidate();
       if (!this.repaired) void this.attempt(ctx);
-    }, intervalMs);
+    };
+    const first = setImmediate(tick);
+    const timer = setInterval(tick, intervalMs);
     timer.unref();
-    return () => clearInterval(timer);
+    return () => {
+      clearImmediate(first);
+      clearInterval(timer);
+    };
   }
 }
 
