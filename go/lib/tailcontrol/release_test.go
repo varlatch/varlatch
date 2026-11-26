@@ -5,6 +5,7 @@ package tailcontrol_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -220,5 +221,46 @@ func TestTheReleaseBudgetBoundsItsCalls(t *testing.T) {
 	}
 	if took >= 250*time.Millisecond || caller.Err() != nil {
 		t.Errorf("the budget of 45ms took %s (the caller's deadline is 300ms)", took)
+	}
+}
+
+// staleRetry is a Tailscale control plane that refuses the first rename as
+// taken and accepts the next, whose read-back's first listing still shows
+// the device's old name.
+type staleRetry struct {
+	renames atomic.Int32
+}
+
+func (c *staleRetry) Kind() string                { return "tailscale" }
+func (c *staleRetry) Close(context.Context) error { return nil }
+func (c *staleRetry) Devices(context.Context) ([]tailcontrol.Device, error) {
+	return []tailcontrol.Device{{ID: "1", Name: "vault-vl-abc-o"}, {ID: "2", Name: "vault-vl-abc-n"}}, nil
+}
+
+func (c *staleRetry) Rename(_ context.Context, id, name string) error {
+	if c.renames.Add(1) == 1 {
+		return &tailcontrol.OpError{Plane: "tailscale", Op: "rename", Device: id, Err: fmt.Errorf("%w (%q): 409 machine name already in use", tailcontrol.ErrNameTaken, name)}
+	}
+	return nil
+}
+
+// A retry the control plane accepts, whose read-back the phase's end cuts
+// short after a first, stale listing: the confirmed refusal stands, said to
+// be unreleased in time, not the stale read-back.
+func TestAnInterruptedReadBackKeepsTheConfirmedFailure(t *testing.T) {
+	shortRelease(t, 100*time.Millisecond)
+	tailcontrol.ReadBackRetry = time.Second
+	cp := &staleRetry{}
+	start := time.Now()
+	_, err := tailcontrol.RenameReleased(ctx, cp, "2", "vault", nil)
+	var rb *tailcontrol.ReadBackError
+	if !errors.Is(err, tailcontrol.ErrNameTaken) || errors.As(err, &rb) || !strings.Contains(err.Error(), "did not release") {
+		t.Fatalf("not the confirmed refusal: %v", err)
+	}
+	if n := cp.renames.Load(); n != 2 {
+		t.Errorf("renames %d, want 2", n)
+	}
+	if took := time.Since(start); took > 900*time.Millisecond {
+		t.Errorf("the budget of 100ms took %s", took)
 	}
 }

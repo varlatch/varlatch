@@ -687,16 +687,13 @@ func TestG5TailnetSwitchInterruptions(t *testing.T) {
 // every step that hands the name back to the sidecar, then --resume to
 // rolled back (the name the sidecar's). The handoff runs after the rebuilt
 // TypeScript release was started (rollback.servedAt), which may have taken
-// writes: --abort refuses at every step, changing nothing, the fresh
-// volumes kept, and --resume finishes the rollback on them. Killed before
-// that start (and before the name moved), --abort still undoes the
-// reverse: the name stays the target's.
+// writes: --abort refuses at every step, saying so, changing nothing, the
+// fresh volumes kept, and --resume finishes the rollback on them, both
+// journals rolled back. Killed before that start (and before the name
+// moved), --abort still undoes the reverse: the name stays the target's.
 func TestG5TailnetRollbackInterruptions(t *testing.T) {
 	for _, step := range forwardSteps {
 		for _, abort := range []bool{false, true} {
-			// From the open the name is effectively back with the sidecar:
-			// the reverse goes forward only, an abort is refused.
-			late := step == "opening" || step == "done"
 			point := "tailnet rollback " + step
 			name := step + map[bool]string{false: ", resumed", true: ", aborted"}[abort]
 			t.Run(name, func(t *testing.T) {
@@ -715,7 +712,7 @@ func TestG5TailnetRollbackInterruptions(t *testing.T) {
 				if abort {
 					code := w.rollback("", "--abort")
 					out := string(w.outputs[len(w.outputs)-1])
-					if code != 1 || !late && !strings.Contains(out, "may have accepted writes since") {
+					if code != 1 || !strings.Contains(out, "may have accepted writes since") {
 						t.Fatalf("--abort once the rebuilt release may have served: %d\n%s", code, out)
 					}
 					if got := w.freshVolumes(); !slices.Equal(got, fresh) {
@@ -724,6 +721,9 @@ func TestG5TailnetRollbackInterruptions(t *testing.T) {
 				}
 				if code := w.rollback("", "--resume"); code != 0 {
 					t.Fatalf("--resume: %d\n%s", code, w.outputs[len(w.outputs)-1])
+				}
+				if s, d := w.phases(); s != "rolled-back" || d != "rolled-back" {
+					t.Fatalf("after --resume, the journals: %q / %q, want rolled-back / rolled-back", s, d)
 				}
 				w.useState()
 				w.tailnetAt(t, tn, sidecar, "source")
@@ -913,7 +913,8 @@ func TestG5TailnetUndoSlotSteps(t *testing.T) {
 // journals (the sidecar's rename to the name refused): --resume hands the
 // name back again and rolls back. The rebuilt TypeScript release was
 // started before the handoff (rollback.servedAt), so --abort refuses,
-// changing nothing, the fresh volumes kept, and --resume rolls back.
+// changing nothing, the fresh volumes kept, and --resume rolls back, both
+// journals rolled back.
 func TestG5TailnetRollbackUndoSteps(t *testing.T) {
 	for _, c := range []struct {
 		step string
@@ -950,6 +951,9 @@ func TestG5TailnetRollbackUndoSteps(t *testing.T) {
 				}
 				if code := w.rollback("", "--resume"); code != 0 {
 					t.Fatalf("--resume: %d\n%s", code, w.outputs[len(w.outputs)-1])
+				}
+				if s, d := w.phases(); s != "rolled-back" || d != "rolled-back" {
+					t.Fatalf("after --resume, the journals: %q / %q, want rolled-back / rolled-back", s, d)
 				}
 				w.useState()
 				w.tailnetAt(t, tn, sidecar, "source")

@@ -658,12 +658,18 @@ func (e *Engine) rename(ctx context.Context, id, name string) error {
 
 // renameReleased is tailcontrol.RenameReleased, telling Waiting.
 func (e *Engine) renameReleased(ctx context.Context, id, name string) error {
+	_, err := e.renameReleasedSeen(ctx, id, name)
+	return err
+}
+
+// renameReleasedSeen is tailcontrol.RenameReleasedSeen, telling Waiting.
+func (e *Engine) renameReleasedSeen(ctx context.Context, id, name string) (unlisted bool, err error) {
 	var waiting func()
 	if e.Waiting != nil {
 		waiting = func() { e.Waiting(name) }
 	}
-	_, err := tailcontrol.RenameReleased(ctx, e.Control, id, name, waiting)
-	return err
+	_, unlisted, err = tailcontrol.RenameReleasedSeen(ctx, e.Control, id, name, waiting)
+	return unlisted, err
 }
 
 // GoneError is a device the control plane no longer lists: deleted from
@@ -869,19 +875,22 @@ func (e *Engine) takeFreedName(ctx context.Context, s *State) (*State, error) {
 // holder is the device other than except holding name: from devices when
 // it is there, else from a fresh listing.
 func (e *Engine) holder(ctx context.Context, name, except string, devices []tailcontrol.Device) (tailcontrol.Device, bool) {
-	find := func(ds []tailcontrol.Device) (tailcontrol.Device, bool) {
-		for _, d := range ds {
-			if d.ID != except && strings.EqualFold(d.Name, name) {
-				return d, true
-			}
-		}
-		return tailcontrol.Device{}, false
-	}
-	if d, ok := find(devices); ok {
+	if d, ok := heldBy(devices, name, except); ok {
 		return d, true
 	}
 	if again, err := e.Control.Devices(ctx); err == nil {
-		return find(again)
+		return heldBy(again, name, except)
+	}
+	return tailcontrol.Device{}, false
+}
+
+// heldBy is the device in devices other than except listed under name
+// (case-insensitively).
+func heldBy(devices []tailcontrol.Device, name, except string) (tailcontrol.Device, bool) {
+	for _, d := range devices {
+		if d.ID != except && strings.EqualFold(d.Name, name) {
+			return d, true
+		}
 	}
 	return tailcontrol.Device{}, false
 }
@@ -903,18 +912,25 @@ func (e *Engine) restoreName(ctx context.Context, id, name string) error {
 			return nil
 		}
 	}
-	err = e.renameReleased(ctx, id, name)
+	unlisted, err := e.renameReleasedSeen(ctx, id, name)
 	if errors.Is(err, tailcontrol.ErrNameTaken) {
 		// Another device took the name while it was free: say which, so
 		// the operator can rename or delete it. When a fresh listing shows
 		// none, say that instead: the refusal is the control plane's own.
-		if d, ok := e.holder(ctx, name, id, devices); ok {
-			return fmt.Errorf("%w: it is held by %s now", err, d)
-		}
-		if again, lerr := e.Control.Devices(ctx); lerr == nil && !slices.ContainsFunc(again, func(d tailcontrol.Device) bool {
-			return d.ID != id && strings.EqualFold(d.Name, name)
-		}) {
+		// When no fresh listing completes (the undo's deadline spent, say),
+		// the wait's last listing that answered speaks for the tailnet,
+		// before the listing taken ahead of the rename.
+		if again, lerr := e.Control.Devices(ctx); lerr == nil {
+			if d, ok := heldBy(again, name, id); ok {
+				return fmt.Errorf("%w: it is held by %s now", err, d)
+			}
 			return &UnlistedHolderError{Name: name, Err: err}
+		}
+		if unlisted {
+			return &UnlistedHolderError{Name: name, Err: err}
+		}
+		if d, ok := heldBy(devices, name, id); ok {
+			return fmt.Errorf("%w: it is held by %s now", err, d)
 		}
 	}
 	return err
