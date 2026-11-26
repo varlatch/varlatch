@@ -588,3 +588,72 @@ describe("reference expansion at exercise (ADR-0026)", () => {
     expect((await ok.json()).items[0].value).toBe("tpl=${DB_HOST}");
   });
 });
+
+describe("the upgrade's repair of earlier retirements", () => {
+  const live = async (id: string) =>
+    ((await ctx.db.query("SELECT revoked_at FROM capabilities WHERE id = $1", [id])).rows[0] as { revoked_at: unknown })
+      .revoked_at === null;
+  const newAgent = async (name: string) => {
+    const id = (await (await post("/v1/organizations/acme/identities", { name, kind: "agent" })).json()).id as string;
+    await grantUse(id);
+    return id;
+  };
+  /** Retires the identity as a release before the fix did: its Capabilities stay live. */
+  const retireAsBefore = async (identityId: string, ...capabilityIds: string[]) => {
+    expect((await post(`/v1/organizations/acme/identities/${identityId}/retire`, {})).status).toBe(200);
+    await ctx.db.query("UPDATE capabilities SET revoked_at = NULL WHERE id = ANY($1::text[])", [capabilityIds]);
+  };
+
+  it("revokes what an earlier retirement left live, and keeps what came after a reactivation or a suspension", async () => {
+    const { revokeCapabilitiesOfRetiredIdentities } = await import("../src/domain/capabilityrepair.js");
+    await grantUse();
+    // Issued before the Agent's retirement, which left it live; the Agent
+    // was reactivated since, which made it work again.
+    const before = await (await issue()).json();
+    const expired = await (await issue()).json();
+    await ctx.db.query("UPDATE capabilities SET expires_at = now() - interval '1 second' WHERE id = $1", [expired.id]);
+    await retireAsBefore(agentId, before.id, expired.id);
+    expect((await post(`/v1/organizations/acme/identities/${agentId}/reactivate`, {})).status).toBe(200);
+    expect((await exercise(before.id, before.secret)).status).toBe(200);
+    // Issued after the reactivation.
+    const after = await (await issue()).json();
+    // Issued while its Agent was retired: an issuance that raced the
+    // retirement.
+    const raced = await newAgent("raced agent");
+    const racedCap = await (await issue({ agentIdentityId: raced })).json();
+    await retireAsBefore(raced, racedCap.id);
+    await ctx.db.query("UPDATE capabilities SET created_at = now() WHERE id = $1", [racedCap.id]);
+    // An Organization's deletion suspends an identity without retiring it.
+    const suspended = await newAgent("suspended agent");
+    const suspendedCap = await (await issue({ agentIdentityId: suspended })).json();
+    await ctx.db.query("UPDATE identities SET disabled = true WHERE id = $1", [suspended]);
+    const revokedBefore = await auditCount("capability.revoked", "identity-retired");
+
+    expect(await revokeCapabilitiesOfRetiredIdentities(ctx)).toBe(2);
+    expect(await live(before.id)).toBe(false);
+    expect(await live(racedCap.id)).toBe(false);
+    expect(await live(after.id)).toBe(true);
+    expect(await live(suspendedCap.id)).toBe(true);
+    expect(await live(expired.id)).toBe(true);
+    const denied = await exercise(before.id, before.secret);
+    expect(denied.status).toBe(403);
+    expect((await denied.json()).error.details.reason).toBe("revoked");
+    expect((await exercise(after.id, after.secret)).status).toBe(200);
+    // Each audited, with no actor.
+    expect(await auditCount("capability.revoked", "identity-retired")).toBe(revokedBefore + 2);
+    const events = (
+      await ctx.db.query(
+        `SELECT actor_identity_id, resource->>'capabilityId' AS capability, metadata->>'identityId' AS identity
+         FROM audit_events WHERE event_type = 'capability.revoked' AND actor_identity_id IS NULL ORDER BY capability`,
+      )
+    ).rows;
+    expect(events).toEqual(
+      [
+        { actor_identity_id: null, capability: before.id, identity: agentId },
+        { actor_identity_id: null, capability: racedCap.id, identity: raced },
+      ].sort((a, b) => (a.capability < b.capability ? -1 : 1)),
+    );
+    // Once repaired, it finds nothing.
+    expect(await revokeCapabilitiesOfRetiredIdentities(ctx)).toBe(0);
+  });
+});
