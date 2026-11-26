@@ -17,7 +17,7 @@ import { errorMessage } from "../../shell/Shell";
  * browser sessions are folded into one group with a bulk revoke.
  */
 export function SessionsPage() {
-  const { api } = useSession();
+  const { api, signOut } = useSession();
   const qc = useQueryClient();
   const confirm = useConfirm();
   const toast = useToast();
@@ -66,11 +66,19 @@ export function SessionsPage() {
     if (c.current) {
       const ok = await confirm({
         title: "Sign out this browser?",
-        description: "This revokes the credential this page is using. You will need your passkey to sign in again.",
+        description: "This ends this browser's session. You will need your passkey to sign in again.",
         confirmLabel: "Sign out",
         tone: "danger",
       });
       if (!ok) return;
+      // This browser's session ends by its cookie, whichever bearer the
+      // page holds by now; it stays signed in if the server refuses.
+      try {
+        await signOut({ throwOnFailure: true });
+      } catch (err) {
+        toast.error("Could not sign out", { description: errorMessage(err) });
+      }
+      return;
     }
     revoke.mutate([c.id]);
   };

@@ -84,7 +84,12 @@ interface SessionState {
    */
   onStepUp: StepUpHandler;
   signInWithPasskey: () => Promise<void>;
-  signOut: () => Promise<void>;
+  /**
+   * Ends this browser's session (the cookie sign-out). With throwOnFailure,
+   * the server ends it first and a refusal is thrown, the session kept;
+   * otherwise this page forgets it whatever the server answers.
+   */
+  signOut: (options?: { throwOnFailure?: boolean }) => Promise<void>;
 }
 
 export type StepUpHandler = (approval: Approval) => Promise<boolean>;
@@ -363,7 +368,16 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     return body.token;
   }, [sessionFetch]);
 
-  const signOut = useCallback(async () => {
+  const signOut = useCallback(async (options?: { throwOnFailure?: boolean }) => {
+    if (options?.throwOnFailure) {
+      if (backend().session === "varlatchd") await varlatchd.signOut();
+      else {
+        const res = (await authClient().signOut()) as { error?: { message?: string } | null } | undefined;
+        if (res?.error) throw new Error(res.error.message ?? "The server did not sign this browser out");
+      }
+      clearSession();
+      return;
+    }
     clearSession();
     if (backend().session === "varlatchd") await varlatchd.signOut().catch(() => undefined);
     else await authClient().signOut().catch(() => undefined);
