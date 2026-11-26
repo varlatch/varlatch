@@ -394,6 +394,37 @@ describe.skipIf(!url)("signing out revokes browser bearers on real PostgreSQL", 
     expect(await rows("SELECT id FROM credentials WHERE kind = 'browser' AND revoked_at IS NULL")).toEqual([]);
   });
 
+  it("revoke-other-sessions from a browser signed out while it waits revokes nothing", async () => {
+    const { browser: a, key } = await bootstrapAdmin();
+    const b = await new Browser().signIn(key);
+    const tb = await b.bearer();
+    // Another browser's sign-out of a's session, not yet committed.
+    const other = await db.connect();
+    let res: Awaited<ReturnType<Browser["request"]>>;
+    try {
+      await other.query("BEGIN");
+      await other.query(`DELETE FROM "session" WHERE id = $1`, [a.sessionId]);
+      const revoking = a.request("POST", "/auth/revoke-other-sessions", {});
+      let waited = false;
+      for (let i = 0; i < 200 && !waited; i++) {
+        const waiting = await rows(
+          "SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = $1 AND wait_event_type = 'Lock'",
+          [database],
+        );
+        waited = waiting[0].n >= 1;
+        if (!waited) await sleep(25);
+      }
+      await other.query("COMMIT");
+      res = await revoking;
+      expect(waited).toBe(true);
+    } finally {
+      other.release();
+    }
+    expect(res.status, JSON.stringify(res.body)).toBe(401);
+    expect(await rows(`SELECT id FROM "session" WHERE id = $1`, [b.sessionId])).toHaveLength(1);
+    expect(await works(tb)).toBe(200);
+  });
+
   it("two browsers signing each other out at once: one of them stays signed in", async () => {
     const { browser: a, key } = await bootstrapAdmin();
     const b = await new Browser().signIn(key);
