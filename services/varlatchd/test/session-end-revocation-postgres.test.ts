@@ -398,14 +398,22 @@ describe.skipIf(!url)("signing out revokes browser bearers on real PostgreSQL", 
     } finally {
       holder.release();
     }
-    // Whichever took the first session first: revoke-sessions ends every
-    // session, and sign-out-others either ended the others first or finds
-    // its own session gone. Neither waits on the other in a cycle (which
-    // PostgreSQL would end with an error).
-    expect([200, 401], JSON.stringify(results)).toContain(results[0]!.status);
-    expect(results[1]!.status, JSON.stringify(results)).toBe(200);
-    expect(await rows(`SELECT id FROM "session"`)).toEqual([]);
-    expect(await rows("SELECT id FROM credentials WHERE kind = 'browser' AND revoked_at IS NULL")).toEqual([]);
+    // Whichever took the first session first wins (200) and ends the other's
+    // session; once the loser gets the locks, its live-session check refuses
+    // with 401 and ends nothing. Neither waits on the other in a cycle (which
+    // PostgreSQL would end with a deadlock error, 500).
+    expect(results.map((r) => r.status).sort(), JSON.stringify(results)).toEqual([200, 401]);
+    if (results[1]!.status === 200) {
+      expect(await rows(`SELECT id FROM "session"`)).toEqual([]);
+      expect(await rows("SELECT id FROM credentials WHERE kind = 'browser' AND revoked_at IS NULL")).toEqual([]);
+    } else {
+      expect(results[0]!.body).toEqual({ endedSessions: 2 });
+      expect((await rows(`SELECT id FROM "session" ORDER BY id`)).map((r) => r.id)).toEqual([x.sessionId]);
+      expect(await works(tx)).toBe(200);
+      expect(
+        await rows("SELECT id FROM credentials WHERE kind = 'browser' AND revoked_at IS NULL AND auth_session_id <> $1", [x.sessionId]),
+      ).toEqual([]);
+    }
   });
 
   it("revoke-other-sessions from a browser signed out while it waits revokes nothing", async () => {
