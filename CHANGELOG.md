@@ -5,6 +5,19 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
+## Unreleased
+
+### CLI
+
+- **Tailnet handoff errors no longer drop a confirmed name refusal or claim a
+  listed holder when the wait ends.** When a tailnet rename retry's read-back
+  is cut short by the release deadline after a stale first listing, the
+  handoff keeps the last confirmed name error instead of reporting the stale
+  read-back. When a pending undo's deadline runs out after a taken-name
+  refusal where an earlier listing showed no other device under the name,
+  the error now states that no device was listed instead of sending the
+  operator to rename or delete another device.
+
 ## 0.50.1 (2026-11-26)
 
 ### CLI

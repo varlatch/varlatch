@@ -179,3 +179,101 @@ func TestARefusalNoListedDeviceExplainsIsSaid(t *testing.T) {
 	s, err = r.engine.Resume(ctx, op)
 	assertUndone(t, r, s, err)
 }
+
+// refuseThenBlind is refuseName whose listings fail from its second
+// refusal on: the undo's deadline spent by the wait's retry.
+type refuseThenBlind struct {
+	*refuseName
+	blind atomic.Bool
+}
+
+func (c *refuseThenBlind) Rename(ctx context.Context, id, name string) error {
+	err := c.refuseName.Rename(ctx, id, name)
+	if c.refusals.Load() >= 2 {
+		c.blind.Store(true)
+	}
+	return err
+}
+
+func (c *refuseThenBlind) Devices(ctx context.Context) ([]tailcontrol.Device, error) {
+	if c.blind.Load() {
+		return nil, &tailcontrol.OpError{Plane: c.Kind(), Op: "list devices", Err: context.DeadlineExceeded}
+	}
+	return c.refuseName.Devices(ctx)
+}
+
+// refuseThenExpire is refuseName whose second refusal consumes the rest of
+// the undo's budget, so both follow-up listings run under the expired
+// context.
+type refuseThenExpire struct {
+	*refuseName
+}
+
+func (c *refuseThenExpire) Rename(ctx context.Context, id, name string) error {
+	err := c.refuseName.Rename(ctx, id, name)
+	if id == c.id && name == c.name && c.refusals.Load() == 2 {
+		<-ctx.Done()
+	}
+	return err
+}
+
+// A refusal whose follow-up listings cannot complete: the wait's last
+// listing that answered showed no device under the name, so the undo says
+// so, and does not send the operator after a device that was not listed.
+func TestARefusalUnlistedInTheWaitIsSaidWhenListingsFail(t *testing.T) {
+	t.Run("listings fail after retry", func(t *testing.T) {
+		r := newRig(t)
+		cp := &refuseThenBlind{refuseName: &refuseName{ControlPlane: r.cp, id: "1", name: "vault"}}
+		r.engine.Control = cp
+		if _, err := r.engine.Prepare(ctx, r.forward(t)); err != nil {
+			t.Fatal(err)
+		}
+		r.ep.openErr = errors.New("port in use")
+		s, err := r.engine.Switch(ctx, op)
+		var he *tailhandoff.HandoffError
+		if !errors.As(err, &he) || he.Phase != tailhandoff.UndoPending || s.Phase != tailhandoff.UndoPending {
+			t.Fatalf("%+v, %v", s, err)
+		}
+		if !cp.blind.Load() {
+			t.Fatal("the listings never failed")
+		}
+		var unlisted *tailhandoff.UnlistedHolderError
+		if !errors.As(err, &unlisted) || unlisted.Name != "vault" || !errors.Is(err, tailcontrol.ErrNameTaken) {
+			t.Fatalf("not an unlisted holder's refusal: %v", err)
+		}
+		if msg := err.Error(); !strings.Contains(msg, "lists no device holding it") || strings.Contains(msg, "Rename or delete that device") {
+			t.Errorf("the message: %s", msg)
+		}
+		if serving, incoming := r.ep.state(); serving || incoming {
+			t.Fatalf("an installation opened: serving %v, incoming %v", serving, incoming)
+		}
+	})
+	t.Run("undo deadline expires during retry", func(t *testing.T) {
+		r := newRig(t)
+		r.engine.UndoWait = 150 * time.Millisecond
+		cp := &refuseThenExpire{refuseName: &refuseName{ControlPlane: r.cp, id: "1", name: "vault"}}
+		r.engine.Control = cp
+		if _, err := r.engine.Prepare(ctx, r.forward(t)); err != nil {
+			t.Fatal(err)
+		}
+		r.ep.openErr = errors.New("port in use")
+		s, err := r.engine.Switch(ctx, op)
+		var he *tailhandoff.HandoffError
+		if !errors.As(err, &he) || he.Phase != tailhandoff.UndoPending || s.Phase != tailhandoff.UndoPending {
+			t.Fatalf("%+v, %v", s, err)
+		}
+		if n := cp.refusals.Load(); n != 2 {
+			t.Fatalf("refusals %d, want 2", n)
+		}
+		var unlisted *tailhandoff.UnlistedHolderError
+		if !errors.As(err, &unlisted) || unlisted.Name != "vault" || !errors.Is(err, tailcontrol.ErrNameTaken) {
+			t.Fatalf("not an unlisted holder's refusal: %v", err)
+		}
+		if msg := err.Error(); !strings.Contains(msg, "did not release") || !strings.Contains(msg, "lists no device holding it") || strings.Contains(msg, "Rename or delete that device") {
+			t.Errorf("the message: %s", msg)
+		}
+		if serving, incoming := r.ep.state(); serving || incoming {
+			t.Fatalf("an installation opened: serving %v, incoming %v", serving, incoming)
+		}
+	})
+}
