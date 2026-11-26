@@ -209,7 +209,15 @@ export class CapabilityRepair {
   attempt(ctx: AppCtx): Promise<boolean> {
     if (this.repaired) return Promise.resolve(true);
     if (this.running) return this.running;
-    const leave = ctx.maintenance ? ctx.maintenance.enter() : () => {};
+    let leave: (() => void) | null;
+    try {
+      leave = ctx.maintenance ? ctx.maintenance.enter() : () => {};
+    } catch (err) {
+      // The maintenance state cannot be read: isolation stands, so the
+      // repair waits, as behind a gate.
+      this.log.error(MAINTENANCE_UNREADABLE, err);
+      return Promise.resolve(false);
+    }
     if (!leave) return Promise.resolve(false);
     const generation = this.generation;
     this.running = (async () => {
@@ -240,7 +248,17 @@ export class CapabilityRepair {
    */
   start(ctx: AppCtx, intervalMs = 2000): () => void {
     const timer = setInterval(() => {
-      const kind = ctx.maintenance?.gate?.kind as string | undefined;
+      let kind: string | undefined;
+      try {
+        kind = ctx.maintenance?.gate?.kind as string | undefined;
+      } catch (err) {
+        // Unreadable, the maintenance state may hide a restore's gate:
+        // not ready, and read again at the next tick. Never thrown out of
+        // the timer, which would end the process.
+        this.invalidate();
+        this.log.error(MAINTENANCE_UNREADABLE, err);
+        return;
+      }
       if (kind !== undefined && kind !== "capture") this.invalidate();
       if (!this.repaired) void this.attempt(ctx);
     }, intervalMs);
@@ -248,6 +266,9 @@ export class CapabilityRepair {
     return () => clearInterval(timer);
   }
 }
+
+const MAINTENANCE_UNREADABLE =
+  "varlatchd: the maintenance state cannot be read; Capabilities are refused (503) until it can and the repair has run, tried again shortly:";
 
 /** Capabilities wait for the repair (CapabilityRepair): 503 MAINTENANCE until then. */
 export function requireCapabilityRepair(ctx: AppCtx): void {

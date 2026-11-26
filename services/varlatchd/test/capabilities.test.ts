@@ -817,4 +817,49 @@ describe("Capabilities wait for the repair", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("survives an unreadable maintenance file: not ready, and tried again once it reads", async () => {
+    const { mkdtempSync, rmSync, writeFileSync, unlinkSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { Maintenance } = await import("@varlatch/backup");
+    const { CapabilityRepair } = await import("../src/domain/capabilityrepair.js");
+    const dir = mkdtempSync(join(tmpdir(), "vl-caprepair-"));
+    try {
+      const maintenance = new Maintenance(dir);
+      const errors: unknown[] = [];
+      let runs = 0;
+      const repair = new CapabilityRepair(
+        async () => {
+          runs++;
+          return 0;
+        },
+        { log: () => {}, error: (...args: unknown[]) => errors.push(args) },
+      );
+      const gated = { ...ctx, maintenance, capabilityRepair: repair };
+      expect(await repair.attempt(gated)).toBe(true);
+      // The file becomes unreadable: an attempt refuses (never throws), and
+      // the timer makes Capabilities wait.
+      writeFileSync(join(dir, "maintenance.json"), "{not json");
+      repair.invalidate();
+      expect(() => void repair.attempt(gated)).not.toThrow();
+      await expect(repair.attempt(gated)).resolves.toBe(false);
+      expect(repair.ready).toBe(false);
+      const stop = repair.start(gated, 10);
+      try {
+        await new Promise((r) => setTimeout(r, 60));
+        expect(repair.ready).toBe(false);
+        expect(errors.length).toBeGreaterThan(0);
+        const before = runs;
+        unlinkSync(join(dir, "maintenance.json"));
+        for (let i = 0; i < 100 && !repair.ready; i++) await new Promise((r) => setTimeout(r, 10));
+        expect(repair.ready).toBe(true);
+        expect(runs).toBe(before + 1);
+      } finally {
+        stop();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
