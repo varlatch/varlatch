@@ -3870,7 +3870,7 @@ migrations.
   An interruption, a failed check or `--abort` before the transfer undoes
   it: the TypeScript side as the forward migration left it (its marker
   made again), Go's journal open again, then its barrier lifted. For
-  rollbacks begun by 0.50.1, the undo removes the fresh volumes. For
+  rollbacks begun by 0.50.2 or later, the undo removes the fresh volumes. For
   rollbacks begun by 0.50.0, it leaves any surviving fresh volumes for
   reconciliation. Go runs throughout (stopped in the transfer on the
   public and own-proxy shapes, started again by an undo). In the transfer,

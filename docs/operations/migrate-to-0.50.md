@@ -779,7 +779,7 @@ including a failed start of the rebuilt release, stops with the rebuilt
 volumes and journal phase kept so you can fix the cause and run `--resume`
 again, and `--abort` refuses. `varlatch migrate --status` shows when the
 start was recorded. A rollback begun by 0.50.0 and interrupted in step 5
-counts as started too: finish it with the 0.50.1 CLI. People sign in again after a rollback too, with the
+counts as started too: finish it with the 0.50.2 CLI. People sign in again after a rollback too, with the
 same passkey, and hard-reload any dashboard tab that stayed open
 (`Ctrl+Shift+R`, `Cmd+Shift+R` on a Mac).
 
