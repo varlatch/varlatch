@@ -14,7 +14,7 @@
 # - the installers are stamped with the version;
 # - release.json is a manifest of format 2 for the version, declaring what
 #   the release does to a migration's rollback window: reversibleTo the
-#   last TypeScript release (0.23.0), or endsRollbackWindow, exactly one
+#   last TypeScript release (0.23.1), or endsRollbackWindow, exactly one
 #   (internal docs/design/go-step7.md decision 17).
 #
 # With --image <reference> (the release workflow's go-release, once the
@@ -136,8 +136,8 @@ if [ -f release.json ]; then
     || bad "release.json is not a manifest of format 2 for $version"
   # Both keys present (jq reads a missing key as null, which Go refuses),
   # then exactly one of the two declarations.
-  jq -e 'has("reversibleTo") and has("endsRollbackWindow") and ((.reversibleTo == "0.23.0" and .endsRollbackWindow == false) or (.reversibleTo == null and .endsRollbackWindow == true))' release.json > /dev/null \
-    || bad "release.json declares neither reversibleTo 0.23.0 nor endsRollbackWindow: a release keeps the migration's rollback window or says it ends it"
+  jq -e 'has("reversibleTo") and has("endsRollbackWindow") and ((.reversibleTo == "0.23.1" and .endsRollbackWindow == false) or (.reversibleTo == null and .endsRollbackWindow == true))' release.json > /dev/null \
+    || bad "release.json declares neither reversibleTo 0.23.1 nor endsRollbackWindow: a release keeps the migration's rollback window or says it ends it"
 fi
 
 [ "$fail" = 0 ] && printf 'check-assets: %s files of %s checked\n' "${#expected[@]}" "$version"

@@ -30,11 +30,11 @@ here=$(cd "$(dirname "$0")" && pwd) top=$(cd "$(dirname "$0")/../../.." && pwd)
 mkdir -p "$2" && work=$(cd "$2" && pwd)
 
 # The release, and its files' hashes.
-VERSION=0.23.0
-HASHES='2abb4cabb885533bb38bd6f20dad7236e6b533398e16e5d57278521aacba4359  varlatch-release.json
-c21bb0967c8201ee62e16d88386cbacadc8041bc1fc1e65c9b9cf053609a30e0  varlatch-compose-0.23.0.tar.gz
-1b3d0c6106122313d12a22848691bc36fc6b81fb68699d58956c21f2012e441d  varlatch-cli-0.23.0.cjs
-5ebde9f1dc05099cdcb8ffac45de9f2ea90cfbed6103e90876899e4faa0fb7fc  coolify-image-digests.env'
+VERSION=0.23.1
+HASHES='3063d7cdcb2370b435547af9f317b1bb1bccf294f9b7df6ffc4ccaeed8225225  varlatch-release.json
+c6b99d7e0254ed40fdf53c9b2f1764c6e8e7b2bd482aedbeedde3f4d80a85250  varlatch-compose-0.23.1.tar.gz
+fe3526d5fe1d92681ae04b63641bffc789c04a484e46043bf606939b5fb9b3c8  varlatch-cli-0.23.1.cjs
+b524da83b50a4cbb042be7679ed64201b774b76821df2257ed9798699270777d  coolify-image-digests.env'
 last=$(sed -n 's/^const LastTypeScriptRelease = "\(.*\)"$/\1/p' "$top/go/lib/release/manifest.go")
 [ "$last" = "$VERSION" ] || fail "the last TypeScript release is ${last:-not named} and this script has $VERSION's hashes: bring it up to date"
 pinned=$(sed -n 's/^\tLastTypeScriptDigest *= "\(sha256:[0-9a-f]\{64\}\)".*/\1/p' "$top/go/cmd/varlatch/internal/migrate/sides.go")

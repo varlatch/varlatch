@@ -10,7 +10,7 @@ var GoOnlyEventTypes = []string{
 	// An installation migrated from the TypeScript server (or back): after
 	// the source's events and the revocations of the sessions it ended
 	// (`varlatchd admin migrate import`, `export --reverse`; step 7.3a).
-	// The last TypeScript release (0.23.0) knows it too.
+	// The last TypeScript release (0.23.1) knows it too.
 	"installation.migrated",
 	// The host operator ended a restore's hold (`varlatchd admin restore
 	// resume`).

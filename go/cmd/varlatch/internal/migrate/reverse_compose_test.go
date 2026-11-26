@@ -106,7 +106,7 @@ const stockConfig = `{"name":"varlatch","services":{"postgres":{"volumes":[{"typ
 // .env's secrets), never the directory's name; the fresh volumes are named
 // by it; an answer without a name, or a failed config, refuses.
 func TestTheProjectIsCompose(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "varlatch-0.23.0")
+	dir := filepath.Join(t.TempDir(), "varlatch-0.23.1")
 	if err := os.Mkdir(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}

@@ -478,7 +478,7 @@ func prepareInstallation(t *testing.T, rel release, s3 *s3Server, name string, k
 			t.Fatal(err)
 		}
 	}
-	bundle := filepath.Join(releaseDir, "varlatch-compose-0.23.0.tar.gz")
+	bundle := filepath.Join(releaseDir, "varlatch-compose-0.23.1.tar.gz")
 	must(t, run("", nil, nil, "tar", "-xzf", bundle, "-C", in.dir, "--strip-components=1"), "unpack the release bundle")
 	_ = os.MkdirAll(filepath.Join(in.dir, "secrets"), 0o700)
 	_ = os.MkdirAll(filepath.Join(in.dir, "backups"), 0o700)
@@ -648,7 +648,7 @@ func prepareInstallation(t *testing.T, rel release, s3 *s3Server, name string, k
 			t.Fatal(err)
 		}
 	}
-	cli := filepath.Join(releaseDir, "varlatch-cli-0.23.0.cjs")
+	cli := filepath.Join(releaseDir, "varlatch-cli-0.23.1.cjs")
 	if err := os.WriteFile(filepath.Join(in.fakebin, "varlatch-ts"), []byte("#!/bin/sh\nexec node "+cli+" \"$@\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -722,7 +722,7 @@ func (in *installation) up() {
 	}
 	_ = json.Unmarshal([]byte(body), &meta)
 	in.installationID = meta.InstallationID
-	if meta.ServerVersion != "0.23.0" || meta.InstallationID == "" {
+	if meta.ServerVersion != "0.23.1" || meta.InstallationID == "" {
 		t.Fatalf("/v1/meta: %s", redact(body))
 	}
 }
@@ -772,7 +772,7 @@ type answered struct {
 }
 
 // sourceAnswers is whether a /v1/meta answer is the source's own: 200, the
-// TypeScript release 0.23.0, and the installation's id (0.23.0 answers
+// TypeScript release 0.23.1, and the installation's id (0.23.1 answers
 // 200 without one while its database is down), as migrate's prober and
 // waitForTypeScript judge it.
 func sourceAnswers(installationID string) func(int, string) bool {
@@ -784,7 +784,7 @@ func sourceAnswers(installationID string) func(int, string) bool {
 		if code != http.StatusOK || json.Unmarshal([]byte(body), &meta) != nil {
 			return false
 		}
-		return installationID != "" && meta.InstallationID == installationID && meta.ServerVersion == "0.23.0"
+		return installationID != "" && meta.InstallationID == installationID && meta.ServerVersion == "0.23.1"
 	}
 }
 

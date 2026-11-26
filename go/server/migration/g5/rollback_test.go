@@ -63,7 +63,7 @@ import (
 //   - `convex-deploy`, and `docker volume rm`.
 // What the real TypeScript release and Docker do with these commands (the
 // image's entry point, its secrets, its Convex reset) is 7.8's rehearsal,
-// on a real 0.23.0 source; a public ingress with Pebble and a real Coolify
+// on a real 0.23.1 source; a public ingress with Pebble and a real Coolify
 // too.
 
 // stopped is whether a Compose service of the stand-in is stopped.
@@ -465,7 +465,7 @@ func fakeDockerReverse(args []string) (int, bool) {
 	if len(args) > len(oneOff) && slices.Equal(args[:len(oneOff)], oneOff) {
 		return tsMigration(args[len(oneOff)], args[len(oneOff)+1:]), true
 	}
-	// compose run keeps 0.23.0's entrypoint (node dist/cli.js): a command
+	// compose run keeps 0.23.1's entrypoint (node dist/cli.js): a command
 	// that names node again reaches its CLI as a command, which refuses it
 	// (rehearsal r16d).
 	if i := slices.Index(args, "run"); i >= 0 && slices.Contains(args[i:], "node") {
@@ -475,7 +475,7 @@ func fakeDockerReverse(args []string) (int, bool) {
 	return 0, false
 }
 
-// tsImport is 0.23.0's `admin migration import --in -`: its refusals
+// tsImport is 0.23.1's `admin migration import --in -`: its refusals
 // before it reads its input (varlatch migrate's copy then meets a closed
 // pipe), the reverse bundle on its standard input, read to its end, and
 // its answer on its standard output.

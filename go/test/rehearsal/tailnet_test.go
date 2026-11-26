@@ -662,12 +662,12 @@ func (in *installation) sidecarRunning() bool {
 // isSource is /v1/meta of the source's own installation, from the
 // TypeScript release.
 func isSource(in *installation, meta string) bool {
-	return strings.Contains(meta, in.installationID) && strings.Contains(meta, `"serverVersion":"0.23.0"`)
+	return strings.Contains(meta, in.installationID) && strings.Contains(meta, `"serverVersion":"0.23.1"`)
 }
 
 // isTarget is /v1/meta of the migrated installation, from Go.
 func isTarget(in *installation, meta string) bool {
-	return strings.Contains(meta, in.installationID) && !strings.Contains(meta, `"serverVersion":"0.23.0"`)
+	return strings.Contains(meta, in.installationID) && !strings.Contains(meta, `"serverVersion":"0.23.1"`)
 }
 
 func tailnetCase(t *testing.T, rel release, s3 *s3Server) {

@@ -317,7 +317,7 @@ pins the published image by digest using Coolify environment variables.
    backup_key_file = /keys/backup-key
    ```
 
-   When migrating from 0.23.0 with `varlatch migrate --ingress coolify`, leave
+   When migrating from 0.23.1 with `varlatch migrate --ingress coolify`, leave
    `/srv/varlatch/data` empty and let `varlatch migrate` populate the bind
    paths as `65532:65532`. For a fresh install, follow
    [A fresh install by hand](#a-fresh-install-by-hand) instead of this step.

@@ -195,7 +195,7 @@ func readProfile(euid int) (profileConfig, error) {
 		// Coolify Compose file and README.
 		for _, f := range []string{filepath.Join(releaseDir, "coolify-image-digests.env"), filepath.Join(tsCheckout, "infra", "compose", "docker-compose.coolify.yml"), filepath.Join(tsCheckout, "infra", "coolify", "README.md")} {
 			if _, err := os.Stat(f); err != nil {
-				return prof, fmt.Errorf("the Coolify domain move (B3) needs %s: run images.sh again (it writes coolify-image-digests.env), from a checkout of the 0.23.0 candidate (#373's branch, which has the Coolify files); %v", f, err)
+				return prof, fmt.Errorf("the Coolify domain move (B3) needs %s: run images.sh again (it writes coolify-image-digests.env), from a checkout of the 0.23.1 candidate (#373's branch, which has the Coolify files); %v", f, err)
 			}
 		}
 	}
@@ -798,7 +798,7 @@ func coolifyCase(t *testing.T, rel release, s3 *s3Server) {
 	base, tmpDir, lines, bek, destinations, readCreds := f.base, f.tmp, f.lines, f.bek, f.destinations, f.readCreds
 	pause(t, "source-app",
 		"In the lab Coolify (never production's), in a throwaway project, create a Docker Compose app from",
-		"the 0.23.0 candidate's checkout, Base Directory /infra/compose, Docker Compose Location /docker-compose.coolify.yml,",
+		"the 0.23.1 candidate's checkout, Base Directory /infra/compose, Docker Compose Location /docker-compose.coolify.yml,",
 		"Preserve Repository on (production's layout: Coolify's docker-compose.yaml beside the repository's docker-compose.yml),",
 		"its domain https://"+prof.publicName+" on varlatch-web port 80, and these variables (the run's images):",
 		strings.TrimSpace(string(digests)),
@@ -818,7 +818,7 @@ func coolifyCase(t *testing.T, rel release, s3 *s3Server) {
 		return resp.StatusCode, fmt.Sprint(meta["serverVersion"], " ", meta["installationId"])
 	}
 	code, before := get()
-	record(t, item, "the source app serves 0.23.0 at the public URL", code == 200 && strings.HasPrefix(before, "0.23.0"), before)
+	record(t, item, "the source app serves 0.23.1 at the public URL", code == 200 && strings.HasPrefix(before, "0.23.1"), before)
 	target := filepath.Join(base, "go")
 	for _, d := range []string{"data", "keys"} {
 		if err := os.MkdirAll(filepath.Join(target, d), 0o700); err != nil {
@@ -845,7 +845,7 @@ func coolifyCase(t *testing.T, rel release, s3 *s3Server) {
 		"--ts-cli", "varlatch-ts", "--transfer-timeout", "5m"}
 	tsCLI := filepath.Join(base, "bin")
 	_ = os.MkdirAll(tsCLI, 0o755)
-	cli := filepath.Join(releaseDir, "varlatch-cli-0.23.0.cjs")
+	cli := filepath.Join(releaseDir, "varlatch-cli-0.23.1.cjs")
 	if err := os.WriteFile(filepath.Join(tsCLI, "varlatch-ts"), []byte("#!/bin/sh\nexec node "+cli+" \"$@\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -874,11 +874,11 @@ func coolifyCase(t *testing.T, rel release, s3 *s3Server) {
 	r := migrateUntilDone("migrate", args)
 	record(t, item, "the migration opens on the Go app", r.code == 0, r.String())
 	code, after := get()
-	record(t, item, "the public URL answers from the Go app", code == 200 && !strings.HasPrefix(after, "0.23.0"), after)
+	record(t, item, "the public URL answers from the Go app", code == 200 && !strings.HasPrefix(after, "0.23.1"), after)
 	r = migrateUntilDone("rollback", rollbackArgs)
 	record(t, item, "--rollback, the domain moved back by hand", r.code == 0, r.String())
 	code, back := get()
-	record(t, item, "the public URL answers from 0.23.0 again", code == 200 && strings.HasPrefix(back, "0.23.0"), back)
+	record(t, item, "the public URL answers from 0.23.1 again", code == 200 && strings.HasPrefix(back, "0.23.1"), back)
 	pause(t, "cleanup", "In the lab Coolify, delete the two apps of this run and their volumes, and the throwaway project.")
 	_ = os.RemoveAll(base)
 }

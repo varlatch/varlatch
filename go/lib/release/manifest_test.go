@@ -65,7 +65,7 @@ func TestTheRollbackWindowIsDeclared(t *testing.T) {
 		{"ends the window", ends, ""},
 		{"declares neither", neither, "neither reversibleTo nor endsRollbackWindow"},
 		{"declares both", both, "both set"},
-		{"reversible to another release", wrong, `reversibleTo "0.22.4" is not the last TypeScript release, 0.23.0`},
+		{"reversible to another release", wrong, `reversibleTo "0.22.4" is not the last TypeScript release, 0.23.1`},
 	} {
 		err := c.d.Check()
 		if c.want == "" && err != nil || c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)) {
@@ -75,15 +75,15 @@ func TestTheRollbackWindowIsDeclared(t *testing.T) {
 }
 
 func TestParseDeclaration(t *testing.T) {
-	d, err := ParseDeclaration([]byte(`{"schemaVersion": 2, "compatibleFrom": 1, "rollbackSafe": true, "previous": {"version": "0.50.0-rc.1", "schemaVersion": 1}, "reversibleTo": "0.23.0", "endsRollbackWindow": false}`))
-	if err != nil || d.SchemaVersion != 2 || !d.RollbackSafe || d.Previous == nil || d.Previous.Version != "0.50.0-rc.1" || d.ReversibleTo == nil || *d.ReversibleTo != "0.23.0" {
+	d, err := ParseDeclaration([]byte(`{"schemaVersion": 2, "compatibleFrom": 1, "rollbackSafe": true, "previous": {"version": "0.50.0-rc.1", "schemaVersion": 1}, "reversibleTo": "0.23.1", "endsRollbackWindow": false}`))
+	if err != nil || d.SchemaVersion != 2 || !d.RollbackSafe || d.Previous == nil || d.Previous.Version != "0.50.0-rc.1" || d.ReversibleTo == nil || *d.ReversibleTo != "0.23.1" {
 		t.Fatalf("%+v, %v", d, err)
 	}
-	const tail = `, "reversibleTo": "0.23.0", "endsRollbackWindow": false}`
+	const tail = `, "reversibleTo": "0.23.1", "endsRollbackWindow": false}`
 	for _, c := range []struct{ name, json, want string }{
 		{"a missing key", `{"schemaVersion": 1, "compatibleFrom": 1, "previous": null` + tail, `no "rollbackSafe"`},
 		{"no reversibleTo", `{"schemaVersion": 1, "compatibleFrom": 1, "rollbackSafe": false, "previous": null, "endsRollbackWindow": false}`, `no "reversibleTo"`},
-		{"no endsRollbackWindow", `{"schemaVersion": 1, "compatibleFrom": 1, "rollbackSafe": false, "previous": null, "reversibleTo": "0.23.0"}`, `no "endsRollbackWindow"`},
+		{"no endsRollbackWindow", `{"schemaVersion": 1, "compatibleFrom": 1, "rollbackSafe": false, "previous": null, "reversibleTo": "0.23.1"}`, `no "endsRollbackWindow"`},
 		{"neither declared", `{"schemaVersion": 1, "compatibleFrom": 1, "rollbackSafe": false, "previous": null, "reversibleTo": null, "endsRollbackWindow": false}`, "neither reversibleTo nor endsRollbackWindow"},
 		{"an unknown key", `{"schemaVersion": 1, "compatibleFrom": 1, "rollbackSafe": false, "previous": null, "note": "x"` + tail, `an unknown key "note"`},
 		{"an unknown key in previous", `{"schemaVersion": 2, "compatibleFrom": 1, "rollbackSafe": true, "previous": {"version": "0.50.0", "schemaVersion": 1, "x": 1}` + tail, `unknown field "x"`},
@@ -116,7 +116,7 @@ func TestManifestRoundTrip(t *testing.T) {
     "version": "0.50.0-rc.2",
     "schemaVersion": 1
   },
-  "reversibleTo": "0.23.0",
+  "reversibleTo": "0.23.1",
   "endsRollbackWindow": false
 }
 `
@@ -160,7 +160,7 @@ func TestAFormatOneManifestIsStillRead(t *testing.T) {
 		t.Errorf("written back: %s, %v", b, err)
 	}
 	// Format 1 with format 2's keys: refused.
-	if _, err := ParseManifest([]byte(strings.Replace(rc2, `"previous": {`, `"reversibleTo": "0.23.0", "previous": {`, 1))); err == nil || !strings.Contains(err.Error(), `unknown key "reversibleTo"`) {
+	if _, err := ParseManifest([]byte(strings.Replace(rc2, `"previous": {`, `"reversibleTo": "0.23.1", "previous": {`, 1))); err == nil || !strings.Contains(err.Error(), `unknown key "reversibleTo"`) {
 		t.Errorf("format 1 with reversibleTo: %v", err)
 	}
 }
@@ -183,7 +183,7 @@ func TestEndsRollbackWindow(t *testing.T) {
 }
 
 func TestParseManifestRefuses(t *testing.T) {
-	const tail = `, "reversibleTo": "0.23.0", "endsRollbackWindow": false}`
+	const tail = `, "reversibleTo": "0.23.1", "endsRollbackWindow": false}`
 	for _, c := range []struct{ name, json, want string }{
 		{"a later format", `{"manifestVersion": 3, "version": "0.50.0", "schemaVersion": 1, "compatibleFrom": 1, "rollbackSafe": false, "previous": null` + tail, "not of manifest format 1 or 2"},
 		{"no format", `{"version": "0.50.0", "schemaVersion": 1, "compatibleFrom": 1, "rollbackSafe": false, "previous": null` + tail, "not of manifest format 1 or 2"},

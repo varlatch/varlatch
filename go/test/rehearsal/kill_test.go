@@ -133,7 +133,7 @@ func killThenResume(t *testing.T, rel release, s3 *s3Server) {
 	} else {
 		record(t, killItem, "--resume opens a migration killed in the transfer", re.code == 0 && phase == "open", fmt.Sprintf("%s; phase %s", re.String(), phase))
 		record(t, killItem, "after --resume the public URL answers from the target",
-			code == 200 && strings.Contains(body, in.installationID) && !strings.Contains(body, `"serverVersion":"0.23.0"`), fmt.Sprintf("%d %s", code, trim(body)))
+			code == 200 && strings.Contains(body, in.installationID) && !strings.Contains(body, `"serverVersion":"0.23.1"`), fmt.Sprintf("%d %s", code, trim(body)))
 		ready := in.inside(`fetch("http://127.0.0.1:8686/readyz").then(async r => console.log(r.status, await r.text())).catch(e => console.log("error", e.message))`)
 		record(t, killItem, "after --resume the source's /readyz says migrated-out", strings.Contains(ready.stdout, "migrated-out"), trim(ready.stdout))
 		if re.code != 0 {

@@ -188,7 +188,7 @@ func TestProfileRefusals(t *testing.T) {
 		coolify(t)
 		write(t, filepath.Join(releaseDir, "coolify-image-digests.env"))
 		_, err := readProfile(0)
-		if err == nil || !strings.Contains(err.Error(), "docker-compose.coolify.yml") || !strings.Contains(err.Error(), "0.23.0 candidate") {
+		if err == nil || !strings.Contains(err.Error(), "docker-compose.coolify.yml") || !strings.Contains(err.Error(), "0.23.1 candidate") {
 			t.Fatal(err)
 		}
 	})

@@ -150,12 +150,12 @@ func registerSecrets(in *installation) {
 
 func imagePin(t *testing.T, in *installation, rel release) {
 	const item = 8
-	// The constants (no override): the release pins 0.23.0's published
+	// The constants (no override): the release pins 0.23.1's published
 	// image (ghcr.io/varlatch/varlatchd by its digest, #402), so this
 	// run's own build of it, from its own registry, is refused as another
 	// image, the published one named.
 	r := in.migrateEnv(rel, false, "", "--dry-run")
-	record(t, item, "no pin: refused as not the published image", r.code != 0 && strings.Contains(r.stderr, "not the published 0.23.0 image: repository ghcr.io/varlatch/varlatchd"), r.String())
+	record(t, item, "no pin: refused as not the published image", r.code != 0 && strings.Contains(r.stderr, "not the published 0.23.1 image: repository ghcr.io/varlatch/varlatchd"), r.String())
 	// Another digest than the source's.
 	other := rel.pin()[:strings.Index(rel.pin(), "@")] + "@sha256:" + strings.Repeat("0", 64)
 	r = in.migrateEnv(rel, true, other, "--dry-run")
@@ -163,7 +163,7 @@ func imagePin(t *testing.T, in *installation, rel release) {
 	// with a port as a URL's user name and password (finding of run r1).
 	// The override took effect: the refusal names its digest as the one
 	// wanted.
-	record(t, item, "another digest: refused", r.code != 0 && strings.Contains(r.stderr, "not the published 0.23.0 image") && strings.Contains(r.stderr, "sha256:"+strings.Repeat("0", 64)), r.String())
+	record(t, item, "another digest: refused", r.code != 0 && strings.Contains(r.stderr, "not the published 0.23.1 image") && strings.Contains(r.stderr, "sha256:"+strings.Repeat("0", 64)), r.String())
 	if strings.Contains(r.stderr, "[redacted]@") {
 		differs(item, "G5's pin is ghcr.io/varlatch/varlatchd@sha256:..., a repository without a port.",
 			"with a registry that has a port (a mirror, a private registry, this harness's), the refusal's image references read [redacted]@sha256:...: the fail-safe takes host:port/repo before the at-sign for a URL's credentials",
@@ -173,7 +173,7 @@ func imagePin(t *testing.T, in *installation, rel release) {
 	// not a tag of the pushed one, which would keep the pushed image's
 	// RepoDigests.
 	localRepo := "vl-rh-" + runID + "-local/varlatchd"
-	local := localRepo + ":0.23.0"
+	local := localRepo + ":0.23.1"
 	base := rel.Images["varlatchd"][:strings.Index(rel.Images["varlatchd"], "@")]
 	must(t, run("", nil, []byte("FROM "+base+"\nLABEL org.varlatch.rehearsal.local="+runID+"\n"), "docker", "build", "-q", "-t", local, "-"), "build a local image")
 	t.Cleanup(func() { run("", nil, nil, "docker", "image", "rm", local) })
@@ -197,7 +197,7 @@ func imagePin(t *testing.T, in *installation, rel release) {
 		differs(item, "G5's stand-in source has no RepoDigests for an image built and never pushed.",
 			fmt.Sprintf("Docker lists %s for an image built here and never pushed (the containerd image store gives a local name a digest), so migrate reads it as that repository's registry digest", digests),
 			"the \"not pinned by a registry digest\" refusal is unreachable on such a host; the image is still refused, as another repository and digest than the pin")
-		record(t, item, "a locally built image: refused", r.code != 0 && strings.Contains(r.stderr, "the source's image is repository "+localRepo+",") && strings.Contains(r.stderr, "not the published 0.23.0 image"), r.String())
+		record(t, item, "a locally built image: refused", r.code != 0 && strings.Contains(r.stderr, "the source's image is repository "+localRepo+",") && strings.Contains(r.stderr, "not the published 0.23.1 image"), r.String())
 	}
 	in.swapImage(t, rel.Images["varlatchd"])
 }
@@ -603,7 +603,7 @@ func migration(t *testing.T, in *installation, rel release, s3 *s3Server) {
 		return
 	}
 	_, body := in.get("/v1/meta")
-	record(t, 6, "the public URL answers from the target", strings.Contains(body, in.installationID) && !strings.Contains(body, `"serverVersion":"0.23.0"`), trim(body))
+	record(t, 6, "the public URL answers from the target", strings.Contains(body, in.installationID) && !strings.Contains(body, `"serverVersion":"0.23.1"`), trim(body))
 	// Item 5: the source behind its migrated-out gate.
 	ready := in.inside(`fetch("http://127.0.0.1:8686/readyz").then(async r => console.log(r.status, await r.text())).catch(e => console.log("error", e.message))`)
 	record(t, 5, "the source's /readyz says migrated-out", strings.Contains(ready.stdout, "migrated-out"), trim(ready.stdout))
@@ -709,7 +709,7 @@ func collisionCase(t *testing.T, rel release, s3 *s3Server) {
 	ab := in.migrateEnv(rel, true, rel.pin(), "--abort")
 	measure("item 6: --abort once the port is free", ab.String()+" "+lastLines(ab.stdout, 3))
 	// As a client would: the source is polled until it answers as itself
-	// (0.23.0 and this installation's id), never judged on one request
+	// (0.23.1 and this installation's id), never judged on one request
 	// (r12 read once, right after --abort). --abort exits 0 only once the
 	// source answers (its undo waits for it), so the check passes only if
 	// it answers within sourceAnswerBound of --abort's exit; the poll goes

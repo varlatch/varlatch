@@ -408,7 +408,7 @@ func newWorld(t *testing.T) *world {
 	t.Helper()
 	clock := newClock()
 	w := &world{
-		src: &fakeSource{dir: t.TempDir(), info: SourceInfo{Kind: "compose", Release: LastTypeScriptRelease, Image: "ghcr.io/varlatch/varlatchd:0.23.0",
+		src: &fakeSource{dir: t.TempDir(), info: SourceInfo{Kind: "compose", Release: LastTypeScriptRelease, Image: "ghcr.io/varlatch/varlatchd:0.23.1",
 			Digest: "sha256:" + hexOf(randomBytes(32))}, kek: []byte(hexOf(randomBytes(32)) + "\n"), fail: map[string]error{}, clock: clock, exportTakes: 20 * time.Second},
 		tgt: &fakeTarget{dataDir: t.TempDir(), fail: map[string]error{}, pass: true},
 		bek: []byte(hexOf(randomBytes(32)) + "\n"),
@@ -562,7 +562,7 @@ func TestThePinRefusalNamesBothImages(t *testing.T) {
 		t.Fatal("another image was not refused")
 	}
 	msg := err.Error()
-	for _, want := range []string{"repository registry.example:5000/varlatch/varlatchd, digest " + other, "not the published 0.23.0 image: repository "} {
+	for _, want := range []string{"repository registry.example:5000/varlatch/varlatchd, digest " + other, "not the published 0.23.1 image: repository "} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("%q lacks %q", msg, want)
 		}
@@ -623,11 +623,11 @@ func TestRefusalsBeforeAnything(t *testing.T) {
 		set  func(w *world)
 		why  string
 	}{
-		{"another release", func(w *world) { w.src.info.Release = "0.22.4" }, "starts from the last TypeScript release, 0.23.0"},
+		{"another release", func(w *world) { w.src.info.Release = "0.22.4" }, "starts from the last TypeScript release, 0.23.1"},
 		{"no digest", func(w *world) { w.src.info.Digest = "" }, "not pinned by a registry digest"},
-		{"another digest", func(w *world) { w.src.info.Digest = "sha256:" + hexOf(randomBytes(32)) }, "not the published 0.23.0 image"},
-		{"another repository", func(w *world) { w.src.info.DigestRepository = "ghcr.io/someone/varlatchd" }, "not the published 0.23.0 image"},
-		{"the release's own pin, another image", func(w *world) { w.eng.pin = nil }, "not the published 0.23.0 image"},
+		{"another digest", func(w *world) { w.src.info.Digest = "sha256:" + hexOf(randomBytes(32)) }, "not the published 0.23.1 image"},
+		{"another repository", func(w *world) { w.src.info.DigestRepository = "ghcr.io/someone/varlatchd" }, "not the published 0.23.1 image"},
+		{"the release's own pin, another image", func(w *world) { w.eng.pin = nil }, "not the published 0.23.1 image"},
 		{"a source behind a gate", func(w *world) { w.src.gate = &Gate{Kind: "restore", ID: "g"} }, "behind a restore gate"},
 		{"a target with a database", func(w *world) { w.tgt.database = true }, "holds a database and no migration journal"},
 		{"a target of another migration", func(w *world) { w.tgt.journal = &JournalHead{ID: "mig_aaaaaaaaaaaaaaaaaaaaaaaaaa", Phase: Copied} }, "holds the migration mig_aaaa"},
@@ -954,7 +954,7 @@ func TestATransferThatFailsGoesBack(t *testing.T) {
 	}
 }
 
-// The published pin (0.23.0's Step 7 item): a source on v0.23.0's
+// The published pin (0.23.1's Step 7 item): a source on v0.23.1's
 // varlatchd image index passes it; another digest, the same digest of
 // another repository, or none, is refused.
 func TestThePublishedPin(t *testing.T) {
@@ -973,8 +973,8 @@ func TestThePublishedPin(t *testing.T) {
 		set  func(*SourceInfo)
 		want string
 	}{
-		"another digest":     {func(s *SourceInfo) { s.Digest = "sha256:" + strings.Repeat("0", 64) }, "not the published 0.23.0 image"},
-		"another repository": {func(s *SourceInfo) { s.DigestRepository = "registry.example.test/varlatchd" }, "not the published 0.23.0 image"},
+		"another digest":     {func(s *SourceInfo) { s.Digest = "sha256:" + strings.Repeat("0", 64) }, "not the published 0.23.1 image"},
+		"another repository": {func(s *SourceInfo) { s.DigestRepository = "registry.example.test/varlatchd" }, "not the published 0.23.1 image"},
 		"no digest":          {func(s *SourceInfo) { s.Digest, s.DigestRepository = "", "" }, "not pinned by a registry digest"},
 	} {
 		src := ok
@@ -1280,20 +1280,20 @@ func TestAbort(t *testing.T) {
 // answering: the check fails, the address goes back.
 func TestTheOldReleaseAnswering(t *testing.T) {
 	w := newWorld(t)
-	w.prober.release = "0.23.0"
+	w.prober.release = "0.23.1"
 	w.eng.Options.TransferTimeout = 4 * time.Second
 	j, err := w.eng.Run(context.Background(), false)
-	if err == nil || !strings.Contains(err.Error(), "release 0.23.0, not the target's 0.50.0") || j.Phase != Released || containsCall(w.src.calls, "migrated-out gate-1") {
+	if err == nil || !strings.Contains(err.Error(), "release 0.23.1, not the target's 0.50.0") || j.Phase != Released || containsCall(w.src.calls, "migrated-out gate-1") {
 		t.Fatalf("%+v %v", j, err)
 	}
 	// Coolify: still waiting, nothing undone.
 	w = newWorld(t)
 	w.eng.Options.Ingress, w.eng.Options.TransferTimeout = Coolify, 4*time.Second
-	w.prober.release, w.prober.moved = "0.23.0", true
+	w.prober.release, w.prober.moved = "0.23.1", true
 	if _, err := w.eng.Run(context.Background(), false); !errors.Is(err, ErrAwaitingOperator) {
 		t.Fatal(err)
 	}
-	if j, err = w.eng.Resume(context.Background()); err == nil || !strings.Contains(err.Error(), "release 0.23.0") || j.Phase != Transfer {
+	if j, err = w.eng.Resume(context.Background()); err == nil || !strings.Contains(err.Error(), "release 0.23.1") || j.Phase != Transfer {
 		t.Fatalf("coolify: %+v %v", j, err)
 	}
 }

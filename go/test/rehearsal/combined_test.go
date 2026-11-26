@@ -80,7 +80,7 @@ func checkCombined(prof profileConfig) error {
 	}
 	for _, f := range []string{filepath.Join(releaseDir, "coolify-image-digests.env"), filepath.Join(tsCheckout, tailscaleCompose), filepath.Join(tsCheckout, "infra", "compose", "docker-compose.yml"), filepath.Join(tsCheckout, "infra", "coolify", "README.md")} {
 		if _, err := os.Stat(f); err != nil {
-			return fmt.Errorf("the combined case needs %s: run images.sh again (it writes coolify-image-digests.env), from a checkout of 0.23.0; %v", f, err)
+			return fmt.Errorf("the combined case needs %s: run images.sh again (it writes coolify-image-digests.env), from a checkout of 0.23.1; %v", f, err)
 		}
 	}
 	return nil
@@ -161,7 +161,7 @@ func serveGit(t *testing.T, base, url, ca string) string {
 	}
 	git(src, "init", "-q")
 	git(src, "add", "infra")
-	git(src, "commit", "-q", "-m", "0.23.0's infra, the rehearsal's control server")
+	git(src, "commit", "-q", "-m", "0.23.1's infra, the rehearsal's control server")
 	git(src, "clone", "-q", "--bare", src, filepath.Join(www, "app.git"))
 	git(filepath.Join(www, "app.git"), "update-server-info")
 	must(t, run("", nil, nil, "chmod", "-R", "a+rX", www), "open the repository's files")
@@ -463,8 +463,8 @@ func metaVersion(meta string) string {
 	return m.ServerVersion
 }
 
-func isTS(v string) bool { return v == "0.23.0" }
-func isGo(v string) bool { return v != "" && v != "0.23.0" }
+func isTS(v string) bool { return v == "0.23.1" }
+func isGo(v string) bool { return v != "" && v != "0.23.1" }
 
 // addresses are the project's services' addresses.
 func (c *combined) addresses() string {
@@ -588,11 +588,11 @@ func (c *combined) writer(step string) *goWriter {
 func (c *combined) reversed(step string) {
 	c.t.Helper()
 	code, body := c.get()
-	c.record(step+": the public URL answers from 0.23.0", code == 200 && strings.HasPrefix(body, "0.23.0 "), fmt.Sprintf("%d %s", code, body))
+	c.record(step+": the public URL answers from 0.23.1", code == 200 && strings.HasPrefix(body, "0.23.1 "), fmt.Sprintf("%d %s", code, body))
 	c.record(step+": the journal says rolled back", c.phase() == "rolled-back", c.phase())
 	c.name(step+": the tailnet name is the sidecar's again", isTS)
 	if c.wrote != nil {
-		c.wrote.kept("0.23.0, after " + step)
+		c.wrote.kept("0.23.1, after " + step)
 	}
 	fresh, retained := "", ""
 	if rb, _ := c.journal()["rollback"].(map[string]any); rb != nil {
@@ -620,7 +620,7 @@ func (c *combined) reversed(step string) {
 	}
 	time.Sleep(5 * time.Second)
 	code, body = c.get()
-	c.record(step+": without the route, the public URL still answers from 0.23.0", code == 200 && strings.HasPrefix(body, "0.23.0 "), fmt.Sprintf("%d %s", code, body))
+	c.record(step+": without the route, the public URL still answers from 0.23.1", code == 200 && strings.HasPrefix(body, "0.23.1 "), fmt.Sprintf("%d %s", code, body))
 	pause(c.t, step+"-domain", "In the lab Coolify: the domain https://"+prof.publicName+" off the Go app and back onto the source app (varlatch-web): Save only. Do not deploy either.")
 }
 
@@ -734,7 +734,7 @@ func (c *combined) removeStopped() []string {
 func (c *combined) throughStop(step string, r ran) bool {
 	c.t.Helper()
 	code, body := c.get()
-	if !c.record(step+": it stops for Go's stop (exit 75), the address answering from 0.23.0 already", r.code == 75 && code == 200 && strings.HasPrefix(body, "0.23.0 "), fmt.Sprintf("%s; %d %s", r, code, body)) {
+	if !c.record(step+": it stops for Go's stop (exit 75), the address answering from 0.23.1 already", r.code == 75 && code == 200 && strings.HasPrefix(body, "0.23.1 "), fmt.Sprintf("%s; %d %s", r, code, body)) {
 		return false
 	}
 	c.stopGo()
@@ -812,13 +812,13 @@ func combinedCase(t *testing.T, rel release, s3 *s3Server) {
 		return
 	}
 	c.record("varlatchd is in the sidecar's network", daemon.NetworkMode == "container:"+sidecar.ID, daemon.NetworkMode)
-	if !pollUntil(5*time.Minute, 3*time.Second, func() bool { code, body := c.get(); return code == 200 && strings.HasPrefix(body, "0.23.0 ") }) {
+	if !pollUntil(5*time.Minute, 3*time.Second, func() bool { code, body := c.get(); return code == 200 && strings.HasPrefix(body, "0.23.1 ") }) {
 		code, body := c.get()
-		c.record("the source app serves 0.23.0 at the public URL", false, fmt.Sprintf("%d %s", code, body))
+		c.record("the source app serves 0.23.1 at the public URL", false, fmt.Sprintf("%d %s", code, body))
 		return
 	}
 	_, before := c.get()
-	c.record("the source app serves 0.23.0 at the public URL", true, before)
+	c.record("the source app serves 0.23.1 at the public URL", true, before)
 	c.name("the tailnet name is the sidecar's", isTS)
 
 	// The target, in setup mode, in a directory of this run's (its mark).
@@ -865,7 +865,7 @@ func combinedCase(t *testing.T, rel release, s3 *s3Server) {
 	if err := os.MkdirAll(c.tsBin, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	cli := filepath.Join(releaseDir, "varlatch-cli-0.23.0.cjs")
+	cli := filepath.Join(releaseDir, "varlatch-cli-0.23.1.cjs")
 	if err := os.WriteFile(filepath.Join(c.tsBin, "varlatch-ts"), []byte("#!/bin/sh\nexec node "+cli+" \"$@\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -880,7 +880,7 @@ func combinedCase(t *testing.T, rel release, s3 *s3Server) {
 	if c.killed("entered transfer", c.forwardArgs()) {
 		ab := c.migrate("--abort after the kill in the transfer", c.forwardArgs("--abort"))
 		code, body := c.get()
-		c.record("--abort after a kill in the transfer: the old installation answers", ab.code == 0 && code == 200 && strings.HasPrefix(body, "0.23.0 "), fmt.Sprintf("%s; %d %s", ab, code, body))
+		c.record("--abort after a kill in the transfer: the old installation answers", ab.code == 0 && code == 200 && strings.HasPrefix(body, "0.23.1 "), fmt.Sprintf("%s; %d %s", ab, code, body))
 	}
 	if !c.forward("migrate") {
 		return
@@ -1000,7 +1000,7 @@ func combinedCase(t *testing.T, rel release, s3 *s3Server) {
 		c.record("Go's copy is discarded", false, fmt.Sprint(err))
 	}
 	_, body := c.get()
-	c.record("after it the source still serves", strings.HasPrefix(body, "0.23.0 "), body)
+	c.record("after it the source still serves", strings.HasPrefix(body, "0.23.1 "), body)
 
 	// A second migration, and its rollback with the stopped containers and
 	// their images gone.

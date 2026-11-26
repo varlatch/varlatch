@@ -40,9 +40,9 @@ permissions:
   contents: read
 
 env:
-  # The last TypeScript release. Remove it, and its download below, once 0.23.0
+  # The last TypeScript release. Remove it, and its download below, once 0.23.1
   # is no longer supported.
-  TYPESCRIPT_RELEASE: v0.23.0 # go/lib/release/manifest.go's LastTypeScriptRelease
+  TYPESCRIPT_RELEASE: v0.23.1 # go/lib/release/manifest.go's LastTypeScriptRelease
   # Update only to a release published at least 7 days earlier: a malicious
   # release is usually caught and pulled within hours or days.
   OSV_SCANNER_VERSION: v2.7.0
