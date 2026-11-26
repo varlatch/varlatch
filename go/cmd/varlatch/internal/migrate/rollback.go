@@ -48,9 +48,9 @@ import (
 // own-proxy shapes, started again by an undo). ServedAt is journalled just
 // before the first StartServing; from then on the rebuilt installation may
 // have accepted writes, so the reverse goes forward only, keeping the
-// fresh volumes and the phase for --resume, and --abort refuses. Only a
-// first StartServing that fails in the same run is still undone
-// (reverseTransfer says why).
+// fresh volumes and the phase for --resume, and --abort refuses, a failed
+// StartServing included (reverseTransfer says why). A 0.50.0 journal in
+// its transfer counts as served (servedAt).
 // Rolled back goes forward only.
 
 // RollbackWindow is decision 17's: a reverse migration within 30 days of
@@ -182,7 +182,7 @@ func (e *Engine) Rollback(ctx context.Context) (*Journal, error) {
 		}
 	}
 	// Journalled before anything starts: a kill from here is undone.
-	j.Rollback = &RollbackRecord{StartedAt: e.now().UTC().Format(time.RFC3339Nano)}
+	j.Rollback = &RollbackRecord{StartedAt: e.now().UTC().Format(time.RFC3339Nano), RecordsServing: true}
 	if err := e.enter(ctx, j, Rollback); err != nil {
 		return j, err
 	}
@@ -454,18 +454,33 @@ func (e *Engine) reverse(ctx context.Context, j *Journal) error {
 	return e.reverseTransfer(ctx, j)
 }
 
-// servedAt is when the rebuilt TypeScript installation first started
-// serving in this reverse, or "" before StartServing has succeeded. A
-// 0.50.0 journal recorded no ServedAt, only VerifiedAt once the public URL
-// answered after StartServing: that counts too.
+// servedAt is since when the rebuilt TypeScript installation may have
+// served in this reverse, or "" while it cannot have. A journal of this
+// release has ServedAt from just before the first StartServing. One of an
+// earlier release (0.50.0, no RecordsServing) recorded nothing before
+// StartServing, and VerifiedAt only once the public URL answered after it:
+// VerifiedAt counts, and so does its transfer with neither (a run killed
+// after StartServing, or a probe that timed out, left that), since when it
+// entered the transfer.
 func servedAt(j *Journal) string {
 	if j == nil || j.Rollback == nil {
 		return ""
 	}
-	if j.Rollback.ServedAt != "" {
-		return j.Rollback.ServedAt
+	rb := j.Rollback
+	switch {
+	case rb.ServedAt != "":
+		return rb.ServedAt
+	case rb.VerifiedAt != "":
+		return rb.VerifiedAt
+	case !rb.RecordsServing && j.Phase == RollbackTransfer:
+		for i := len(j.History) - 1; i >= 0; i-- {
+			if j.History[i].Phase == RollbackTransfer && j.History[i].At != "" {
+				return j.History[i].At
+			}
+		}
+		return "the transfer began"
 	}
-	return j.Rollback.VerifiedAt
+	return ""
 }
 
 // keptForResume says why a failure once the rebuilt installation may have
@@ -487,6 +502,22 @@ func (e *Engine) reverseTransfer(ctx context.Context, j *Journal) error {
 	rs, _, err := e.reverseSides()
 	if err != nil {
 		return err
+	}
+	// A journal of an earlier release (no RecordsServing) is adopted first,
+	// before anything is checked, started or stopped: when it may have
+	// served (servedAt), that is journalled as ServedAt at once, so neither
+	// a later failure nor an --abort, nor a 0.50.0 CLI (which does not read
+	// the fields), undoes it. One that has not served is marked only, with
+	// the next save.
+	if !j.Rollback.RecordsServing {
+		served := servedAt(j)
+		j.Rollback.RecordsServing = true
+		if served != "" {
+			j.Rollback.ServedAt = served
+			if err := e.save(ctx, j); err != nil {
+				return fmt.Errorf("recording that the TypeScript release may have served: %w; %s", err, keptForResume(j))
+			}
+		}
 	}
 	// Before anything starts, stops or moves: the installation runs on the
 	// fresh volumes. Before the transfer, one that does not is undone;
@@ -533,42 +564,35 @@ func (e *Engine) reverseTransfer(ctx context.Context, j *Journal) error {
 		}
 		crashPoint("rollback go stopped")
 	}
-	// ServedAt is journalled before StartServing is first called, not after
-	// it succeeds: a run killed between a StartServing that succeeded and
-	// that save would otherwise leave a journal that says nothing served,
-	// and a later --resume whose StartServing failed, or an --abort, would
-	// undo the reverse and remove the fresh volumes with what the rebuilt
-	// installation took in the meantime. So from this save on, an
-	// interrupted run counts as served (forward only, even when the kill came
-	// before StartServing did anything). Only a StartServing that returns
-	// an error in this same run, the first one asked, is still undone, as
-	// before: it failed at a step before the last, and the last step is what
-	// makes the rebuilt installation reachable at the address (the
-	// dashboard made again behind Coolify's route, or Caddy on a public
-	// address). Its ServedAt is cleared in memory, and undoReverse's first
-	// save (undoing) journals that; a run killed before that save keeps
-	// ServedAt and is not undone.
-	first := servedAt(j) == ""
-	if first {
+	// ServedAt is journalled before StartServing is first called, and kept
+	// whatever the call answers. StartServing starts varlatchd before it
+	// makes the dashboard again (and, on a public address, before Caddy):
+	// behind Coolify's route, which runs already, or on the tailnet
+	// sidecar's address, requests may reach the rebuilt installation before
+	// a later step fails, and a Docker client may fail after Docker started
+	// a container. A run killed on either side of the call counts as served
+	// too. So from this save on, the reverse goes forward only; only a
+	// failure before it (this save's included: StartServing is then not
+	// called) is undone.
+	if servedAt(j) == "" {
 		j.Rollback.ServedAt = e.now().UTC().Format(time.RFC3339Nano)
 		if err := e.save(ctx, j); err != nil {
-			// StartServing was not called: nothing served.
 			j.Rollback.ServedAt = ""
 			return e.undoReverse(ctx, j, fmt.Errorf("recording that the TypeScript release starts serving: %w", err))
 		}
 		crashPoint("rollback serving recorded")
 	}
 	if err := rs.StartServing(ctx, kind); err != nil {
-		if first {
-			j.Rollback.ServedAt = ""
-			return e.undoReverse(ctx, j, fmt.Errorf("starting the TypeScript release: %w", err))
-		}
 		return fmt.Errorf("starting the TypeScript release: %w; %s", err, keptForResume(j))
 	}
 	crashPoint("rollback transfer started")
 	if err := e.waitForSource(ctx, j); err != nil {
 		if kind == Coolify {
-			return fmt.Errorf("%w; the route put in the proxy before the reverse must still be there, to the TypeScript dashboard (Go was not stopped); %s", err, keptForResume(j))
+			goState := "Go was not stopped"
+			if j.Rollback.GoStopped {
+				goState = "Go is stopped already"
+			}
+			return fmt.Errorf("%w; the route put in the proxy before the reverse must still be there, to the TypeScript dashboard (%s); %s", err, goState, keptForResume(j))
 		}
 		return fmt.Errorf("%w; %s", err, keptForResume(j))
 	}
@@ -617,6 +641,13 @@ func (e *Engine) checkRebuilt(ctx context.Context, j *Journal) error {
 			}
 			then := "then varlatch migrate --resume."
 			if j.Phase == RollbackTransfer && servedAt(j) == "" {
+				// varlatchd is started by --resume, after it records that
+				// (StartServing): started by hand, it could take writes that
+				// an --abort would remove.
+				var nr *notRebuiltError
+				if errors.As(err, &nr) {
+					err = nr.daemonKept()
+				}
 				then += " (varlatch migrate --abort undoes the reverse instead: it gives the address back to Go and removes the fresh volumes.)"
 			}
 			return fmt.Errorf("the TypeScript installation is not on the fresh volumes the reverse rebuilt it on: %w; %s; %s", err, what, then)

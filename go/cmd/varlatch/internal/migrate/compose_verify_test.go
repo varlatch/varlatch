@@ -487,7 +487,7 @@ func rolledWorld(t *testing.T, phase Phase, kind Ingress) (*world, *reverseFake,
 	w := newWorld(t)
 	w.eng.Options.Ingress = kind
 	j := &Journal{Format: 1, ID: "mig_aaaaaaaaaaaaaaaaaaaaaaaaaa", Phase: phase, Source: w.src.info, Ingress: kind, Transfer: &TransferRecord{Origin: "https://vault.example.test"},
-		Rollback: &RollbackRecord{Rebuild: &RebuildRecord{Override: OverrideFile, Volumes: []string{"p_postgres-data-abcdefgh", "p_convex-data-abcdefgh"}}, Export: &CopyRecord{InstallationID: "inst_fake"}},
+		Rollback: &RollbackRecord{RecordsServing: true, Rebuild: &RebuildRecord{Override: OverrideFile, Volumes: []string{"p_postgres-data-abcdefgh", "p_convex-data-abcdefgh"}}, Export: &CopyRecord{InstallationID: "inst_fake"}},
 		History:  []Step{{Phase: Switched, At: w.eng.now().Format(time.RFC3339Nano)}},
 		Barrier:  &BarrierRecord{GateID: "gate-1", AuditPosition: "46"}}
 	j.Source.State = &stateVol

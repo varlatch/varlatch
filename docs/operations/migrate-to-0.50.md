@@ -739,17 +739,22 @@ until the address moves back:
    the new server stops. If the application was deployed again before that,
    `--resume` refuses, the new server goes on as it was, and it prints how
    to run the application on the new volumes again: the `COMPOSE_FILE` to
-   set in `.env`, then one `docker compose up -d --no-deps` command.
+   set in `.env`, then the `docker compose` commands to run. Before the
+   rollback has recorded a start of the rebuilt release, those keep
+   `varlatchd` stopped: do not start it yourself, `--resume` starts it once
+   the journal protects the new volumes.
 6. Rolled back: the new server never starts on that data directory again.
 
-Until the rebuilt TypeScript release starts serving, an interruption, a
-failed check or `--abort` undoes the rollback, and the new server goes on
-serving. Once the rebuilt release has started serving, it may have
-accepted writes that the new server's copy does not have, so the rollback
-goes forward only: a failure stops with the rebuilt volumes and journal
-phase kept so you can fix the cause and run `--resume` again, and `--abort`
-refuses. A run interrupted while it starts the rebuilt release counts as
-started. People sign in again after a rollback too, with the
+Until the rollback records that it starts the rebuilt TypeScript release
+(just before it starts it, in step 5), an interruption, a failed check or
+`--abort` undoes the rollback, and the new server goes on serving. From
+that record on, the rebuilt release may have accepted writes that the new
+server's copy does not have, so the rollback goes forward only: a failure,
+including a failed start of the rebuilt release, stops with the rebuilt
+volumes and journal phase kept so you can fix the cause and run `--resume`
+again, and `--abort` refuses. `varlatch migrate --status` shows when the
+start was recorded. A rollback begun by 0.50.0 and interrupted in step 5
+counts as started too: finish it with the 0.50.1 CLI. People sign in again after a rollback too, with the
 same passkey, and hard-reload any dashboard tab that stayed open
 (`Ctrl+Shift+R`, `Cmd+Shift+R` on a Mac).
 

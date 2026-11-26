@@ -15,13 +15,16 @@ fixes.
   `--resume` whose start of it failed again, a failed check of the public
   URL, a failed tailnet handoff, or `--abort` could undo the rollback and
   remove its fresh volumes, with every write made to it since. The journal
-  now records when the rollback first asks it to serve (`rollback.servedAt`,
-  written just before, so an interrupted run counts as served too; a 0.50.0
-  journal's `verifiedAt` counts the same). From then on a failure stops with
-  the fresh volumes and the `rollback-transfer` phase kept: fix the cause,
-  then run `varlatch migrate --resume`. `--abort` refuses from that state.
-  Before then, a failure or `--abort` undoes the rollback as before. A 0.50.0
-  CLI does not read a journal that has `servedAt`: use 0.50.1 to resume it.
+  now records a start of the rebuilt release (`rollback.servedAt`) just
+  before it is started. From then on any failure, a failed start included,
+  stops with the fresh volumes and the `rollback-transfer` phase kept: fix
+  the cause, then run `varlatch migrate --resume`. `--abort` refuses from
+  that state. Before then, a failure or `--abort` undoes the rollback as
+  before. When `--resume` is told to repair the volumes before that record,
+  its commands keep `varlatchd` stopped. A rollback begun by 0.50.0 and
+  interrupted in its transfer counts as started, and `--resume` records it
+  so at once. A 0.50.0 CLI does not read a rollback journal of 0.50.1: use
+  0.50.1 to resume it.
 
 ## 0.50.0 (2026-11-25)
 

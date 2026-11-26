@@ -157,11 +157,17 @@ type RollbackRecord struct {
 	// ServedAt is when the transfer first asked the rebuilt TypeScript
 	// installation to serve, journalled before StartServing is called: once
 	// set, it may have accepted writes, so no automatic path and no --abort
-	// undoes the reverse or removes the fresh volumes. A 0.50.0 journal has
-	// none; its VerifiedAt counts instead (servedAt). A 0.50.0 CLI refuses a
-	// journal that has it (an unknown field), so it cannot undo one either.
-	ServedAt   string `json:"servedAt,omitempty"`
-	VerifiedAt string `json:"verifiedAt,omitempty"`
+	// undoes the reverse or removes the fresh volumes (servedAt says what
+	// counts for a 0.50.0 journal, which has none).
+	ServedAt string `json:"servedAt,omitempty"`
+	// RecordsServing marks a reverse of this release (0.50.1 and later),
+	// which journals ServedAt before it starts the rebuilt installation.
+	// Without it (a 0.50.0 journal), a reverse in its transfer may have
+	// served with nothing recorded (servedAt). Set from the reverse's start:
+	// a 0.50.0 CLI refuses a journal with it (an unknown field), so it
+	// neither resumes nor undoes a reverse of this release.
+	RecordsServing bool   `json:"recordsServing,omitempty"`
+	VerifiedAt     string `json:"verifiedAt,omitempty"`
 	// Archives are the Go (format 3) archives made since the switch,
 	// listed in the report and never deleted (decision 17).
 	Archives []ArchiveInfo `json:"archives,omitempty"`

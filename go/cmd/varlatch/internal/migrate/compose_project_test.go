@@ -1330,6 +1330,17 @@ func TestTheRebuildRunsOnTheFreshVolume(t *testing.T) {
 				t.Errorf("%s: %v, want %q", c.name, err, w)
 			}
 		}
+		// Before the reverse records a start of the rebuilt release, the
+		// same refusal keeps varlatchd stopped: the database services only.
+		var nr *notRebuiltError
+		if err != nil && strings.Contains(err.Error(), "to run it on them again") {
+			if !errors.As(err, &nr) {
+				t.Errorf("%s: %T is no notRebuiltError", c.name, err)
+			} else if kept := nr.daemonKept().Error(); !strings.Contains(kept, " stop varlatchd; 3. docker ") || !strings.Contains(kept, " up -d --no-deps postgres convex-backend (") ||
+				strings.Contains(kept, "convex-backend varlatchd") || !strings.Contains(kept, "Do not start varlatchd: varlatch migrate --resume starts it") {
+				t.Errorf("%s, varlatchd kept stopped: %s", c.name, kept)
+			}
+		}
 		if len(run.ran) > 0 && !slices.Equal(run.ran, []string{"docker compose config --no-interpolate --format json"}) {
 			t.Errorf("%s: ran %v", c.name, run.ran)
 		}

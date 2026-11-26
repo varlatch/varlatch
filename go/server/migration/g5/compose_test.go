@@ -478,12 +478,13 @@ func (w *world) redeploy() {
 }
 
 // recover does what migrate said: COMPOSE_FILE set, and the docker compose
-// command, word for word.
+// commands, word for word. Before the reverse records a start of the
+// rebuilt release, they keep varlatchd stopped: --resume starts it.
 func (w *world) recover(said string) {
 	t := w.t
 	t.Helper()
-	m := regexp.MustCompile(`set (COMPOSE_FILE=\S+) in \S+; 2\. docker (compose .*? up -d --no-deps postgres convex-backend varlatchd) `).FindStringSubmatch(said)
-	if m == nil {
+	m := regexp.MustCompile(`set (COMPOSE_FILE=\S+) in \S+; 2\. docker (compose .*? stop varlatchd); 3\. docker (compose .*? up -d --no-deps postgres convex-backend) \(`).FindStringSubmatch(said)
+	if m == nil || !strings.Contains(said, "Do not start varlatchd: varlatch migrate --resume starts it") {
 		t.Fatalf("no recovery said:\n%s", said)
 	}
 	f, err := os.OpenFile(filepath.Join(w.compose, ".env"), os.O_WRONLY|os.O_APPEND, 0)
@@ -496,11 +497,13 @@ func (w *world) recover(said string) {
 	if code := w.rollback("", "--resume"); code != 1 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "postgres runs on "+ownVolume("postgres")+", not on the fresh volume") {
 		t.Fatalf("--resume with .env put back, the containers not: %d\n%s", code, w.outputs[len(w.outputs)-1])
 	}
-	cmd := exec.Command(filepath.Join(shared.fakebin, "docker"), strings.Fields(m[2])...)
-	cmd.Dir = w.compose
-	cmd.Env = append(os.Environ(), "G5_STATE="+w.stateDir)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("docker %s: %v\n%s", m[2], err, out)
+	for _, c := range m[2:] {
+		cmd := exec.Command(filepath.Join(shared.fakebin, "docker"), strings.Fields(c)...)
+		cmd.Dir = w.compose
+		cmd.Env = append(os.Environ(), "G5_STATE="+w.stateDir)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("docker %s: %v\n%s", c, err, out)
+		}
 	}
 }
 

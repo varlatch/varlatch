@@ -7,6 +7,8 @@ package migrate
 import (
 	"encoding/json"
 	"errors"
+	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"slices"
@@ -181,7 +183,7 @@ func TestRollbackAbortRefusedAfterStartServing(t *testing.T) {
 
 	t.Run("0.50.0 journal with verifiedAt and no servedAt", func(t *testing.T) {
 		w, src, j := rolledWorld(t, RollbackTransfer, Coolify)
-		j.Rollback.ServedAt = ""
+		j.Rollback.ServedAt, j.Rollback.RecordsServing = "", false
 		j.Rollback.VerifiedAt = servedTime
 		if err := writeJournal(w.src.dir, j); err != nil {
 			t.Fatal(err)
@@ -191,8 +193,8 @@ func TestRollbackAbortRefusedAfterStartServing(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if strings.Contains(string(raw), "servedAt") {
-			t.Fatalf("unexpected servedAt in 0.50.0-style journal: %s", raw)
+		if strings.Contains(string(raw), "servedAt") || strings.Contains(string(raw), "recordsServing") {
+			t.Fatalf("unexpected servedAt or recordsServing in 0.50.0-style journal: %s", raw)
 		}
 
 		_, err = w.eng.Abort(t.Context())
@@ -215,32 +217,34 @@ func TestRollbackAbortRefusedAfterStartServing(t *testing.T) {
 		if slices.Contains(src.did, "undo p_postgres-data-abcdefgh") {
 			t.Fatalf("undo called on 0.50.0 journal retry: %v", src.did)
 		}
+		// The --resume recorded the protection: the 0.50.0 CLI no longer
+		// reads the journal.
+		after, err := readJournal(w.src.dir)
+		if err != nil || after.Rollback.ServedAt != servedTime || !after.Rollback.RecordsServing {
+			t.Fatalf("the adopted journal: %+v %v", after, err)
+		}
 	})
 }
 
 // Before StartServing has ever succeeded, failures and --abort still undo
 // the reverse and return Go to open as before.
 func TestRollbackUndoStillHappensBeforeStartServing(t *testing.T) {
-	t.Run("first StartServing failure undoes", func(t *testing.T) {
-		for _, kind := range []Ingress{Coolify, Public} {
-			t.Run(string(kind), func(t *testing.T) {
-				w, src, j := rolledWorld(t, RollbackChecked, kind)
-				tgt := w.eng.Target.(*reverseTargetFake)
-				startErr := errors.New("docker compose up -d varlatchd: failed")
-				src.startServingErr = startErr
+	t.Run("a Go stop failure before StartServing undoes", func(t *testing.T) {
+		w, src, j := rolledWorld(t, RollbackChecked, Public)
+		tgt := w.eng.Target.(*reverseTargetFake)
+		stopErr := errors.New("systemctl stop varlatchd failed")
+		w.tgt.fail["stop"] = stopErr
 
-				err := w.eng.reverseTransfer(t.Context(), j)
-				if !errors.Is(err, startErr) || !strings.Contains(err.Error(), "the reverse was undone") {
-					t.Fatalf("first StartServing failure: %v", err)
-				}
-				if !slices.Contains(src.did, "undo p_postgres-data-abcdefgh") || tgt.released != 1 {
-					t.Fatalf("expected undo: did=%v released=%d", src.did, tgt.released)
-				}
-				after, rerr := readJournal(w.src.dir)
-				if rerr != nil || after.Phase != Open || after.Rollback.ServedAt != "" || after.Rollback.Undone == nil {
-					t.Fatalf("journal after undo: %+v %v", after, rerr)
-				}
-			})
+		err := w.eng.reverseTransfer(t.Context(), j)
+		if !errors.Is(err, stopErr) || !strings.Contains(err.Error(), "the reverse was undone") {
+			t.Fatalf("Go stop failure: %v", err)
+		}
+		if slices.Contains(src.did, "serve") || !slices.Contains(src.did, "undo p_postgres-data-abcdefgh") || tgt.released != 1 {
+			t.Fatalf("expected undo without StartServing: did=%v released=%d", src.did, tgt.released)
+		}
+		after, rerr := readJournal(w.src.dir)
+		if rerr != nil || after.Phase != Open || after.Rollback.ServedAt != "" || after.Rollback.Undone == nil {
+			t.Fatalf("journal after undo: %+v %v", after, rerr)
 		}
 	})
 
@@ -265,12 +269,13 @@ func TestRollbackUndoStillHappensBeforeStartServing(t *testing.T) {
 	})
 }
 
-// Journal backward compatibility:
+// Journal compatibility:
 //   - a 0.50.0 journal without servedAt decodes cleanly in 0.50.1;
-//   - a 0.50.1 journal before StartServing omits servedAt and stays format 1,
-//     so 0.50.0 readers see no unknown field;
-//   - a 0.50.1 journal after StartServing keeps format 1 and rollback-transfer
-//     so varlatchd 0.50.0's journalHead parser accepts it.
+//   - a 0.50.1 reverse journal carries recordsServing from its start, which
+//     the 0.50.0 CLI's strict decoder refuses (it can neither resume nor
+//     undo it), while servedAt is omitted until set;
+//   - it keeps format 1 and its phase, so varlatchd's journalHead parser
+//     (which ignores other fields) accepts it.
 func TestRollbackJournalCompatibility(t *testing.T) {
 	dir := t.TempDir()
 	v0500 := `{"format":1,"id":"mig_aaaaaaaaaaaaaaaaaaaaaaaaaa","phase":"rollback-transfer","stopped":false,"dryRunOnly":false,"source":{"kind":"compose","dir":"/x","release":"0.23.0","image":"i","digest":"sha256:x","digestRepository":"r"},"target":{"config":"/c","dataDir":"/d"},"maxDowntimeSeconds":600,"drainSeconds":60,"ingress":"coolify","rollback":{"startedAt":"2026-11-25T10:00:00Z","goStopped":false,"asked":true,"verifiedAt":"2026-11-25T10:05:00Z"},"history":[]}`
@@ -282,14 +287,16 @@ func TestRollbackJournalCompatibility(t *testing.T) {
 		t.Fatalf("reading 0.50.0 journal: %+v %v", j, err)
 	}
 
-	// Before StartServing: servedAt is omitted from JSON.
+	// Before StartServing: servedAt is omitted from JSON, recordsServing is
+	// there.
 	j.Rollback.VerifiedAt = ""
+	j.Rollback.RecordsServing = true
 	b, err := j.Encode()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(b), "servedAt") {
-		t.Fatalf("pre-StartServing journal must omit servedAt: %s", b)
+	if strings.Contains(string(b), "servedAt") || !strings.Contains(string(b), `"recordsServing": true`) {
+		t.Fatalf("pre-StartServing journal: %s", b)
 	}
 
 	// After StartServing: format remains 1 and varlatchd 0.50.0's journalHead
@@ -381,29 +388,171 @@ func TestRollbackKilledRightAfterStartServingIsNotUndone(t *testing.T) {
 	}
 }
 
-// A first StartServing that fails in the same run is undone as before, and
-// the ServedAt journalled before it is cleared by the undo's first save.
-func TestRollbackFirstStartServingFailureClearsServedAt(t *testing.T) {
-	w, src, j := rolledWorld(t, RollbackChecked, Public)
-	var seen string
-	src.startServing = func() error {
-		on, err := readJournal(w.src.dir)
-		if err != nil {
-			t.Fatal(err)
+// P1-1: a first StartServing that fails after the rebuilt varlatchd took a
+// connection (Compose starts it before it makes the dashboard again, behind
+// a route that runs already) is not undone: ServedAt, journalled before the
+// call, is kept, the fresh volumes too, and --abort refuses.
+func TestRollbackFirstStartServingFailureKeepsVolumes(t *testing.T) {
+	for _, kind := range []Ingress{Coolify, Public} {
+		t.Run(string(kind), func(t *testing.T) {
+			w, src, j := rolledWorld(t, RollbackChecked, kind)
+			tgt := w.eng.Target.(*reverseTargetFake)
+			wantServedAt := w.eng.now().UTC().Format(time.RFC3339Nano)
+			recreateErr := errors.New("docker compose up -d --no-deps --force-recreate varlatch-web: failed")
+			var seen string
+			accepted := false
+			src.startServing = func() error {
+				on, err := readJournal(w.src.dir)
+				if err != nil {
+					t.Fatal(err)
+				}
+				seen = on.Rollback.ServedAt
+				// varlatchd up: a listener opens and a client's request
+				// reaches it, before the dashboard's recreation fails.
+				l, err := net.Listen("tcp", "127.0.0.1:0")
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer l.Close()
+				done := make(chan struct{})
+				go func() {
+					defer close(done)
+					if c, err := l.Accept(); err == nil {
+						buf := make([]byte, 5)
+						if _, err := io.ReadFull(c, buf); err == nil && string(buf) == "write" {
+							accepted = true
+						}
+						c.Close()
+					}
+				}()
+				c, err := net.Dial("tcp", l.Addr().String())
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, _ = c.Write([]byte("write"))
+				c.Close()
+				<-done
+				return recreateErr
+			}
+
+			err := w.eng.reverseTransfer(t.Context(), j)
+			if !errors.Is(err, recreateErr) || !strings.Contains(err.Error(), "may have accepted writes since "+wantServedAt) ||
+				!strings.Contains(err.Error(), "varlatch migrate --resume") || strings.Contains(err.Error(), "the reverse was undone") {
+				t.Fatalf("first StartServing failure: %v", err)
+			}
+			if !accepted || seen != wantServedAt {
+				t.Fatalf("the listener took the write %v; ServedAt on disk at StartServing %q", accepted, seen)
+			}
+			if slices.Contains(src.did, "undo p_postgres-data-abcdefgh") || slices.Contains(src.did, "stop serving") || tgt.released != 0 {
+				t.Fatalf("undone: did=%v released=%d", src.did, tgt.released)
+			}
+			after, rerr := readJournal(w.src.dir)
+			if rerr != nil || after.Phase != RollbackTransfer || after.Rollback.ServedAt != wantServedAt || after.Rollback.Undoing || after.Rollback.Undone != nil {
+				t.Fatalf("the journal: %+v %v", after, rerr)
+			}
+			src.did = nil
+			if _, err := w.eng.Abort(t.Context()); err == nil || !strings.Contains(err.Error(), "may have accepted writes since "+wantServedAt) || len(src.did) != 0 {
+				t.Fatalf("--abort: %v, did %v", err, src.did)
+			}
+		})
+	}
+}
+
+// P1-2: a 0.50.0 journal in its transfer with neither ServedAt nor
+// VerifiedAt (killed after StartServing, or a probe that timed out) may
+// have served: --abort refuses, and --resume journals the protection
+// before anything else, then goes forward.
+func TestRollbackLegacyTransferWithoutTimestampsCountsAsServed(t *testing.T) {
+	for _, kind := range []Ingress{Coolify, Public} {
+		t.Run(string(kind), func(t *testing.T) {
+			w, src, j := rolledWorld(t, RollbackTransfer, kind)
+			tgt := w.eng.Target.(*reverseTargetFake)
+			entered := "2026-11-25T10:01:00Z"
+			j.Rollback.RecordsServing = false
+			j.History = append(j.History, Step{Phase: RollbackTransfer, At: entered})
+			if kind != Coolify {
+				j.Rollback.GoStopped = true
+				w.tgt.running = false
+			}
+			if err := writeJournal(w.src.dir, j); err != nil {
+				t.Fatal(err)
+			}
+
+			if _, err := w.eng.Abort(t.Context()); err == nil || !strings.Contains(err.Error(), "may have accepted writes since "+entered) {
+				t.Fatalf("--abort: %v", err)
+			}
+			if len(src.did) != 0 || tgt.released != 0 {
+				t.Fatalf("--abort touched the source or the target: did=%v released=%d", src.did, tgt.released)
+			}
+
+			// --resume: the protection is on disk before anything is checked
+			// or started; then it goes forward.
+			var first *Journal
+			src.check = func() error {
+				if first == nil {
+					var err error
+					if first, err = readJournal(w.src.dir); err != nil {
+						t.Fatal(err)
+					}
+				}
+				return nil
+			}
+			done, err := w.eng.Resume(t.Context())
+			if first == nil || first.Rollback.ServedAt != entered || !first.Rollback.RecordsServing {
+				t.Fatalf("the journal at the first check: %+v", first)
+			}
+			if err != nil || done.Phase != RolledBack || slices.Contains(src.did, "undo p_postgres-data-abcdefgh") {
+				t.Fatalf("--resume: %v %+v did=%v", err, done, src.did)
+			}
+		})
+	}
+}
+
+// A 0.50.1 journal in its transfer with no ServedAt has not served (it
+// journals one before StartServing): --abort undoes it.
+func TestRollbackTransferNotYetServingIsUndone(t *testing.T) {
+	w, src, j := rolledWorld(t, RollbackTransfer, Public)
+	j.History = append(j.History, Step{Phase: RollbackTransfer, At: "2026-11-25T10:01:00Z"})
+	if err := writeJournal(w.src.dir, j); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.eng.Abort(t.Context()); err != nil || !slices.Contains(src.did, "undo p_postgres-data-abcdefgh") {
+		t.Fatalf("--abort: %v, did %v", err, src.did)
+	}
+}
+
+// P1-3: the volumes' repair printed before the reverse records a start of
+// the rebuilt release keeps varlatchd stopped; once recorded, it starts
+// varlatchd with the database services as before.
+func TestRollbackRepairKeepsVarlatchdStoppedBeforeServing(t *testing.T) {
+	refusal := &notRebuiltError{why: errors.New("postgres runs on p_postgres-data, not on the fresh volume p_postgres-data-abcdefgh the journal names"), help: func(daemon bool) string {
+		if daemon {
+			return "2. docker compose up -d --no-deps postgres convex-backend varlatchd"
 		}
-		seen = on.Rollback.ServedAt
-		return errors.New("caddy: failed")
-	}
-	err := w.eng.reverseTransfer(t.Context(), j)
-	if err == nil || !strings.Contains(err.Error(), "the reverse was undone") || strings.Contains(err.Error(), "may have accepted writes") {
-		t.Fatalf("reverseTransfer: %v", err)
-	}
-	if seen == "" {
-		t.Fatal("ServedAt was not journalled before StartServing")
-	}
-	after, rerr := readJournal(w.src.dir)
-	if rerr != nil || after.Phase != Open || after.Rollback.ServedAt != "" || after.Rollback.Undone == nil || !after.Rollback.Undone.Released {
-		t.Fatalf("the journal after the undo: %+v %v", after, rerr)
+		return "2. docker compose stop varlatchd; 3. docker compose up -d --no-deps postgres convex-backend"
+	}}
+	for _, served := range []bool{false, true} {
+		t.Run(map[bool]string{false: "not yet", true: "recorded"}[served], func(t *testing.T) {
+			w, src, j := rolledWorld(t, RollbackTransfer, Coolify)
+			if served {
+				j.Rollback.ServedAt = "2026-11-26T09:15:00Z"
+				if err := writeJournal(w.src.dir, j); err != nil {
+					t.Fatal(err)
+				}
+			}
+			src.checkErr = refusal
+			_, err := w.eng.Resume(t.Context())
+			if err == nil || !strings.Contains(err.Error(), "is not on the fresh volumes") {
+				t.Fatalf("--resume: %v", err)
+			}
+			kept := strings.Contains(err.Error(), "stop varlatchd") && !strings.Contains(err.Error(), "convex-backend varlatchd")
+			if kept == served || strings.Contains(err.Error(), "--abort undoes") == served {
+				t.Fatalf("served %v: %v", served, err)
+			}
+			if slices.Contains(src.did, "serve") {
+				t.Fatalf("started: %v", src.did)
+			}
+		})
 	}
 }
 
@@ -416,7 +565,7 @@ func TestRollbackUndoBegunBy050GoesOn(t *testing.T) {
 			w, src, j := rolledWorld(t, RollbackTransfer, Public)
 			tgt := w.eng.Target.(*reverseTargetFake)
 			j.Rollback.VerifiedAt = "2026-11-25T10:05:00Z"
-			j.Rollback.Undoing = true
+			j.Rollback.Undoing, j.Rollback.RecordsServing = true, false
 			if err := writeJournal(w.src.dir, j); err != nil {
 				t.Fatal(err)
 			}
