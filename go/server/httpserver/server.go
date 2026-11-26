@@ -180,6 +180,7 @@ var BuiltOperations = []string{
 	"GET /v1/me/credentials",
 	"POST /v1/me/credentials/cli",
 	"DELETE /v1/me/credentials/{credential}",
+	"POST /v1/me/sessions/sign-out-others",
 	"GET /v1/me/passkeys",
 	"DELETE /v1/me/passkeys/{passkey}",
 	"POST /v1/me/passkeys/{passkey}/confirmation/options",

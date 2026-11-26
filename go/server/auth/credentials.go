@@ -357,6 +357,27 @@ func (s *Service) RevokeOwnCredential(ctx context.Context, p *Principal, credent
 	})
 }
 
+// SignOutOtherSessions ends every browser session of the caller but the
+// one its browser bearer comes from (POST /v1/me/sessions/sign-out-others)
+// and returns how many: the session-end trigger revokes each session's
+// browser bearers, each a credential.revoked event, so the browser cannot
+// mint another. CLI credentials, the hand-off's included, stay. Only a
+// browser bearer may: it names the session that stays.
+func (s *Service) SignOutOtherSessions(ctx context.Context, p *Principal) (int64, error) {
+	if p.Identity.Kind != "human" || p.Credential.Kind != KindBrowser || p.Credential.AuthSessionID == nil {
+		return 0, domainerr.New("PERMISSION_DENIED", "Only a browser session bearer may sign out the other browsers")
+	}
+	var ended int64
+	err := s.store.Write(ctx, func(tx *storage.Tx) error {
+		var err error
+		ended, err = query.New(tx).DeleteOtherAuthSessionsOfIdentity(ctx, query.DeleteOtherAuthSessionsOfIdentityParams{
+			Keep: *p.Credential.AuthSessionID, IdentityID: p.Identity.ID,
+		})
+		return err
+	})
+	return ended, err
+}
+
 // endsSession reports whether revoking a browser credential ends the
 // browser session it was minted from: a revoked bearer would otherwise be
 // replaced by the next POST /auth/varlatch-token of the same browser, for

@@ -163,6 +163,27 @@ func (q *Queries) DeleteAuthUser(ctx context.Context, id string) (int64, error) 
 	return result.RowsAffected()
 }
 
+const deleteOtherAuthSessionsOfIdentity = `-- name: DeleteOtherAuthSessionsOfIdentity :execrows
+DELETE FROM auth_sessions
+WHERE id <> ?1
+  AND user_id IN (SELECT better_auth_user_id FROM auth_user_links WHERE identity_id = ?2)
+`
+
+type DeleteOtherAuthSessionsOfIdentityParams struct {
+	Keep       string
+	IdentityID string
+}
+
+// signOutOtherSessions: every browser session of the identity's Better
+// Auth users but keep (the trigger revokes their browser credentials).
+func (q *Queries) DeleteOtherAuthSessionsOfIdentity(ctx context.Context, arg DeleteOtherAuthSessionsOfIdentityParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteOtherAuthSessionsOfIdentity, arg.Keep, arg.IdentityID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const getCredential = `-- name: GetCredential :one
 SELECT id, identity_id, kind, name, token_hash, created_at, expires_at, revoked_at, max_uses, use_count, last_used_at, client, auth_session_id, issued_by, evidence_user_verified, evidence_passkey_id FROM credentials WHERE id = ?
 `

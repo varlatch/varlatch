@@ -47,6 +47,9 @@ func (r reply) VisitRevokeMyCredentialResponse(w http.ResponseWriter) error { re
 func (r reply) VisitExchangeCliCredentialResponse(w http.ResponseWriter) error {
 	return r.visit(w)
 }
+func (r reply) VisitSignOutOtherSessionsResponse(w http.ResponseWriter) error {
+	return r.visit(w)
+}
 func (r reply) VisitListMyPasskeysResponse(w http.ResponseWriter) error  { return r.visit(w) }
 func (r reply) VisitRemoveMyPasskeyResponse(w http.ResponseWriter) error { return r.visit(w) }
 func (r reply) VisitStartPasskeyConfirmationResponse(w http.ResponseWriter) error {
@@ -157,6 +160,16 @@ func (o *operations) RevokeMyCredential(ctx context.Context, req api.RevokeMyCre
 		return nil, err
 	}
 	return reply{status: http.StatusNoContent}, nil
+}
+
+// SignOutOtherSessions is POST /v1/me/sessions/sign-out-others: every
+// other browser of the caller signed out.
+func (o *operations) SignOutOtherSessions(ctx context.Context, _ api.SignOutOtherSessionsRequestObject) (api.SignOutOtherSessionsResponseObject, error) {
+	ended, err := o.s.opts.Auth.SignOutOtherSessions(ctx, principalOf(ctx))
+	if err != nil {
+		return nil, err
+	}
+	return ok(jsvalue.Object{{Key: "endedSessions", Value: ended}}), nil
 }
 
 func userAgentOf(ctx context.Context) *string {

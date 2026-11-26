@@ -162,3 +162,58 @@ func TestACLICallerRevokingABrowserCredentialEndsItsSession(t *testing.T) {
 	}
 	mint(t, other)
 }
+
+// POST /v1/me/sessions/sign-out-others ends every other browser session
+// of the caller, whether or not that browser ever minted a bearer, and
+// keeps the caller's: each other browser is signed out, each live bearer
+// revoked once (the session-end trigger's credential.revoked). CLI
+// credentials, the hand-off's included, stay. A CLI caller is refused.
+func TestSignOutOtherSessions(t *testing.T) {
+	s, ta := browserServer(t, browserOrigin)
+	mine := newBrowser(t, s, browserOrigin)
+	_, key := enrollWithKey(t, mine, ta)
+	minted := newBrowser(t, s, browserOrigin)
+	signInWith(t, minted, key)
+	theirs := mint(t, minted)
+	// Signed in, never minted a bearer.
+	idle := newBrowser(t, s, browserOrigin)
+	signInWith(t, idle, key)
+	// Its only bearer went to the CLI hand-off.
+	handedOff := newBrowser(t, s, browserOrigin)
+	signInWith(t, handedOff, key)
+	var cli struct{ ID, Token string }
+	decodeInto(t, do(s, "POST", "/v1/me/credentials/cli", `{}`, map[string]string{"Authorization": "Bearer " + mint(t, handedOff), "Content-Type": "application/json"}), &cli)
+	myBearer := mint(t, mine)
+	revokedBefore := countRows(t, ta, "SELECT count(*) FROM audit_events WHERE event_type = 'credential.revoked'")
+
+	if w := do(s, "POST", "/v1/me/sessions/sign-out-others", "", map[string]string{"Authorization": "Bearer " + cli.Token}); w.Code != 403 {
+		t.Fatalf("a CLI caller: %d %s, want 403", w.Code, w.Body.String())
+	}
+	w := do(s, "POST", "/v1/me/sessions/sign-out-others", "", map[string]string{"Authorization": "Bearer " + myBearer})
+	if w.Code != 200 {
+		t.Fatalf("sign out the other browsers: %d %s", w.Code, w.Body.String())
+	}
+	var out struct{ EndedSessions int }
+	decodeInto(t, w, &out)
+	if out.EndedSessions != 3 {
+		t.Fatalf("ended %d sessions, want 3", out.EndedSessions)
+	}
+	for name, b := range map[string]*testBrowser{"minted": minted, "idle": idle, "handed off": handedOff} {
+		if w := b.post("/auth/varlatch-token", nil); w.Code != 401 {
+			t.Fatalf("the %s browser minted a bearer after it was signed out: %d %s", name, w.Code, w.Body.String())
+		}
+	}
+	if w := do(s, "GET", "/v1/me", "", map[string]string{"Authorization": "Bearer " + theirs}); w.Code != 401 {
+		t.Fatalf("the other browser's bearer: %d", w.Code)
+	}
+	for name, token := range map[string]string{"this browser's bearer": myBearer, "the hand-off CLI credential": cli.Token} {
+		if w := do(s, "GET", "/v1/me", "", map[string]string{"Authorization": "Bearer " + token}); w.Code != 200 {
+			t.Fatalf("%s: %d", name, w.Code)
+		}
+	}
+	mint(t, mine)
+	// One credential.revoked: the minted browser's live bearer, by the trigger.
+	if n := countRows(t, ta, "SELECT count(*) FROM audit_events WHERE event_type = 'credential.revoked'") - revokedBefore; n != 1 {
+		t.Fatalf("%d credential.revoked events, want 1", n)
+	}
+}

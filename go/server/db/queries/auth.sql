@@ -38,3 +38,10 @@ UPDATE passkeys SET counter = ? WHERE id = ?;
 
 -- name: RenamePasskey :exec
 UPDATE passkeys SET name = ? WHERE id = ?;
+
+-- name: DeleteOtherAuthSessionsOfIdentity :execrows
+-- signOutOtherSessions: every browser session of the identity's Better
+-- Auth users but keep (the trigger revokes their browser credentials).
+DELETE FROM auth_sessions
+WHERE id <> sqlc.arg(keep)
+  AND user_id IN (SELECT better_auth_user_id FROM auth_user_links WHERE identity_id = sqlc.arg(identity_id));
