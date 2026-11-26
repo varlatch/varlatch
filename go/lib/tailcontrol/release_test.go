@@ -5,6 +5,9 @@ package tailcontrol_test
 import (
 	"context"
 	"errors"
+	"net/http"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -159,5 +162,63 @@ func TestRenameReleasedOnHeadscaleIsRenameAndReadBack(t *testing.T) {
 	f.RewriteRename = nil
 	if _, err := tailcontrol.RenameReleased(ctx, hs, "2", "vault", nil); err != nil {
 		t.Errorf("a free name: %v", err)
+	}
+}
+
+// holdRenames holds every rename request, once armed, until its context
+// ends: a control plane that does not answer a retry.
+type holdRenames struct {
+	next  http.RoundTripper
+	armed atomic.Bool
+}
+
+func (h *holdRenames) RoundTrip(r *http.Request) (*http.Response, error) {
+	if h.armed.Load() && r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/name") {
+		<-r.Context().Done()
+		return nil, r.Context().Err()
+	}
+	return h.next.RoundTrip(r)
+}
+
+// The release phase is one context: a retry the control plane does not
+// answer ends with the budget, not the caller's deadline, and the last
+// name failure stands, not the cut-short call's.
+func TestTheReleaseBudgetBoundsItsCalls(t *testing.T) {
+	shortRelease(t, 45*time.Millisecond)
+	f := tailcontroltest.NewTailscale(
+		tailcontroltest.Node{ID: "1", Name: "vault", Online: true},
+		tailcontroltest.Node{ID: "2", Name: "vault-vl-abc-n", Online: true},
+	)
+	defer f.Close()
+	f.ReleaseDelay = time.Hour
+	client := f.Client()
+	hold := &holdRenames{next: client.Transport}
+	client.Transport = hold
+	ts, err := tailcontrol.NewTailscale(tailcontrol.TailscaleConfig{BaseURL: f.URL, ClientID: f.ClientID, ClientSecret: f.ClientSecret, HTTP: client})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tailcontrol.RenameAndReadBack(ctx, ts, "1", "vault-vl-abc-o"); err != nil {
+		t.Fatal(err)
+	}
+	// The first rename answers (vault-1); every retry is held.
+	first := true
+	waiting := func() {
+		if first {
+			hold.armed.Store(true)
+			first = false
+		}
+	}
+	caller, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err = tailcontrol.RenameReleased(caller, ts, "2", "vault", waiting)
+	took := time.Since(start)
+	var rb *tailcontrol.ReadBackError
+	if !errors.As(err, &rb) || rb.Got != "vault-1" || !strings.Contains(err.Error(), "did not release") {
+		t.Fatalf("the last name failure, not the held call's: %v", err)
+	}
+	if took >= 250*time.Millisecond || caller.Err() != nil {
+		t.Errorf("the budget of 45ms took %s (the caller's deadline is 300ms)", took)
 	}
 }

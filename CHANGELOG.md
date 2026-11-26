@@ -37,12 +37,15 @@ fixes.
   handoff failed, and its undo could fail the same way giving the old node
   its name back, leaving both installations closed until the name was
   renamed by hand. Now, on Tailscale, a rename that reads back as the name
-  with such a number, while no other device holds the name, is made again
-  after 1, 2, 3 and then every 5 seconds, for up to 45 seconds within the
-  handoff's deadline, and the CLI prints `Waiting for the tailnet to
-  release the name <name>`. This holds for the migration, its undo and the
-  rollback. A name another device holds, or any other name read back,
-  still fails at once. Nothing changes on Headscale.
+  with such a number, or that is refused as taken, while the API lists no
+  other device under the name, is made again after 1, 2, 3 and then every
+  5 seconds, for up to 45 seconds within the handoff's deadline, and the
+  CLI prints `Waiting for the tailnet to release the name <name>`. This
+  holds for the migration, its undo and the rollback. A name another
+  device holds, or any other name read back, still fails at once. The
+  undo's two renames share its 60 seconds: when the first leaves too
+  little time for the second, the undo is left pending, and `varlatch
+  migrate --resume` runs it again. Nothing changes on Headscale.
 
 ## 0.50.0 (2026-11-25)
 

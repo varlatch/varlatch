@@ -319,6 +319,11 @@ func (e *HandoffError) Error() string {
 	case UndoPending:
 		// A device holding the name is the operator's step, so it leads,
 		// even when the device the name was to go back to is gone too.
+		// A refusal no listed device explains is said as such: there is no
+		// device to look for in the listing.
+		if unlisted := (*UnlistedHolderError)(nil); errors.As(e.Err, &unlisted) {
+			return fmt.Sprintf("the handoff failed and its undo could not give the name %s back: the tailnet's control plane still refuses it as taken, but lists no device holding it, and neither installation is opened on the tailnet. Look the name up in the tailnet's admin console, correct its assignment there if needed, then resume (varlatch migrate --resume): %v", unlisted.Name, e.Err)
+		}
 		if errors.Is(e.Err, tailcontrol.ErrNameTaken) {
 			return fmt.Sprintf("the handoff failed and its undo could not give a name back: another device holds it now, and neither installation is opened on the tailnet. Rename or delete that device in the tailnet's admin console, then resume: %v", e.Err)
 		}
@@ -901,13 +906,33 @@ func (e *Engine) restoreName(ctx context.Context, id, name string) error {
 	err = e.renameReleased(ctx, id, name)
 	if errors.Is(err, tailcontrol.ErrNameTaken) {
 		// Another device took the name while it was free: say which, so
-		// the operator can rename or delete it.
+		// the operator can rename or delete it. When a fresh listing shows
+		// none, say that instead: the refusal is the control plane's own.
 		if d, ok := e.holder(ctx, name, id, devices); ok {
 			return fmt.Errorf("%w: it is held by %s now", err, d)
+		}
+		if again, lerr := e.Control.Devices(ctx); lerr == nil && !slices.ContainsFunc(again, func(d tailcontrol.Device) bool {
+			return d.ID != id && strings.EqualFold(d.Name, name)
+		}) {
+			return &UnlistedHolderError{Name: name, Err: err}
 		}
 	}
 	return err
 }
+
+// UnlistedHolderError is a rename refused as taken while the control plane
+// lists no other device under the name: kept refusing through the wait for
+// its release (tailcontrol.RenameReleased).
+type UnlistedHolderError struct {
+	Name string
+	Err  error
+}
+
+func (e *UnlistedHolderError) Error() string {
+	return fmt.Sprintf("%v (no device is listed under %s)", e.Err, e.Name)
+}
+
+func (e *UnlistedHolderError) Unwrap() error { return e.Err }
 
 func (e *Engine) confirm(ctx context.Context, id, name string) error {
 	devices, err := e.Control.Devices(ctx)

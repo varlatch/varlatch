@@ -535,16 +535,24 @@ tailnet name over to a new node, by rename, in the same transfer:
 - Tailscale does not make a name free again the moment a node lets go of
   it. A rename to it a second later is accepted, but the node gets
   `<name>-1`, although no other device lists `<name>`. When a rename reads
-  back as the wanted name with such a number added, and no other device
-  holds the name, the handoff waits and renames again (after 1, 2, 3, then
-  every 5 seconds, for up to 45 seconds, always within the deadline),
-  printing `Waiting for the tailnet to release the name <name>`. A name
-  another device holds, or any other name read back, still fails at once.
+  back as the wanted name with such a number added, or Tailscale refuses
+  the name as taken, and the API lists no other device under the name,
+  the handoff waits and renames again (after 1, 2, 3, then every 5
+  seconds, for up to 45 seconds, always within the deadline), printing
+  `Waiting for the tailnet to release the name <name>`. A name another
+  device holds, or any other name read back, still fails at once.
   Headscale frees a name at once, so nothing waits there.
 - The transfer counts only once `<name>`, resolved from a client node,
   reaches the new node. Any failure before the new node opens renames both
   nodes back (each read back, with the same wait for the name) and reopens
   the old node. The rollback's handoff waits the same way.
+- The undo has 60 seconds in all, for both of its renames. When the first
+  one's wait leaves too little time for the second, the undo stops with
+  both installations closed and the journal says the undo is pending:
+  `varlatch migrate --resume` runs the undo again. When Tailscale keeps
+  refusing the name and lists no device holding it, the message says so:
+  look the name up in the tailnet's admin console, correct it there if a
+  device does hold it, then run `varlatch migrate --resume`.
 
 With both a public (or Coolify) address and the tailnet address, the order
 is fixed: the domain first, checked through the public URL; then the

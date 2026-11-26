@@ -3,13 +3,17 @@
 package tailhandoff_test
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/varlatch/varlatch/go/lib/tailcontrol"
 	"github.com/varlatch/varlatch/go/lib/tailhandoff"
 )
 
@@ -113,6 +117,65 @@ func TestANameNotReleasedInTheBudgetFailsCleanly(t *testing.T) {
 	}
 	r.f.SetReleaseRenames(0)
 	r.f.ReleaseAll()
+	s, err = r.engine.Resume(ctx, op)
+	assertUndone(t, r, s, err)
+}
+
+// refuseName is a control plane that refuses one device's rename to one
+// name as taken, every time, while listing no device under it.
+type refuseName struct {
+	tailcontrol.ControlPlane
+	id, name string
+	refusals atomic.Int32
+}
+
+func (c *refuseName) Rename(ctx context.Context, id, name string) error {
+	if id == c.id && name == c.name {
+		c.refusals.Add(1)
+		return &tailcontrol.OpError{Plane: c.Kind(), Op: "rename", Device: id, Err: fmt.Errorf("%w (%q): 409 machine name already in use", tailcontrol.ErrNameTaken, name)}
+	}
+	return c.ControlPlane.Rename(ctx, id, name)
+}
+
+// Tailscale refuses the serving node's name back as taken through the
+// whole wait, and lists no device holding it: the pending undo says so,
+// and does not send the operator after a device that is not there.
+func TestARefusalNoListedDeviceExplainsIsSaid(t *testing.T) {
+	r := newRig(t)
+	refuse := &refuseName{ControlPlane: r.cp, id: "1", name: "vault"}
+	r.engine.Control = refuse
+	if _, err := r.engine.Prepare(ctx, r.forward(t)); err != nil {
+		t.Fatal(err)
+	}
+	r.ep.openErr = errors.New("port in use")
+	s, err := r.engine.Switch(ctx, op)
+	var he *tailhandoff.HandoffError
+	if !errors.As(err, &he) || he.Phase != tailhandoff.UndoPending || s.Phase != tailhandoff.UndoPending {
+		t.Fatalf("%+v, %v", s, err)
+	}
+	var unlisted *tailhandoff.UnlistedHolderError
+	if !errors.As(err, &unlisted) || unlisted.Name != "vault" || !errors.Is(err, tailcontrol.ErrNameTaken) {
+		t.Fatalf("not an unlisted holder's refusal: %v", err)
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "lists no device holding it") || !strings.Contains(msg, "varlatch migrate --resume") || strings.Contains(msg, "Rename or delete that device") {
+		t.Errorf("the message: %s", msg)
+	}
+	if n := refuse.refusals.Load(); n < 2 {
+		t.Errorf("the refusal was not tried again through the wait: %d", n)
+	}
+	if serving, incoming := r.ep.state(); serving || incoming {
+		t.Fatalf("an installation opened: serving %v, incoming %v", serving, incoming)
+	}
+	// A device that does hold the name keeps the holder's message.
+	r.engine.Control = r.cp
+	r.f.SetName("3", "vault")
+	_, err = r.engine.Resume(ctx, op)
+	if !errors.As(err, &he) || he.Phase != tailhandoff.UndoPending || errors.As(err, &unlisted) ||
+		!strings.Contains(err.Error(), "Rename or delete that device") || !strings.Contains(err.Error(), "held by vault (3") {
+		t.Fatalf("a listed holder: %v", err)
+	}
+	r.f.SetName("3", "build")
 	s, err = r.engine.Resume(ctx, op)
 	assertUndone(t, r, s, err)
 }
