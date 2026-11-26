@@ -13,11 +13,14 @@ import { errorMessage } from "../../shell/Shell";
 /**
  * Every credential issued to the signed-in identity: browser sessions, CLI
  * logins and anything else. Each dashboard page load exchanges a fresh
- * short-lived browser credential (the bearer lives in memory only), so other
- * browser sessions are folded into one group with a bulk revoke.
+ * short-lived browser credential (the bearer lives in memory only), so the
+ * other browser credentials are folded into one group with a bulk revoke.
+ * They are credentials, not sessions: one browser holds several, this
+ * browser's earlier ones among them; "Sign out everywhere else" ends the
+ * other browsers' sessions.
  */
 export function SessionsPage() {
-  const { api } = useSession();
+  const { api, signOut } = useSession();
   const qc = useQueryClient();
   const confirm = useConfirm();
   const toast = useToast();
@@ -33,6 +36,20 @@ export function SessionsPage() {
     onSuccess: invalidate,
     onError: (err) => toast.error("Could not revoke", { description: errorMessage(err) }),
   });
+  // Every other browser is signed out by its session, whether or not it
+  // holds a bearer now (one idle or whose bearer went to the CLI handoff
+  // has none); the other live CLI logins and tokens are revoked one by one.
+  const signOutOthers = useMutation({
+    mutationFn: async (ids: string[]) => {
+      await api.signOutOtherSessions();
+      for (const id of ids) await api.revokeMyCredential(id);
+    },
+    onSuccess: invalidate,
+    onError: (err) => {
+      invalidate();
+      toast.error("Could not sign out everywhere else", { description: errorMessage(err) });
+    },
+  });
 
   const items = (creds.data?.items ?? []) as OwnCredential[];
   const current = items.find((c) => c.current);
@@ -43,17 +60,28 @@ export function SessionsPage() {
   const rest = others
     .filter((c) => c.kind !== "browser")
     .sort((a, b) => Number(!live(a)) - Number(!live(b)) || b.createdAt.localeCompare(a.createdAt));
-  const revocableOthers = others.filter(live);
+  const revocableOthers = others.filter((c) => c.kind !== "browser" && live(c));
+  // Only a browser bearer may sign the other browsers out: it names the
+  // session that stays.
+  const inBrowser = current?.kind === "browser";
 
   const revokeOne = async (c: OwnCredential) => {
     if (c.current) {
       const ok = await confirm({
         title: "Sign out this browser?",
-        description: "This revokes the credential this page is using. You will need your passkey to sign in again.",
+        description: "This ends this browser's session. You will need your passkey to sign in again.",
         confirmLabel: "Sign out",
         tone: "danger",
       });
       if (!ok) return;
+      // This browser's session ends by its cookie, whichever bearer the
+      // page holds by now; it stays signed in if the server refuses.
+      try {
+        await signOut({ throwOnFailure: true });
+      } catch (err) {
+        toast.error("Could not sign out", { description: errorMessage(err) });
+      }
+      return;
     }
     revoke.mutate([c.id]);
   };
@@ -64,7 +92,7 @@ export function SessionsPage() {
       description="Revocation is immediate and per credential. Your passkeys are separate and stay valid."
       data-testid="credentials-list"
       actions={
-        revocableOthers.length > 0 && (
+        inBrowser && (
           <Button
             variant="danger"
             icon={<LogOut size={14} />}
@@ -72,11 +100,14 @@ export function SessionsPage() {
             onClick={async () => {
               const ok = await confirm({
                 title: "Sign out everywhere else?",
-                description: `Revokes ${revocableOthers.length} other credential${revocableOthers.length === 1 ? "" : "s"}: browser sessions, CLI logins and tokens issued to you. This browser stays signed in.`,
+                description:
+                  revocableOthers.length > 0
+                    ? `Signs out your other browsers and revokes ${revocableOthers.length} other credential${revocableOthers.length === 1 ? "" : "s"}: CLI logins and tokens issued to you. This browser stays signed in.`
+                    : "Signs out your other browsers. This browser stays signed in.",
                 confirmLabel: "Sign out everywhere else",
                 tone: "danger",
               });
-              if (ok) revoke.mutate(revocableOthers.map((c) => c.id));
+              if (ok) signOutOthers.mutate(revocableOthers.map((c) => c.id));
             }}
           >
             Sign out everywhere else
@@ -105,8 +136,10 @@ export function SessionsPage() {
                   <ChevronRight size={15} className={cn("text-muted transition-transform", showBrowsers && "rotate-90")} />
                   <CredentialIcon kind="browser" />
                   <span>
-                    <span className="block font-medium">Other browser sessions · {browsers.length}</span>
-                    <span className="block text-xs text-muted">Short-lived; each dashboard tab or reload gets its own and they expire by themselves</span>
+                    <span className="block font-medium">Other browser credentials · {browsers.length}</span>
+                    <span className="block text-xs text-muted">
+                      Short-lived; each dashboard tab or reload gets its own, this browser's earlier ones included, and they expire by themselves
+                    </span>
                   </span>
                 </button>
                 <Button size="sm" variant="secondary" onClick={() => revoke.mutate(browsers.map((c) => c.id))}>
@@ -134,7 +167,7 @@ export function SessionsPage() {
                 className="flex w-full cursor-pointer items-center gap-3 px-5 py-3 text-left text-[13px] text-muted hover:text-fg"
               >
                 <ChevronRight size={15} className={cn("transition-transform", showEnded && "rotate-90")} />
-                Ended browser sessions · {endedBrowsers.length}
+                Ended browser credentials · {endedBrowsers.length}
                 <span className="text-xs">expired or revoked; kept for your records</span>
               </button>
               {showEnded && (

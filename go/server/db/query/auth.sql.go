@@ -12,6 +12,28 @@ import (
 	"database/sql"
 )
 
+const browserBearerSessionLive = `-- name: BrowserBearerSessionLive :one
+SELECT count(*) FROM credentials c JOIN auth_sessions s ON s.id = c.auth_session_id
+WHERE c.id = ?1 AND c.identity_id = ?2 AND c.kind = 'browser'
+  AND c.revoked_at IS NULL AND (c.expires_at IS NULL OR c.expires_at > ?3)
+  AND s.expires_at > ?3
+`
+
+type BrowserBearerSessionLiveParams struct {
+	CredentialID string
+	IdentityID   string
+	Now          sql.NullInt64
+}
+
+// signOutOtherSessions, in its write: whether the presenting browser bearer
+// and the session it came from are both still live.
+func (q *Queries) BrowserBearerSessionLive(ctx context.Context, arg BrowserBearerSessionLiveParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, browserBearerSessionLive, arg.CredentialID, arg.IdentityID, arg.Now)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createAuthSession = `-- name: CreateAuthSession :exec
 INSERT INTO auth_sessions (id, expires_at, token_hash, user_id) VALUES (?, ?, ?, ?)
 `
@@ -157,6 +179,27 @@ DELETE FROM auth_users WHERE id = ?
 
 func (q *Queries) DeleteAuthUser(ctx context.Context, id string) (int64, error) {
 	result, err := q.db.ExecContext(ctx, deleteAuthUser, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const deleteOtherAuthSessionsOfIdentity = `-- name: DeleteOtherAuthSessionsOfIdentity :execrows
+DELETE FROM auth_sessions
+WHERE id <> ?1
+  AND user_id IN (SELECT better_auth_user_id FROM auth_user_links WHERE identity_id = ?2)
+`
+
+type DeleteOtherAuthSessionsOfIdentityParams struct {
+	Keep       string
+	IdentityID string
+}
+
+// signOutOtherSessions: every browser session of the identity's Better
+// Auth users but keep (the trigger revokes their browser credentials).
+func (q *Queries) DeleteOtherAuthSessionsOfIdentity(ctx context.Context, arg DeleteOtherAuthSessionsOfIdentityParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteOtherAuthSessionsOfIdentity, arg.Keep, arg.IdentityID)
 	if err != nil {
 		return 0, err
 	}

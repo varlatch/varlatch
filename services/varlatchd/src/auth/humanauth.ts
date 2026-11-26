@@ -3,9 +3,11 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { hkdfSync } from "node:crypto";
 import { betterAuth } from "better-auth";
 import { passkey } from "@better-auth/passkey";
-import { APIError, createAuthMiddleware, isAPIError } from "better-auth/api";
+import { APIError, createAuthMiddleware, getSessionFromCtx, isAPIError } from "better-auth/api";
 import pg from "pg";
 import type { Querier } from "../db/migrate.js";
+import { withTx } from "../db/tx.js";
+import { endSessionsInOrder } from "./sessionend.js";
 import type { AppCtx } from "../domain/ctx.js";
 import { consumeSetupGrant, peekSetupGrant } from "../domain/bootstrap.js";
 import { DomainError } from "../domain/errors.js";
@@ -137,6 +139,10 @@ export async function completeEnrollment(
  */
 export const DISABLED_AUTH_PATHS = ["/passkey/delete-passkey"] as const;
 
+const SIGN_OUT_PATH = "/sign-out";
+const REVOKE_SESSIONS_PATH = "/revoke-sessions";
+const REVOKE_OTHER_SESSIONS_PATH = "/revoke-other-sessions";
+
 /**
  * What one /auth request's WebAuthn ceremony proved, kept in request-local
  * state (ADR-0054 Decision 6). Better Auth's afterVerification hooks run
@@ -251,6 +257,61 @@ export function buildHumanAuth(deps: HumanAuthDeps): HumanAuth {
       // any other form of the URL that reaches the native removal endpoint.
       before: createAuthMiddleware(async (actx) => {
         if ((DISABLED_AUTH_PATHS as readonly string[]).includes(actx.path)) throw new APIError("NOT_FOUND");
+        // Sign-out: Better Auth's own logs a failed deletion and answers
+        // success, clearing the cookie of a session that still lives. This
+        // runs after its request checks (the origin check) and before its
+        // handler: the session its signed session cookie names (the
+        // configured cookie, its signature verified) is deleted in a
+        // transaction of its own, which the session-end trigger (migration
+        // 43) joins, revoking its browser bearers. A failure is the answer
+        // and the cookie stays; once it committed, Better Auth's handler
+        // finds no session and clears the cookies as it always does.
+        if (actx.path === SIGN_OUT_PATH) {
+          const token = await actx.getSignedCookie(actx.context.authCookies.sessionToken.name, actx.context.secret);
+          if (!token) return;
+          try {
+            await withTx(ctx.db, (db) => db.query(`DELETE FROM "session" WHERE token = $1`, [token]));
+          } catch (err) {
+            console.error("varlatchd: sign-out could not end the session:", err);
+            throw new APIError("INTERNAL_SERVER_ERROR", { message: "The session could not be ended; still signed in" });
+          }
+          return;
+        }
+        // Better Auth's bulk revocations end sessions in the lock order
+        // "Sign out everywhere else" takes (sessionend.ts): its own
+        // /revoke-sessions deletes them in scan order, which can wait on it
+        // in a cycle. The person is the one its session cookie signs in
+        // (as its sensitive-session check, the cookie cache aside). Without
+        // one, or when it cannot be read, 401 here: the native handler is
+        // never reached, since it would read the session again on its own
+        // and revoke in scan order.
+        if (actx.path === REVOKE_SESSIONS_PATH || actx.path === REVOKE_OTHER_SESSIONS_PATH) {
+          const unauthorized = () => new APIError("UNAUTHORIZED", { message: "Unauthorized", code: "UNAUTHORIZED" });
+          const current = await getSessionFromCtx(actx, { disableCookieCache: true }).catch((err: unknown) => {
+            if (!isAPIError(err)) console.error("varlatchd: the session could not be read for a bulk revocation:", err);
+            throw unauthorized();
+          });
+          if (!current?.user?.id || !current.session?.id) throw unauthorized();
+          await withTx(ctx.db, (db) =>
+            endSessionsInOrder(db, { betterAuthUserId: current.user.id }, {
+              keep: actx.path === REVOKE_OTHER_SESSIONS_PATH ? current.session.id : null,
+              // The session was read before these locks: once they are
+              // held, it must still be live. A browser another one signed
+              // out meanwhile revokes nothing.
+              check: async (tx) => {
+                const live = (
+                  await tx.query(`SELECT 1 FROM session WHERE id = $1 AND "expiresAt" > clock_timestamp()`, [current.session.id])
+                ).rows[0];
+                if (!live) throw unauthorized();
+              },
+            }),
+          ).catch((err: unknown) => {
+            if (isAPIError(err)) throw err;
+            console.error("varlatchd: the sessions could not be revoked:", err);
+            throw new APIError("INTERNAL_SERVER_ERROR", { message: "The sessions could not be revoked" });
+          });
+          return actx.json({ status: true });
+        }
       }),
       // A new passkey's provenance, once its row exists (ADR-0054
       // Decision 4): trusted when this request consumed a setup grant for
@@ -288,6 +349,11 @@ export function buildHumanAuth(deps: HumanAuthDeps): HumanAuth {
       // Follow the actual scheme, not NODE_ENV: https deployments get Secure
       // cookies; plain-http local/dev does not silently lose its session.
       useSecureCookies: url.protocol === "https:",
+      // Better Auth's origin check, explicitly on: it is what refuses a
+      // request with the browser's cookies from another site (the sign-out
+      // hook below runs after it), and Better Auth turns it off by default
+      // under NODE_ENV=test.
+      disableOriginCheck: false,
     },
     plugins: [
       passkey({

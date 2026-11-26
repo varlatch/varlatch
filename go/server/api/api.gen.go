@@ -7933,6 +7933,9 @@ type ServerInterface interface {
 	// UpdateMyProfile Update the caller's display name and/or avatar image. The name is written to both the linked Better Auth user and the Varlatch identity so org listings show the new name. The image must be a data:image/… URL or an https:// URL of at most 100KB; null clears it.
 	// (PATCH /me/profile)
 	UpdateMyProfile(w http.ResponseWriter, r *http.Request)
+	// SignOutOtherSessions Sign out every other browser of the caller: end each of the caller's browser sessions but the one the presenting browser bearer comes from. A session's browser bearers are revoked with it, each a credential.revoked event (reason session-ended), so a signed-out browser cannot mint another; one whose bearers all expired is signed out too. CLI credentials, including those from the browser hand-off, and other tokens are left alone: DELETE /me/credentials/{credential} revokes them. Restricted to browser session bearers.
+	// (POST /me/sessions/sign-out-others)
+	SignOutOtherSessions(w http.ResponseWriter, r *http.Request)
 	// GetMeta Discovery endpoint for version-skew handling and capability detection
 	// (GET /meta)
 	GetMeta(w http.ResponseWriter, r *http.Request)
@@ -8899,6 +8902,20 @@ func (siw *ServerInterfaceWrapper) UpdateMyProfile(w http.ResponseWriter, r *htt
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.UpdateMyProfile(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SignOutOtherSessions operation middleware
+func (siw *ServerInterfaceWrapper) SignOutOtherSessions(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SignOutOtherSessions(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -15515,6 +15532,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/me/credentials", wrapper.ListMyCredentials)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/me/credentials/{credential}", wrapper.RevokeMyCredential)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/me/credentials/cli", wrapper.ExchangeCliCredential)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/me/sessions/sign-out-others", wrapper.SignOutOtherSessions)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/me/passkeys", wrapper.ListMyPasskeys)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/me/passkeys/{passkey}", wrapper.RemoveMyPasskey)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/me/passkeys/{passkey}/confirmation/options", wrapper.StartPasskeyConfirmation)
@@ -17153,6 +17171,64 @@ type UpdateMyProfiledefaultJSONResponse struct {
 }
 
 func (response UpdateMyProfiledefaultJSONResponse) VisitUpdateMyProfileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SignOutOtherSessionsRequestObject struct {
+}
+
+type SignOutOtherSessionsResponseObject interface {
+	VisitSignOutOtherSessionsResponse(w http.ResponseWriter) error
+}
+
+type SignOutOtherSessions200JSONResponse struct {
+	// EndedSessions How many browser sessions were ended
+	EndedSessions int `json:"endedSessions"`
+}
+
+func (response SignOutOtherSessions200JSONResponse) VisitSignOutOtherSessionsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SignOutOtherSessions429JSONResponse struct{ RequestWindowJSONResponse }
+
+func (response SignOutOtherSessions429JSONResponse) VisitSignOutOtherSessionsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SignOutOtherSessionsdefaultJSONResponse struct {
+	Body       ApiError
+	StatusCode int
+}
+
+func (response SignOutOtherSessionsdefaultJSONResponse) VisitSignOutOtherSessionsResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -25970,6 +26046,9 @@ type StrictServerInterface interface {
 	// UpdateMyProfile Update the caller's display name and/or avatar image. The name is written to both the linked Better Auth user and the Varlatch identity so org listings show the new name. The image must be a data:image/… URL or an https:// URL of at most 100KB; null clears it.
 	// (PATCH /me/profile)
 	UpdateMyProfile(ctx context.Context, request UpdateMyProfileRequestObject) (UpdateMyProfileResponseObject, error)
+	// SignOutOtherSessions Sign out every other browser of the caller: end each of the caller's browser sessions but the one the presenting browser bearer comes from. A session's browser bearers are revoked with it, each a credential.revoked event (reason session-ended), so a signed-out browser cannot mint another; one whose bearers all expired is signed out too. CLI credentials, including those from the browser hand-off, and other tokens are left alone: DELETE /me/credentials/{credential} revokes them. Restricted to browser session bearers.
+	// (POST /me/sessions/sign-out-others)
+	SignOutOtherSessions(ctx context.Context, request SignOutOtherSessionsRequestObject) (SignOutOtherSessionsResponseObject, error)
 	// GetMeta Discovery endpoint for version-skew handling and capability detection
 	// (GET /meta)
 	GetMeta(ctx context.Context, request GetMetaRequestObject) (GetMetaResponseObject, error)
@@ -27121,6 +27200,30 @@ func (sh *strictHandler) UpdateMyProfile(w http.ResponseWriter, r *http.Request)
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(UpdateMyProfileResponseObject); ok {
 		if err := validResponse.VisitUpdateMyProfileResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SignOutOtherSessions operation middleware
+func (sh *strictHandler) SignOutOtherSessions(w http.ResponseWriter, r *http.Request) {
+	var request SignOutOtherSessionsRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SignOutOtherSessions(ctx, request.(SignOutOtherSessionsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SignOutOtherSessions")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SignOutOtherSessionsResponseObject); ok {
+		if err := validResponse.VisitSignOutOtherSessionsResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

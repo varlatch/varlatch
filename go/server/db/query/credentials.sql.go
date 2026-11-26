@@ -178,7 +178,7 @@ func (q *Queries) CredentialEvidence(ctx context.Context, id string) (Credential
 }
 
 const credentialOfIdentity = `-- name: CredentialOfIdentity :one
-SELECT id FROM credentials WHERE id = ? AND identity_id = ?
+SELECT id, kind, auth_session_id FROM credentials WHERE id = ? AND identity_id = ?
 `
 
 type CredentialOfIdentityParams struct {
@@ -186,11 +186,19 @@ type CredentialOfIdentityParams struct {
 	IdentityID string
 }
 
-func (q *Queries) CredentialOfIdentity(ctx context.Context, arg CredentialOfIdentityParams) (string, error) {
+type CredentialOfIdentityRow struct {
+	ID            string
+	Kind          string
+	AuthSessionID sql.NullString
+}
+
+// revokeOwnCredential: the caller's credential, its kind and the browser
+// session it came from.
+func (q *Queries) CredentialOfIdentity(ctx context.Context, arg CredentialOfIdentityParams) (CredentialOfIdentityRow, error) {
 	row := q.db.QueryRowContext(ctx, credentialOfIdentity, arg.ID, arg.IdentityID)
-	var id string
-	err := row.Scan(&id)
-	return id, err
+	var i CredentialOfIdentityRow
+	err := row.Scan(&i.ID, &i.Kind, &i.AuthSessionID)
+	return i, err
 }
 
 const getIdentity = `-- name: GetIdentity :one
