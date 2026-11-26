@@ -389,9 +389,9 @@ export async function reactivateIdentity(
     if (boundEnabled && before?.disabled) {
       throw new DomainError("STATE_CHANGED", "The identity was retired while it was being reactivated; nothing changed. Reactivate it again");
     }
+    if (!before?.disabled) return;
     await db.query("UPDATE identities SET disabled = false WHERE id = $1", [identityId]);
-    // Report mode counts only a reactivation of a disabled identity; an enabled one stays as it was.
-    if (before?.disabled) await prepared.count(db);
+    await prepared.count(db);
     await recordAuditEvent(db, {
       eventType: "identity.reactivated",
       decision: "info",
