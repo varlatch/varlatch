@@ -44,3 +44,33 @@ ORDER BY id;
 -- name: RevokeCapabilitiesOfIdentity :exec
 UPDATE capabilities SET revoked_at = sqlc.arg(now)
 WHERE (agent_identity_id = sqlc.arg(identity_id) OR broker_identity_id = sqlc.arg(identity_id)) AND revoked_at IS NULL;
+
+-- name: RecentlyRetiredIdentities :many
+-- revokeCapabilitiesOfRetiredIdentities: per Organization, through
+-- audit_events_org_time_idx, the identities retired since since.
+SELECT DISTINCT o.id AS organization_id, CAST(json_extract(e.resource, '$.identityId') AS TEXT) AS identity_id
+FROM organizations o JOIN audit_events e ON e.organization_id = o.id
+WHERE e.occurred_at > sqlc.arg(since) AND e.event_type = 'identity.retired'
+  AND json_extract(e.resource, '$.identityId') IS NOT NULL
+ORDER BY o.id, identity_id;
+
+-- name: CapabilitiesEndedByRetirement :many
+-- revokeCapabilitiesOfRetiredIdentities: the identity's unexpired, unrevoked
+-- Capabilities (as Agent or Broker) that one of its retirements since since
+-- ends: one after the Capability was issued, or one before it with no
+-- reactivation in between.
+SELECT c.id FROM capabilities c
+WHERE c.organization_id = sqlc.arg(organization_id)
+  AND (c.agent_identity_id = sqlc.arg(identity_id) OR c.broker_identity_id = sqlc.arg(identity_id))
+  AND c.revoked_at IS NULL AND c.expires_at > sqlc.arg(now)
+  AND EXISTS (
+    SELECT 1 FROM audit_events r
+    WHERE r.organization_id = sqlc.arg(organization_id) AND r.occurred_at > sqlc.arg(since)
+      AND r.event_type = 'identity.retired' AND json_extract(r.resource, '$.identityId') = sqlc.arg(identity_id)
+      AND r.occurred_at > COALESCE((
+        SELECT max(a.occurred_at) FROM audit_events a
+        WHERE a.organization_id = sqlc.arg(organization_id) AND a.occurred_at > sqlc.arg(since)
+          AND a.occurred_at <= c.created_at
+          AND a.event_type = 'identity.reactivated' AND json_extract(a.resource, '$.identityId') = sqlc.arg(identity_id)
+      ), sqlc.arg(since)))
+ORDER BY c.id;

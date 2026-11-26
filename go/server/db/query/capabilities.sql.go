@@ -12,6 +12,63 @@ import (
 	"database/sql"
 )
 
+const capabilitiesEndedByRetirement = `-- name: CapabilitiesEndedByRetirement :many
+SELECT c.id FROM capabilities c
+WHERE c.organization_id = ?1
+  AND (c.agent_identity_id = ?2 OR c.broker_identity_id = ?2)
+  AND c.revoked_at IS NULL AND c.expires_at > ?3
+  AND EXISTS (
+    SELECT 1 FROM audit_events r
+    WHERE r.organization_id = ?1 AND r.occurred_at > ?4
+      AND r.event_type = 'identity.retired' AND json_extract(r.resource, '$.identityId') = ?2
+      AND r.occurred_at > COALESCE((
+        SELECT max(a.occurred_at) FROM audit_events a
+        WHERE a.organization_id = ?1 AND a.occurred_at > ?4
+          AND a.occurred_at <= c.created_at
+          AND a.event_type = 'identity.reactivated' AND json_extract(a.resource, '$.identityId') = ?2
+      ), ?4))
+ORDER BY c.id
+`
+
+type CapabilitiesEndedByRetirementParams struct {
+	OrganizationID string
+	IdentityID     string
+	Now            int64
+	Since          int64
+}
+
+// revokeCapabilitiesOfRetiredIdentities: the identity's unexpired, unrevoked
+// Capabilities (as Agent or Broker) that one of its retirements since since
+// ends: one after the Capability was issued, or one before it with no
+// reactivation in between.
+func (q *Queries) CapabilitiesEndedByRetirement(ctx context.Context, arg CapabilitiesEndedByRetirementParams) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, capabilitiesEndedByRetirement,
+		arg.OrganizationID,
+		arg.IdentityID,
+		arg.Now,
+		arg.Since,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const capabilityAgent = `-- name: CapabilityAgent :one
 SELECT id, kind, disabled FROM identities WHERE id = ? AND organization_id = ?
 `
@@ -217,6 +274,44 @@ func (q *Queries) LiveCapability(ctx context.Context, arg LiveCapabilityParams) 
 	var id string
 	err := row.Scan(&id)
 	return id, err
+}
+
+const recentlyRetiredIdentities = `-- name: RecentlyRetiredIdentities :many
+SELECT DISTINCT o.id AS organization_id, CAST(json_extract(e.resource, '$.identityId') AS TEXT) AS identity_id
+FROM organizations o JOIN audit_events e ON e.organization_id = o.id
+WHERE e.occurred_at > ?1 AND e.event_type = 'identity.retired'
+  AND json_extract(e.resource, '$.identityId') IS NOT NULL
+ORDER BY o.id, identity_id
+`
+
+type RecentlyRetiredIdentitiesRow struct {
+	OrganizationID string
+	IdentityID     string
+}
+
+// revokeCapabilitiesOfRetiredIdentities: per Organization, through
+// audit_events_org_time_idx, the identities retired since since.
+func (q *Queries) RecentlyRetiredIdentities(ctx context.Context, since int64) ([]RecentlyRetiredIdentitiesRow, error) {
+	rows, err := q.db.QueryContext(ctx, recentlyRetiredIdentities, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RecentlyRetiredIdentitiesRow
+	for rows.Next() {
+		var i RecentlyRetiredIdentitiesRow
+		if err := rows.Scan(&i.OrganizationID, &i.IdentityID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const revokeCapabilitiesOfIdentity = `-- name: RevokeCapabilitiesOfIdentity :exec

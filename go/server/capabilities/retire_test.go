@@ -35,6 +35,7 @@ type retireHarness struct {
 	h     http.Handler
 	vs    *values.Service
 	fill  func(string) string
+	now   func() time.Time
 }
 
 func newRetireHarness(t *testing.T) *retireHarness {
@@ -70,7 +71,7 @@ func newRetireHarness(t *testing.T) *retireHarness {
 		t.Fatal(err)
 	}
 	t.Cleanup(vs.Settled)
-	return &retireHarness{t: t, f: f, store: store, w: w, h: h, vs: vs, fill: fillPath(f, nil)}
+	return &retireHarness{t: t, f: f, store: store, w: w, h: h, vs: vs, fill: fillPath(f, nil), now: now}
 }
 
 func (r *retireHarness) call(method, path, credential, body string) (int, string) {
@@ -107,6 +108,18 @@ const (
 	issuance  = `{"agentIdentityId":"{idn:agent}","items":["SECRET_A"],"destinations":["api.example.com"],` +
 		`"targets":{"SECRET_A":["header:authorization"]},"ttlSeconds":600}`
 )
+
+// exec runs statements in a write job, as a release before the fix left
+// the database.
+func (r *retireHarness) exec(q string, args ...any) {
+	r.t.Helper()
+	if err := r.w.Job(context.Background(), nil, func(ctx context.Context, tx *storage.Tx) error {
+		_, err := tx.ExecContext(ctx, q, args...)
+		return err
+	}); err != nil {
+		r.t.Fatal(err)
+	}
+}
 
 func refusalReason(t *testing.T, body string) string {
 	t.Helper()

@@ -36,6 +36,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/auditexport"
 	"github.com/varlatch/varlatch/go/server/auth"
 	"github.com/varlatch/varlatch/go/server/backups"
+	"github.com/varlatch/varlatch/go/server/capabilities"
 	"github.com/varlatch/varlatch/go/server/clientaddr"
 	"github.com/varlatch/varlatch/go/server/config"
 	"github.com/varlatch/varlatch/go/server/db"
@@ -477,6 +478,43 @@ func serve(opts Options, h *hooks) int {
 	if h.writer != nil {
 		h.writer(writer)
 	}
+	// Before serving: Capabilities an earlier release's retirement left
+	// live are revoked (capabilities.RevokeOfRetired). While a restore's
+	// hold or an upgrade's stands, once it ends.
+	repairDone := make(chan struct{})
+	repair := func() bool {
+		leave, ok := admission.EnterWork()
+		if !ok {
+			return false
+		}
+		defer leave()
+		if n, err := capabilities.RevokeOfRetired(ctx, writer, time.Now); err != nil {
+			log.Error("cannot revoke the Capabilities of retired identities; the next start tries again", "error", err)
+		} else if n > 0 {
+			log.Info("revoked the Capabilities of identities retired before this release", "capabilities", n)
+		}
+		return true
+	}
+	if repair() {
+		close(repairDone)
+	} else {
+		go func() {
+			defer close(repairDone)
+			for t := time.NewTicker(10 * time.Second); ; {
+				select {
+				case <-ctx.Done():
+					t.Stop()
+					return
+				case <-t.C:
+					if repair() {
+						t.Stop()
+						return
+					}
+				}
+			}
+		}()
+	}
+	defer func() { cancel(); <-repairDone }()
 	// The Security Control report summary (feature-parity decision 10):
 	// every minute, each hour's report counts become audit events once the
 	// hour has been over for 10 minutes. A stop ends it before the
