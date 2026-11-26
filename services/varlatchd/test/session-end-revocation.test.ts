@@ -234,6 +234,15 @@ describe("revoking a browser credential from Active sessions (DELETE /v1/me/cred
     expect(await canMint("ses_a")).toBe(401);
   });
 
+  it("a CLI credential from this browser's handoff is not of its session: revoking a bearer with it ends the session", async () => {
+    const handoff = await issueCredential(ctx.db, { identityId: personId, kind: "cli", authSessionId: "ses_a" });
+    const bearer = await mint("ses_a");
+    expect((await revoke(bearer.id, handoff.token)).status).toBe(204);
+    expect(await canMint("ses_a")).toBe(401);
+    expect(await sessions()).toEqual(["ses_b"]);
+    expect(await works(handoff.token)).toBe(true);
+  });
+
   it("revoking a CLI credential from the browser handoff leaves the session alone", async () => {
     const mine = await mint("ses_a");
     const handoff = await issueCredential(ctx.db, { identityId: personId, kind: "cli", authSessionId: "ses_b" });
