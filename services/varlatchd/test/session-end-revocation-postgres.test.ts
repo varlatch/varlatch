@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { issueCredential } from "../src/auth/credentials.js";
 import { buildHumanAuth, type HumanAuth } from "../src/auth/humanauth.js";
 import { createPgQuerier } from "../src/db/pg.js";
@@ -11,6 +11,19 @@ import { changeControl } from "../src/domain/securitycontrols.js";
 import { buildApp } from "../src/http/app.js";
 import { PUBLIC_URL, RP } from "./helpers/device-sign-in.js";
 import { softAuthenticator, type UnregisteredAuthenticator } from "./helpers/soft-authenticator.js";
+
+
+// Better Auth's session helper, as the revocation hook calls it: itself,
+// unless a test makes it answer no session or fail.
+const sessionHelper = vi.hoisted(() => ({ override: null as null | (() => Promise<unknown>) }));
+vi.mock("better-auth/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("better-auth/api")>();
+  return {
+    ...actual,
+    getSessionFromCtx: ((...args: Parameters<typeof actual.getSessionFromCtx>) =>
+      sessionHelper.override ? sessionHelper.override() : actual.getSessionFromCtx(...args)) as typeof actual.getSessionFromCtx,
+  };
+});
 
 /**
  * Signing out ends the dashboard's bearers (migration 43), through Better
@@ -54,6 +67,7 @@ describe.skipIf(!url)("signing out revokes browser bearers on real PostgreSQL", 
     app = buildApp(ctx, { publicUrl: PUBLIC_URL, humanAuth, clientAddress: () => "203.0.113.7" });
   });
   afterEach(async () => {
+    sessionHelper.override = null;
     await humanAuth?.close();
     await db?.end();
     if (admin) {
@@ -222,6 +236,272 @@ describe.skipIf(!url)("signing out revokes browser bearers on real PostgreSQL", 
       if (minted.status === 200) expect(await works(minted.body.token)).toBe(401);
       expect(await rows("SELECT id FROM credentials WHERE kind = 'browser' AND revoked_at IS NULL AND auth_session_id = $1", [browser.sessionId])).toEqual([]);
     }
+  });
+
+  it("a sign-out whose deletion fails answers the failure, and keeps the session and its cookie", async () => {
+    const { browser } = await bootstrapAdmin();
+    const token = await browser.bearer();
+    const cookies = new Map(browser.cookies);
+    await db.query(`CREATE FUNCTION refuse_session_delete() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN RAISE EXCEPTION 'injected session deletion failure'; END $$`);
+    await db.query(`CREATE TRIGGER refuse_session_delete BEFORE DELETE ON "session" FOR EACH ROW EXECUTE FUNCTION refuse_session_delete()`);
+    const errors = console.error;
+    console.error = () => {};
+    let refused: Awaited<ReturnType<Browser["request"]>>;
+    try {
+      refused = await browser.request("POST", "/auth/sign-out", {});
+    } finally {
+      console.error = errors;
+    }
+    expect(refused.status).toBe(500);
+    // The cookie was not cleared, and the session and its bearer still live:
+    // the dashboard says it could not sign out, which is the truth.
+    expect(browser.cookies).toEqual(cookies);
+    expect(await rows(`SELECT id FROM "session" WHERE id = $1`, [browser.sessionId])).toHaveLength(1);
+    expect(await works(token)).toBe(200);
+
+    await db.query(`DROP TRIGGER refuse_session_delete ON "session"`);
+    expect((await browser.request("POST", "/auth/sign-out", {})).status).toBe(200);
+    expect([...browser.cookies.keys()].filter((k) => k.includes("session_token"))).toEqual([]);
+    expect(await rows(`SELECT id FROM "session" WHERE id = $1`, [browser.sessionId])).toEqual([]);
+    expect(await works(token)).toBe(401);
+  });
+
+  it("a sign-out with the browser's cookies from another origin, or none, is refused", async () => {
+    const { browser } = await bootstrapAdmin();
+    const cookie = [...browser.cookies].map(([k, v]) => `${k}=${v}`).join("; ");
+    for (const origin of [{ Origin: "https://evil.example" }, { Referer: "https://evil.example/page" }, {}]) {
+      const res = await app.request(`${PUBLIC_URL}/auth/sign-out`, {
+        method: "POST",
+        headers: { ...origin, Cookie: cookie, "Content-Type": "application/json" },
+        body: "{}",
+      });
+      expect(res.status, JSON.stringify(origin)).toBe(403);
+      expect(res.headers.getSetCookie()).toEqual([]);
+    }
+    expect(await rows(`SELECT id FROM "session" WHERE id = $1`, [browser.sessionId])).toHaveLength(1);
+  });
+
+  it("a sign-out ends no session for a cookie whose signature does not verify, or under another name", async () => {
+    const { browser } = await bootstrapAdmin();
+    const [[name, value]] = [...browser.cookies].filter(([k]) => k.endsWith("session_token")) as [string, string][];
+    expect(name).toBe("__Secure-better-auth.session_token");
+    const signed = decodeURIComponent(value!);
+    const token = signed.slice(0, signed.lastIndexOf("."));
+    const signOutWith = (cookie: string) =>
+      app.request(`${PUBLIC_URL}/auth/sign-out`, {
+        method: "POST",
+        headers: { Origin: RP.origin, Cookie: cookie, "Content-Type": "application/json" },
+        body: "{}",
+      });
+    // The session's token with a signature that is not the server's.
+    await signOutWith(`${name}=${encodeURIComponent(`${token}.${"A".repeat(43)}=`)}`);
+    // Its genuine signed value under a cookie name the server does not use.
+    await signOutWith(`better-auth.session_token=${value}`);
+    // An unsigned token.
+    await signOutWith(`${name}=${encodeURIComponent(token)}`);
+    expect(await rows(`SELECT id FROM "session" WHERE id = $1`, [browser.sessionId])).toHaveLength(1);
+    expect((await browser.request("POST", "/auth/varlatch-token")).status).toBe(200);
+  });
+
+  it("sign-out-others reads its session's expiry once its locks are held", async () => {
+    const { browser: a, key } = await bootstrapAdmin();
+    const b = await new Browser().signIn(key);
+    const ta = await a.bearer();
+    expect(await works(ta)).toBe(200);
+    // The caller's session ends 1.5 seconds from now; another transaction
+    // holds the other browser's session for 2 seconds, so sign-out-others
+    // waits for that lock past its own session's end.
+    await db.query(`UPDATE "session" SET "expiresAt" = clock_timestamp() + interval '1500 milliseconds' WHERE id = $1`, [a.sessionId]);
+    const holder = await db.connect();
+    let res: { status: number; body: any };
+    try {
+      await holder.query("BEGIN");
+      await holder.query(`SELECT id FROM "session" WHERE id = $1 FOR UPDATE`, [b.sessionId]);
+      const signingOut = bearerCall("POST", "/v1/me/sessions/sign-out-others", ta);
+      await sleep(2000);
+      await holder.query("COMMIT");
+      res = await signingOut;
+    } finally {
+      holder.release();
+    }
+    expect(res.status, JSON.stringify(res.body)).toBe(401);
+    expect(await rows(`SELECT id FROM "session" WHERE id = $1`, [b.sessionId])).toHaveLength(1);
+  });
+
+  it("sign-out-others waits for a CLI exchange of its own bearer, and then signs out nobody", async () => {
+    const { browser: a, key } = await bootstrapAdmin();
+    const b = await new Browser().signIn(key);
+    const ta = await a.bearer();
+    const tb = await b.bearer();
+    // Used once, so the race's request does not also write its last use.
+    expect(await works(ta)).toBe(200);
+    const taId = await credentialIdOf(ta);
+    // The exchange's revocation of the presenting bearer, not yet committed.
+    const exchange = await db.connect();
+    let res: { status: number; body: any };
+    try {
+      await exchange.query("BEGIN");
+      await exchange.query("UPDATE credentials SET revoked_at = now() WHERE id = $1", [taId]);
+      const signingOut = bearerCall("POST", "/v1/me/sessions/sign-out-others", ta);
+      let waited = false;
+      for (let i = 0; i < 200 && !waited; i++) {
+        const waiting = await rows(
+          "SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = $1 AND wait_event_type = 'Lock'",
+          [database],
+        );
+        waited = waiting[0].n >= 1;
+        if (!waited) await sleep(25);
+      }
+      await exchange.query("COMMIT");
+      res = await signingOut;
+      expect(waited).toBe(true);
+    } finally {
+      exchange.release();
+    }
+    expect(res.status, JSON.stringify(res.body)).toBe(401);
+    expect(await rows(`SELECT id FROM "session" WHERE id = $1`, [b.sessionId])).toHaveLength(1);
+    expect(await works(tb)).toBe(200);
+  });
+
+  it("Better Auth's revoke-sessions and sign-out-others at once lock sessions in one order: neither fails", async () => {
+    const { browser: x, key } = await bootstrapAdmin();
+    const middle = await new Browser().signIn(key);
+    const y = await new Browser().signIn(key);
+    // Session ids in one order, their rows in the other: a scan meets
+    // ses_3 first, the id order ses_1.
+    for (const [browser, id] of [[y, "ses_3"], [middle, "ses_2"], [x, "ses_1"]] as const) {
+      await db.query(`UPDATE "session" SET id = $2 WHERE id = $1`, [browser.sessionId, id]);
+      browser.sessionId = id;
+    }
+    const tx = await x.bearer();
+    expect(await works(tx)).toBe(200);
+    const holder = await db.connect();
+    let results: { status: number; body: any }[];
+    try {
+      await holder.query("BEGIN");
+      await holder.query(`SELECT id FROM "session" WHERE id = 'ses_2' FOR UPDATE`);
+      const both = Promise.all([
+        bearerCall("POST", "/v1/me/sessions/sign-out-others", tx),
+        y.request("POST", "/auth/revoke-sessions", {}),
+      ]);
+      for (let i = 0; i < 200; i++) {
+        const waiting = await rows(
+          "SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = $1 AND wait_event_type = 'Lock'",
+          [database],
+        );
+        if (waiting[0].n >= 2) break;
+        await sleep(25);
+      }
+      await holder.query("COMMIT");
+      results = await both;
+    } finally {
+      holder.release();
+    }
+    // Whichever took the first session first: revoke-sessions ends every
+    // session, and sign-out-others either ended the others first or finds
+    // its own session gone. Neither waits on the other in a cycle (which
+    // PostgreSQL would end with an error).
+    expect([200, 401], JSON.stringify(results)).toContain(results[0]!.status);
+    expect(results[1]!.status, JSON.stringify(results)).toBe(200);
+    expect(await rows(`SELECT id FROM "session"`)).toEqual([]);
+    expect(await rows("SELECT id FROM credentials WHERE kind = 'browser' AND revoked_at IS NULL")).toEqual([]);
+  });
+
+  it("revoke-other-sessions from a browser signed out while it waits revokes nothing", async () => {
+    const { browser: a, key } = await bootstrapAdmin();
+    const b = await new Browser().signIn(key);
+    const tb = await b.bearer();
+    // Another browser's sign-out of a's session, not yet committed.
+    const other = await db.connect();
+    let res: Awaited<ReturnType<Browser["request"]>>;
+    try {
+      await other.query("BEGIN");
+      await other.query(`DELETE FROM "session" WHERE id = $1`, [a.sessionId]);
+      const revoking = a.request("POST", "/auth/revoke-other-sessions", {});
+      let waited = false;
+      for (let i = 0; i < 200 && !waited; i++) {
+        const waiting = await rows(
+          "SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = $1 AND wait_event_type = 'Lock'",
+          [database],
+        );
+        waited = waiting[0].n >= 1;
+        if (!waited) await sleep(25);
+      }
+      await other.query("COMMIT");
+      res = await revoking;
+      expect(waited).toBe(true);
+    } finally {
+      other.release();
+    }
+    expect(res.status, JSON.stringify(res.body)).toBe(401);
+    expect(await rows(`SELECT id FROM "session" WHERE id = $1`, [b.sessionId])).toHaveLength(1);
+    expect(await works(tb)).toBe(200);
+  });
+
+  it("revoke-sessions and revoke-other-sessions end nothing (401) when the caller's session cannot be read", async () => {
+    const { browser: a, key } = await bootstrapAdmin();
+    const b = await new Browser().signIn(key);
+    const ta = await a.bearer();
+    const tb = await b.bearer();
+    const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      for (const path of ["/auth/revoke-sessions", "/auth/revoke-other-sessions"]) {
+        for (const unresolved of [async () => null, async () => { throw new Error("connection reset"); }]) {
+          // The native handler reads the session again on its own: if the
+          // hook let the request through, it would revoke in scan order.
+          sessionHelper.override = unresolved;
+          const res = await a.request("POST", path, {});
+          sessionHelper.override = null;
+          expect(res.status, `${path}: ${JSON.stringify(res.body)}`).toBe(401);
+          expect(await rows(`SELECT id FROM "session" WHERE id = ANY($1) ORDER BY id`, [[a.sessionId, b.sessionId]])).toHaveLength(2);
+          expect(await works(ta)).toBe(200);
+          expect(await works(tb)).toBe(200);
+        }
+      }
+    } finally {
+      quiet.mockRestore();
+    }
+  });
+
+  it("two browsers signing each other out at once: one of them stays signed in", async () => {
+    const { browser: a, key } = await bootstrapAdmin();
+    const b = await new Browser().signIn(key);
+    const c = await new Browser().signIn(key);
+    // Session ids in a known order: both sign-outs reach the third browser's
+    // session first, where a lock holds them until both have authenticated.
+    for (const [browser, id] of [[c, "ses_1"], [a, "ses_2"], [b, "ses_3"]] as const) {
+      await db.query(`UPDATE "session" SET id = $2 WHERE id = $1`, [browser.sessionId, id]);
+      browser.sessionId = id;
+    }
+    const [ta, tb] = [await a.bearer(), await b.bearer()];
+    const holder = await db.connect();
+    let results: { status: number; body: any }[];
+    try {
+      await holder.query("BEGIN");
+      await holder.query(`SELECT id FROM "session" WHERE id = 'ses_1' FOR UPDATE`);
+      const both = Promise.all([
+        bearerCall("POST", "/v1/me/sessions/sign-out-others", ta),
+        bearerCall("POST", "/v1/me/sessions/sign-out-others", tb),
+      ]);
+      for (let i = 0; i < 200; i++) {
+        const waiting = await rows(
+          "SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = $1 AND wait_event_type = 'Lock'",
+          [database],
+        );
+        if (waiting[0].n >= 2) break;
+        await sleep(25);
+      }
+      await holder.query("COMMIT");
+      results = await both;
+    } finally {
+      holder.release();
+    }
+    const statuses = results.map((r) => r.status).sort();
+    expect(statuses, JSON.stringify(results)).toEqual([200, 401]);
+    const survivor = results[0]!.status === 200 ? a : b;
+    expect((await rows(`SELECT id FROM "session" ORDER BY id`)).map((r) => r.id)).toEqual([survivor.sessionId]);
+    expect(await works(survivor === a ? ta : tb)).toBe(200);
   });
 
   describe("against an approval consumption (lock order: session, then credential, then audit)", () => {

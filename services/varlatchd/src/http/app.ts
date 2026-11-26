@@ -155,6 +155,7 @@ import { mintConvexToken, publicJwks } from "../auth/jwt.js";
 import { issueCredential, revokeCredential } from "../auth/credentials.js";
 import { ENROLL_HTML } from "../enroll/page.js";
 import { relyingPartyOf } from "../auth/approval-assertion.js";
+import { endSessionsInOrder } from "../auth/sessionend.js";
 import {
   approveDeviceSignIn,
   denyDeviceSignIn,
@@ -1207,14 +1208,90 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     await withTx(ctx.db, async (db) => {
       // Revoking only takes authority away: recovery while frozen (ADR-0055).
       if (organizationId) await lockLiveScope(db, { organizationId, duringIncidentFreeze: "recovery", people: [principal.identity.id] });
+      const credentialId = c.req.param("credential");
       const res = await db.query(
-        "SELECT id FROM credentials WHERE id = $1 AND identity_id = $2",
-        [c.req.param("credential"), principal.identity.id],
+        "SELECT id, kind, auth_session_id FROM credentials WHERE id = $1 AND identity_id = $2",
+        [credentialId, principal.identity.id],
       );
-      if (!res.rows[0]) throw new DomainError("RESOURCE_NOT_FOUND", "Credential not found");
-      await revokeCredential(db, c.req.param("credential"), principal.identity.id);
+      const row = res.rows[0] as { id: string; kind: string; auth_session_id: string | null } | undefined;
+      if (!row) throw new DomainError("RESOURCE_NOT_FOUND", "Credential not found");
+      // A browser credential's session ends with it: the browser would
+      // otherwise mint a new bearer from its cookie for as long as the
+      // session lasts. An older bearer of the caller's own session is only
+      // revoked ("Sign out everywhere else" leaves this browser signed in);
+      // the presenting bearer ends it ("Sign out this browser"). Only a
+      // browser bearer is of its own session: a CLI credential from the
+      // browser handoff carries the session too, but revoking a browser
+      // bearer with it ends the session; revoking that CLI credential
+      // leaves its session alone (ADR-0024).
+      const session = row.kind === "browser" ? row.auth_session_id : null;
+      const ownSession = principal.credentialKind === "browser" ? (principal.authSessionId ?? null) : null;
+      const endsSession = session !== null && (session !== ownSession || credentialId === principal.credentialId);
+      if (endsSession) {
+        // Lock order (domain/liveness.ts): the session row (step 6), then
+        // the credentials the revocation and the session-end trigger
+        // revoke (step 7), in the trigger's mode, before the first audit
+        // insert.
+        await lockedQuery(db, { table: "session", mode: "update" }, `SELECT id FROM session WHERE id = $1 FOR UPDATE`, [session]);
+        await lockedQuery(
+          db,
+          { table: "credentials", mode: "update" },
+          `SELECT id FROM credentials
+           WHERE id = $1 OR (auth_session_id = $2 AND kind = 'browser' AND revoked_at IS NULL)
+           ORDER BY id FOR UPDATE`,
+          [credentialId, session],
+        );
+      }
+      await revokeCredential(db, credentialId, principal.identity.id);
+      // Deleting the session revokes its other browser bearers (migration 43).
+      if (endsSession) await db.query(`DELETE FROM "session" WHERE id = $1`, [session]);
     });
     return c.body(null, 204);
+  });
+
+  // ---- Sign out the other browsers: every browser session of the caller
+  // but the one its browser bearer comes from. "Sign out everywhere else"
+  // reaches a browser by its session, so one that never minted a bearer, or
+  // whose only bearer went to the CLI handoff, is signed out too. The
+  // session-end trigger (migration 43) revokes each ended session's browser
+  // bearers, one credential.revoked each. CLI credentials and tokens stay:
+  // DELETE /v1/me/credentials/{credential} revokes them.
+  app.post("/v1/me/sessions/sign-out-others", async (c) => {
+    const principal = c.get("principal");
+    const keep = principal.authSessionId ?? null;
+    if (principal.identity.kind !== "human" || principal.credentialKind !== "browser" || keep === null) {
+      throw new DomainError("PERMISSION_DENIED", "Only a browser session bearer may sign out the other browsers");
+    }
+    const endedSessions = await withTx(ctx.db, async (db) =>
+      (
+        await endSessionsInOrder(db, { identityId: principal.identity.id }, {
+          keep,
+          // The presenting bearer is held too (step 7, in id order with the
+          // bearers the ended sessions take with them): a CLI exchange or a
+          // revocation of it waits for this sign-out, or this sign-out for
+          // it, and sees what it did.
+          credentials: [principal.credentialId],
+          // The request authenticated before these locks: once they are
+          // held, the session that stays, and the bearer presenting it,
+          // must still be live. A browser that another one signed out, or
+          // whose bearer was exchanged or revoked meanwhile, signs out
+          // nobody.
+          check: async (tx) => {
+            const live = (
+              await tx.query(
+                `SELECT 1 FROM credentials c JOIN session s ON s.id = c.auth_session_id
+                 WHERE c.id = $1 AND c.identity_id = $2 AND c.auth_session_id = $3 AND c.revoked_at IS NULL
+                   AND (c.expires_at IS NULL OR c.expires_at > clock_timestamp())
+                   AND s."expiresAt" > clock_timestamp()`,
+                [principal.credentialId, principal.identity.id, keep],
+              )
+            ).rows[0];
+            if (!live) throw new DomainError("INVALID_CREDENTIAL", "Credential is invalid, revoked, or expired");
+          },
+        })
+      ).length,
+    );
+    return c.json({ endedSessions });
   });
 
   // ---- CLI credential exchange (ADR-0024): the browser handoff delivers
