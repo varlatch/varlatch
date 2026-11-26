@@ -106,3 +106,12 @@ it("says so when the server does not sign this browser out", async () => {
   await click("revoke-credential-crd_this");
   expect(fake.toastError).toHaveBeenCalledWith("Could not sign out", { description: "sign-out failed: 503" });
 });
+
+it("calls the other browser bearers credentials, not sessions: this browser's earlier ones are among them", async () => {
+  await mount();
+  const text = JSON.stringify(root.toJSON());
+  expect(text).toContain("Other browser credentials · ");
+  expect(text).toContain("this browser's earlier ones included");
+  expect(text).toContain("Ended browser credentials · ");
+  expect(text).not.toContain("browser sessions · ");
+});
