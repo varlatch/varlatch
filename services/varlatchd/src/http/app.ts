@@ -1240,6 +1240,48 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     return c.body(null, 204);
   });
 
+  // ---- Sign out the other browsers: every browser session of the caller
+  // but the one its browser bearer comes from. "Sign out everywhere else"
+  // reaches a browser by its session, so one that never minted a bearer, or
+  // whose only bearer went to the CLI handoff, is signed out too. The
+  // session-end trigger (migration 43) revokes each ended session's browser
+  // bearers, one credential.revoked each. CLI credentials and tokens stay:
+  // DELETE /v1/me/credentials/{credential} revokes them.
+  app.post("/v1/me/sessions/sign-out-others", async (c) => {
+    const principal = c.get("principal");
+    const keep = principal.authSessionId ?? null;
+    if (principal.identity.kind !== "human" || principal.credentialKind !== "browser" || keep === null) {
+      throw new DomainError("PERMISSION_DENIED", "Only a browser session bearer may sign out the other browsers");
+    }
+    const endedSessions = await withTx(ctx.db, async (db) => {
+      // Lock order (domain/liveness.ts): the session rows (step 6) in id
+      // order, then the browser credentials the session-end trigger
+      // revokes (step 7), in its mode, before its audit inserts.
+      const ended = (
+        await lockedQuery(
+          db,
+          { table: "session", mode: "update" },
+          `SELECT s.id FROM session s, auth_user_links l
+           WHERE l.better_auth_user_id = s."userId" AND l.identity_id = $1 AND s.id <> $2
+           ORDER BY s.id FOR UPDATE OF s`,
+          [principal.identity.id, keep],
+        )
+      ).rows.map((r) => (r as { id: string }).id);
+      if (ended.length === 0) return 0;
+      await lockedQuery(
+        db,
+        { table: "credentials", mode: "update" },
+        `SELECT id FROM credentials
+         WHERE auth_session_id = ANY($1::text[]) AND kind = 'browser' AND revoked_at IS NULL
+         ORDER BY id FOR UPDATE`,
+        [ended],
+      );
+      await db.query(`DELETE FROM "session" WHERE id = ANY($1::text[])`, [ended]);
+      return ended.length;
+    });
+    return c.json({ endedSessions });
+  });
+
   // ---- CLI credential exchange (ADR-0024): the browser handoff delivers
   // the dashboard's 15-minute session bearer, which only needs to survive
   // the handoff itself. The CLI trades it here for a longer-lived `cli`

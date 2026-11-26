@@ -1767,6 +1767,15 @@ export class VarlatchClient {
   }
 
   /**
+   * Signs out every other browser of the caller: ends each of its browser
+   * sessions but the one the presenting browser bearer comes from. CLI
+   * credentials and tokens are left alone.
+   */
+  signOutOtherSessions(): Promise<{ endedSessions: number }> {
+    return this.request("POST", "/v1/me/sessions/sign-out-others");
+  }
+
+  /**
    * One of the caller's own step-up approvals (capability security.controls);
    * the CLI polls it while it waits. `signal` aborts the request (the CLI
    * stops a poll at once on Ctrl-C).
