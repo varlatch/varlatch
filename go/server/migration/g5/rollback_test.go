@@ -676,7 +676,8 @@ func TestG5Rollback(t *testing.T) {
 		{"entered rollback-checked", rbState{"rollback-checked", "rollback-checked", "target-gated", "", true, true, true}, undoneState, true},
 		{"entered rollback-transfer", rbState{"rollback-transfer", "rollback-transfer", "target-gated", "", true, true, true}, rolledBackState, true},
 		{"rollback go stopped", rbState{"rollback-transfer", "rollback-transfer", "none", "", false, true, true}, rolledBackState, true},
-		{"rollback transfer started", rbState{"rollback-transfer", "rollback-transfer", "source", "", false, true, true}, rolledBackState, true},
+		{"rollback serving recorded", rbState{"rollback-transfer", "rollback-transfer", "none", "", false, true, true}, rolledBackState, false},
+		{"rollback transfer started", rbState{"rollback-transfer", "rollback-transfer", "source", "", false, true, true}, rolledBackState, false},
 		{"entered rolled-back", rbState{"rolled-back", "rolled-back", "source", "", false, true, true}, rolledBackState, false},
 	} {
 		for _, abort := range []bool{false, true} {
@@ -695,6 +696,12 @@ func TestG5Rollback(t *testing.T) {
 					if code := w.rollback("", "--rollback"); code != 1 {
 						t.Errorf("a --rollback over the interrupted reverse: %d", code)
 					}
+				}
+				if !c.abort && (c.point == "rollback serving recorded" || c.point == "rollback transfer started") {
+					if code := w.rollback("", "--abort"); code != 1 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "may have accepted writes since") {
+						t.Fatalf("--abort once serving: %d\n%s", code, w.outputs[len(w.outputs)-1])
+					}
+					w.expectReverse("refused --abort", c.at)
 				}
 				final := c.resumed
 				if abort {
@@ -1060,7 +1067,7 @@ func TestG5RollbackImage(t *testing.T) {
 			t.Fatalf("--rollback: %d", code)
 		}
 		_ = stopService()
-		if code := w.rollback("rollback transfer started", "--resume"); code != -1 {
+		if code := w.rollback("rollback go stopped", "--resume"); code != -1 {
 			t.Fatalf("not killed: %d\n%s", code, w.outputs[len(w.outputs)-1])
 		}
 		if code := w.rollback("", "--abort"); code != 1 || !strings.Contains(string(w.outputs[len(w.outputs)-1]), "Start the Go service varlatch-go") {

@@ -742,10 +742,14 @@ until the address moves back:
    set in `.env`, then one `docker compose up -d --no-deps` command.
 6. Rolled back: the new server never starts on that data directory again.
 
-Until the address moves, an interruption, a failed check or `--abort`
-undoes the rollback, and the new server goes on serving. During the
-transfer, `--resume` checks again and `--abort` gives the address back to
-the new server first. People sign in again after a rollback too, with the
+Until the rebuilt TypeScript release starts serving, an interruption, a
+failed check or `--abort` undoes the rollback, and the new server goes on
+serving. Once the rebuilt release has started serving, it may have
+accepted writes that the new server's copy does not have, so the rollback
+goes forward only: a failure stops with the rebuilt volumes and journal
+phase kept so you can fix the cause and run `--resume` again, and `--abort`
+refuses. A run interrupted while it starts the rebuilt release counts as
+started. People sign in again after a rollback too, with the
 same passkey, and hard-reload any dashboard tab that stayed open
 (`Ctrl+Shift+R`, `Cmd+Shift+R` on a Mac).
 

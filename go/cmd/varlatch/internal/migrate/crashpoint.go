@@ -32,10 +32,12 @@ import (
 //     is, before either journal says released;
 //   - the reverse (--rollback): "rollback barrier held" once Go's barrier
 //     is up; "rollback rebuilt" once the TypeScript side runs on its fresh
-//     volumes; "rollback go stopped" and "rollback transfer started" in
-//     the address's move back; "rollback undone open" once an undo wrote
-//     the journals open, before Go's barrier is lifted; "rollback undone
-//     released" once it is lifted, before the source's journal records it;
+//     volumes; "rollback go stopped", "rollback serving recorded" (ServedAt
+//     journalled, StartServing not called yet) and "rollback transfer
+//     started" in the address's move back; "rollback undone open" once
+//     an undo wrote the journals open, before Go's barrier is lifted;
+//     "rollback undone released" once it is lifted, before the source's
+//     journal records it;
 //   - --finish: "finish archived" once the final archive is verified and
 //     journalled; "finished source written" between the source's journal
 //     saying finished and Go's; "entered finished" once both (or, after a

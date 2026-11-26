@@ -1403,6 +1403,11 @@ func (e *Engine) Abort(ctx context.Context) (*Journal, error) {
 		if j.Rollback == nil {
 			return j, fmt.Errorf("the migration %s is in phase %s, but its journal records no reverse", j.ID, j.Phase)
 		}
+		// An undo already begun (by a 0.50.0 CLI only) goes on, as in
+		// undoReverse.
+		if served := servedAt(j); served != "" && !j.Rollback.Undoing {
+			return j, fmt.Errorf("cannot abort the reverse of migration %s: the rebuilt installation may have accepted writes since %s; resume instead (varlatch migrate --resume)", j.ID, served)
+		}
 		err := e.undoReverse(ctx, j, errors.New("aborted by the operator"))
 		// Only an undo that is done, Go's barrier lifted and journalled so,
 		// is what was asked for.

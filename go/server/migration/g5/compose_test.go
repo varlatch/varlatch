@@ -1610,7 +1610,7 @@ func TestG5TheOverrideGoneAtTheUndo(t *testing.T) {
 			if coolify {
 				w.routeBack()
 			}
-			if code := w.rollback("rollback transfer started", "--rollback"); code != -1 {
+			if code := w.rollback("entered rollback-transfer", "--rollback"); code != -1 {
 				t.Fatalf("not killed: %d\n%s", code, w.outputs[len(w.outputs)-1])
 			}
 			if err := os.Remove(filepath.Join(w.compose, overrideFile)); err != nil {

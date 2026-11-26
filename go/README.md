@@ -3867,11 +3867,15 @@ migrations.
   - `rolled-back`: Go's journal says so, and varlatchd never starts on that
     data directory again.
 
-  An interruption, a failed check or `--abort` before the transfer undoes
-  it: the TypeScript side as the forward migration left it (its fresh
-  volumes removed, its marker made again), Go's journal open again, then its
-  barrier lifted. Go runs throughout. In the transfer, `--resume` checks
-  again; `--abort` gives the address back to Go first.
+  An interruption, a failed check or `--abort` before the rebuilt
+  TypeScript release starts serving undoes it: the TypeScript side as the
+  forward migration left it (its fresh volumes removed, its marker made
+  again), Go's journal open again, then its barrier lifted. Go runs
+  throughout (stopped in the transfer on the public and own-proxy shapes,
+  started again by an undo). The journal records `servedAt` just before the
+  transfer first starts the rebuilt release; from then on it may have
+  accepted writes, so the reverse goes forward only, keeping the fresh
+  volumes and the phase for `--resume`, and `--abort` refuses.
 
   Its report lists the Go archives made since the switch, which the
   TypeScript release cannot read (never deleted).

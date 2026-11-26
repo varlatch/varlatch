@@ -1355,6 +1355,8 @@ type reverseFake struct {
 	helds                     int
 	frontErrs                 []error
 	servingErr                error
+	startServingErr           error
+	startServing              func() error
 	started                   bool
 	planErr                   error
 	// check, when set, answers instead of checkErr.
@@ -1405,7 +1407,13 @@ func (r *reverseFake) ResetConvex(context.Context) error { r.do("convex"); retur
 func (r *reverseFake) ExportForCheck(context.Context, []byte) (string, error) {
 	return "", errors.New("not reached")
 }
-func (r *reverseFake) StartServing(context.Context, Ingress) error { r.do("serve"); return nil }
+func (r *reverseFake) StartServing(context.Context, Ingress) error {
+	r.do("serve")
+	if r.startServing != nil {
+		return r.startServing()
+	}
+	return r.startServingErr
+}
 func (r *reverseFake) StopServing(context.Context, Ingress) error {
 	r.do("stop serving")
 	return r.servingErr

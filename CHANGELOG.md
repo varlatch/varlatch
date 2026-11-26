@@ -5,7 +5,23 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
-## Unreleased
+## Unreleased (0.50.1)
+
+### CLI
+
+- **`varlatch migrate --rollback` no longer removes what the rebuilt
+  TypeScript installation took in once it may have served.** In 0.50.0, once
+  the rollback had started the rebuilt 0.23.0 installation on its address, a
+  `--resume` whose start of it failed again, a failed check of the public
+  URL, a failed tailnet handoff, or `--abort` could undo the rollback and
+  remove its fresh volumes, with every write made to it since. The journal
+  now records when the rollback first asks it to serve (`rollback.servedAt`,
+  written just before, so an interrupted run counts as served too; a 0.50.0
+  journal's `verifiedAt` counts the same). From then on a failure stops with
+  the fresh volumes and the `rollback-transfer` phase kept: fix the cause,
+  then run `varlatch migrate --resume`. `--abort` refuses from that state.
+  Before then, a failure or `--abort` undoes the rollback as before. A 0.50.0
+  CLI does not read a journal that has `servedAt`: use 0.50.1 to resume it.
 
 ## 0.50.0 (2026-11-25)
 

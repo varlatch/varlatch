@@ -152,8 +152,15 @@ type RollbackRecord struct {
 	Checks  *CheckSummary   `json:"checks,omitempty"`
 	// GoStopped is Go's service stopped for the address (the public and
 	// own-proxy shapes, at the transfer; Coolify's once the domain moved).
-	GoStopped  bool   `json:"goStopped"`
-	Asked      bool   `json:"asked"`
+	GoStopped bool `json:"goStopped"`
+	Asked     bool `json:"asked"`
+	// ServedAt is when the transfer first asked the rebuilt TypeScript
+	// installation to serve, journalled before StartServing is called: once
+	// set, it may have accepted writes, so no automatic path and no --abort
+	// undoes the reverse or removes the fresh volumes. A 0.50.0 journal has
+	// none; its VerifiedAt counts instead (servedAt). A 0.50.0 CLI refuses a
+	// journal that has it (an unknown field), so it cannot undo one either.
+	ServedAt   string `json:"servedAt,omitempty"`
 	VerifiedAt string `json:"verifiedAt,omitempty"`
 	// Archives are the Go (format 3) archives made since the switch,
 	// listed in the report and never deleted (decision 17).
