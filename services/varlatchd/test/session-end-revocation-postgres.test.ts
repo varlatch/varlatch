@@ -268,6 +268,28 @@ describe.skipIf(!url)("signing out revokes browser bearers on real PostgreSQL", 
     expect(await rows(`SELECT id FROM "session" WHERE id = $1`, [browser.sessionId])).toHaveLength(1);
   });
 
+  it("a sign-out ends no session for a cookie whose signature does not verify, or under another name", async () => {
+    const { browser } = await bootstrapAdmin();
+    const [[name, value]] = [...browser.cookies].filter(([k]) => k.endsWith("session_token")) as [string, string][];
+    expect(name).toBe("__Secure-better-auth.session_token");
+    const signed = decodeURIComponent(value!);
+    const token = signed.slice(0, signed.lastIndexOf("."));
+    const signOutWith = (cookie: string) =>
+      app.request(`${PUBLIC_URL}/auth/sign-out`, {
+        method: "POST",
+        headers: { Origin: RP.origin, Cookie: cookie, "Content-Type": "application/json" },
+        body: "{}",
+      });
+    // The session's token with a signature that is not the server's.
+    await signOutWith(`${name}=${encodeURIComponent(`${token}.${"A".repeat(43)}=`)}`);
+    // Its genuine signed value under a cookie name the server does not use.
+    await signOutWith(`better-auth.session_token=${value}`);
+    // An unsigned token.
+    await signOutWith(`${name}=${encodeURIComponent(token)}`);
+    expect(await rows(`SELECT id FROM "session" WHERE id = $1`, [browser.sessionId])).toHaveLength(1);
+    expect((await browser.request("POST", "/auth/varlatch-token")).status).toBe(200);
+  });
+
   it("two browsers signing each other out at once: one of them stays signed in", async () => {
     const { browser: a, key } = await bootstrapAdmin();
     const b = await new Browser().signIn(key);
