@@ -1217,12 +1217,14 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       // otherwise mint a new bearer from its cookie for as long as the
       // session lasts. An older bearer of the caller's own session is only
       // revoked ("Sign out everywhere else" leaves this browser signed in);
-      // the presenting bearer ends it ("Sign out this browser"). A CLI
-      // credential from the browser handoff leaves its session alone
-      // (ADR-0024).
+      // the presenting bearer ends it ("Sign out this browser"). Only a
+      // browser bearer is of its own session: a CLI credential from the
+      // browser handoff carries the session too, but revoking a browser
+      // bearer with it ends the session; revoking that CLI credential
+      // leaves its session alone (ADR-0024).
       const session = row.kind === "browser" ? row.auth_session_id : null;
-      const endsSession =
-        session !== null && (session !== (principal.authSessionId ?? null) || credentialId === principal.credentialId);
+      const ownSession = principal.credentialKind === "browser" ? (principal.authSessionId ?? null) : null;
+      const endsSession = session !== null && (session !== ownSession || credentialId === principal.credentialId);
       if (endsSession) {
         // Lock order (domain/liveness.ts): the session row (step 6), then
         // the credentials the revocation and the session-end trigger
