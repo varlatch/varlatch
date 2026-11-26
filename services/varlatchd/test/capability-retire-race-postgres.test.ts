@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { issueCredential } from "../src/auth/credentials.js";
 import { createPgQuerier } from "../src/db/pg.js";
 import { runMigrations } from "../src/db/migrate.js";
-import { withTx } from "../src/db/tx.js";
+import { withTx, type PoolQuerier } from "../src/db/tx.js";
+import { CapabilityRepair } from "../src/domain/capabilityrepair.js";
 import { consumeSetupGrant, ensureInstallation, issueBootstrapGrant } from "../src/domain/bootstrap.js";
 import type { AppCtx } from "../src/domain/ctx.js";
 import { retireIdentity } from "../src/domain/identities.js";
@@ -157,5 +158,78 @@ describe.skipIf(!url)("Capability issuance racing an identity's retirement on re
     expect(res.status, await res.clone().text()).toBe(401);
     expect((await res.json()).error.code).toBe("INVALID_CREDENTIAL");
     expect(await liveCapabilitiesOf(brokerId)).toBe(0);
+  });
+
+  it("an exercise whose snapshot opened before the repair completed is refused", async () => {
+    // A Capability an earlier release's retirement of its Agent left live;
+    // the Agent was reactivated since, which made it work again.
+    expect((await request(`${ENV_PATH}/values/STRIPE_KEY`, "PUT", { value: "sk_live_1" }, adminToken)).status).toBe(200);
+    const projectId = ((await (await request("/v1/organizations/acme/projects/api", "GET", undefined, adminToken)).json()) as { id: string }).id;
+    expect(
+      (
+        await request(
+          "/v1/organizations/acme/grants",
+          "POST",
+          { subjectIdentityId: agentId, scope: { kind: "project", projectId }, actions: ["secret.use"] },
+          adminToken,
+        )
+      ).status,
+    ).toBe(201);
+    const issued = await issue();
+    expect(issued.status, await issued.clone().text()).toBe(201);
+    const cap = (await issued.json()) as { id: string; secret: string };
+    expect((await request(`/v1/organizations/acme/identities/${agentId}/retire`, "POST", {}, adminToken)).status).toBe(200);
+    await db.query("UPDATE capabilities SET revoked_at = NULL WHERE id = $1", [cap.id]);
+    expect((await request(`/v1/organizations/acme/identities/${agentId}/reactivate`, "POST", {}, adminToken)).status).toBe(200);
+
+    // The repair has not run; it completes right after the exercise's
+    // snapshot opened, before anything else the exercise reads.
+    const repair = new CapabilityRepair(undefined, { log: () => {}, error: () => {} });
+    let armed = true;
+    let repairedDuringSnapshot = false;
+    const racing: PoolQuerier = {
+      query: (text, params) => db.query(text, params),
+      connect: async () => {
+        const client = await db.connect();
+        return {
+          release: (destroy?: boolean) => client.release(destroy),
+          query: async (text: string, params?: unknown[]) => {
+            const res = await client.query(text, params);
+            if (armed && text === "SELECT now() AS now") {
+              armed = false;
+              repairedDuringSnapshot = await repair.attempt(ctx);
+            }
+            return res;
+          },
+        };
+      },
+    };
+    const racingApp = buildApp({ ...ctx, db: racing, capabilityRepair: repair });
+    const res = await racingApp.request(`${ENV_PATH}/capabilities/${cap.id}/exercises`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${brokerToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        capabilitySecret: cap.secret,
+        destination: { host: "api.stripe.com", port: 443 },
+        placements: [{ item: "STRIPE_KEY", target: "header:authorization" }],
+      }),
+    });
+    const text = await res.text();
+    expect([403, 503], text).toContain(res.status);
+    expect(text).not.toContain("sk_live_1");
+    if (repairedDuringSnapshot) expect(repair.ready).toBe(true);
+    expect(
+      (
+        (
+          await db.query(
+            "SELECT count(*)::int AS n FROM audit_events WHERE event_type = 'capability.exercised' AND resource->>'capabilityId' = $1",
+            [cap.id],
+          )
+        ).rows[0] as { n: number }
+      ).n,
+    ).toBe(0);
+    // Repaired, the Capability is revoked.
+    expect(await repair.attempt(ctx)).toBe(true);
+    expect(((await db.query("SELECT revoked_at FROM capabilities WHERE id = $1", [cap.id])).rows[0] as { revoked_at: unknown }).revoked_at).not.toBeNull();
   });
 });

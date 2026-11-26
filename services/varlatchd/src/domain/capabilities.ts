@@ -510,6 +510,8 @@ export async function exerciseCapability(
   },
 ): Promise<ExerciseResult> {
   // Until the repair of earlier retirements has run (capabilityrepair.ts).
+  // The caller checks it before the snapshot opens (what decides); this
+  // refuses an exercise a restore invalidated the repair since.
   requireCapabilityRepair(ctx);
   const { state, row } = captured;
   const { org, project, env } = state;
