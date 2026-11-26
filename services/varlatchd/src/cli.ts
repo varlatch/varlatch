@@ -18,6 +18,7 @@ import { startAuditExportLoop } from "./domain/auditexport.js";
 import { startExposureBackfillLoop } from "./domain/exposure.js";
 import { startDeletionLoop } from "./domain/orgdeletion.js";
 import { startRegistrationSweepLoop } from "./domain/githubapps.js";
+import { revokeCapabilitiesOfRetiredIdentities } from "./domain/capabilityrepair.js";
 import { ACCESS_COUNTS, startSecurityReportLoop } from "./domain/securityreport.js";
 import { DomainError } from "./domain/errors.js";
 import { ConfigError, loadConfig, type VarlatchdConfig } from "./config.js";
@@ -141,6 +142,15 @@ async function serveCommand(): Promise<void> {
         "The configured root KEK does not verify against this installation's " +
           "canary. Refusing to start with a wrong key (ADR-0019).",
       );
+    }
+    // Before serving: Capabilities an earlier release's retirement left
+    // live are revoked (capabilityrepair.ts). A failure is reported and
+    // tried again at the next start, as the Go server does.
+    try {
+      const repaired = await revokeCapabilitiesOfRetiredIdentities(ctx);
+      if (repaired > 0) console.log(`revoked ${repaired} Capabilities of identities retired before this release`);
+    } catch (err) {
+      console.error("varlatchd: cannot revoke the Capabilities of retired identities; the next start tries again:", err);
     }
   }
   const issuer = config.issuer;

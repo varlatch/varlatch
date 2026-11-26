@@ -68,7 +68,7 @@ function targetsOf(row: CapabilityRow): Record<string, string[]> | null {
   return typeof row.targets === "string" ? (JSON.parse(row.targets) as Record<string, string[]>) : row.targets;
 }
 
-const MAX_TTL_SECONDS = 24 * 60 * 60;
+export const MAX_TTL_SECONDS = 24 * 60 * 60;
 
 function hashCapabilitySecret(secret: string): string {
   return createHash("sha256").update(secret, "utf8").digest("hex");
