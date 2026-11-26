@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { MIGRATIONS } from "../src/db/migrations/index.js";
+import { MIGRATIONS, manifestMigrations } from "../src/db/migrations/index.js";
 import type { Querier } from "../src/db/migrate.js";
 import { migratedTestDb } from "./helpers/pglite.js";
 
@@ -74,8 +74,11 @@ describe("the migration manifest", () => {
     await db.close();
   });
 
-  it("names this release's migrations", () => {
-    expect(manifest.source.migrations).toEqual(MIGRATIONS.map((m) => `${String(m.id).padStart(4, "0")}_${m.name}`));
+  it("names this release's migrations, but those of indexes only, which come after its last", () => {
+    expect(manifest.source.migrations).toEqual(manifestMigrations());
+    const last = MIGRATIONS.findIndex((m) => `${String(m.id).padStart(4, "0")}_${m.name}` === manifest.source.migrations.at(-1));
+    expect(MIGRATIONS.slice(0, last + 1).every((m) => !m.indexesOnly)).toBe(true);
+    expect(MIGRATIONS.slice(last + 1).every((m) => m.indexesOnly)).toBe(true);
   });
 
   it("holds every table and column of the schema, in order, with its type", async () => {

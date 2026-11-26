@@ -58,6 +58,13 @@ export interface Migration {
   id: number;
   name: string;
   sql: string;
+  /**
+   * Indexes only: no table, column, constraint, trigger or row changes, so
+   * a migration's bundle (src/migration/manifest-v1.json, varlatchd's
+   * v1.json, whose source.migrations end at migration 52) is the same with
+   * or without it. Not named in the manifest (manifestMigrations).
+   */
+  indexesOnly?: true;
 }
 
 /** Append-only. Never edit a shipped migration; add a new one. */
@@ -114,5 +121,14 @@ export const MIGRATIONS: Migration[] = [
   { id: 50, name: "admin_step_up_integrations", sql: adminStepUpIntegrations },
   { id: 51, name: "admin_step_up_deletion_export", sql: adminStepUpDeletionExport },
   { id: 52, name: "audit_exports", sql: auditExports },
-  { id: 53, name: "capability_repair_indexes", sql: capabilityRepairIndexes },
+  { id: 53, name: "capability_repair_indexes", sql: capabilityRepairIndexes, indexesOnly: true },
 ];
+
+/**
+ * This release's migrations as the migration manifest names them
+ * (source.migrations): every one but those of indexes only, which change
+ * nothing a bundle holds.
+ */
+export function manifestMigrations(): string[] {
+  return MIGRATIONS.filter((m) => !m.indexesOnly).map((m) => `${String(m.id).padStart(4, "0")}_${m.name}`);
+}

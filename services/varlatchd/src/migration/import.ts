@@ -4,7 +4,7 @@ import { createReadStream } from "node:fs";
 import type { Envelope } from "../crypto/aead.js";
 import { verifyKekAgainstCanary } from "../crypto/canary.js";
 import { migrationStatus, runMigrations } from "../db/migrate.js";
-import { MIGRATIONS } from "../db/migrations/index.js";
+import { manifestMigrations } from "../db/migrations/index.js";
 import type { PoolQuerier } from "../db/tx.js";
 import { bundleTables, compareDigests, decisionLine, digestLine, loadManifest, type Decision, type Digest, type Manifest, type ManifestTable } from "./bundle.js";
 import { decodeRow, type ColumnType, type Value } from "./canonical.js";
@@ -366,9 +366,13 @@ class Loader {
   }
 }
 
-/** This release's migrations as the manifest names them. */
+/**
+ * This release's migrations as the manifest names them: those of indexes
+ * only aside (manifestMigrations), which the schema the import builds has
+ * too, and which change no table or column the bundle fills.
+ */
 function releaseMigrations(): string[] {
-  return MIGRATIONS.map((m) => `${String(m.id).padStart(4, "0")}_${m.name}`);
+  return manifestMigrations();
 }
 
 export async function importReverse(db: PoolQuerier, opts: { path: string; rootKek: Buffer }): Promise<ImportResult> {
