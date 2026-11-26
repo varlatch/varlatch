@@ -5,6 +5,7 @@ package httpserver
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/varlatch/varlatch/go/lib/storage"
@@ -215,5 +216,39 @@ func TestSignOutOtherSessions(t *testing.T) {
 	// One credential.revoked: the minted browser's live bearer, by the trigger.
 	if n := countRows(t, ta, "SELECT count(*) FROM audit_events WHERE event_type = 'credential.revoked'") - revokedBefore; n != 1 {
 		t.Fatalf("%d credential.revoked events, want 1", n)
+	}
+}
+
+// Two browsers signing each other out at once: the second authenticated
+// before the first's sign-out committed, and writes after it (the single
+// writer serializes them). Its bearer and session ended with that commit,
+// so it signs out nobody: the first browser stays signed in.
+func TestSignOutOthersByABrowserSignedOutMeanwhile(t *testing.T) {
+	s, ta := browserServer(t, browserOrigin)
+	a := newBrowser(t, s, browserOrigin)
+	_, key := enrollWithKey(t, a, ta)
+	b := newBrowser(t, s, browserOrigin)
+	signInWith(t, b, key)
+	ta1, tb := mint(t, a), mint(t, b)
+	ctx := context.Background()
+	pa, _, err := ta.svc.Authenticate(ctx, ta1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pb, _, err := ta.svc.Authenticate(ctx, tb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, err := ta.svc.SignOutOtherSessions(ctx, pa); err != nil || n != 1 {
+		t.Fatalf("a signs out the others: %d %v", n, err)
+	}
+	if n, err := ta.svc.SignOutOtherSessions(ctx, pb); err == nil || !strings.Contains(err.Error(), "invalid, revoked, or expired") {
+		t.Fatalf("b, signed out meanwhile, signs out the others: %d %v, want INVALID_CREDENTIAL", n, err)
+	}
+	if w := do(s, "GET", "/v1/me", "", map[string]string{"Authorization": "Bearer " + ta1}); w.Code != 200 {
+		t.Fatalf("a's bearer after both sign-outs: %d %s", w.Code, w.Body.String())
+	}
+	if w := a.post("/auth/varlatch-token", nil); w.Code != 200 {
+		t.Fatalf("a's session after both sign-outs: %d %s", w.Code, w.Body.String())
 	}
 }

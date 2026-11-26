@@ -45,3 +45,11 @@ UPDATE passkeys SET name = ? WHERE id = ?;
 DELETE FROM auth_sessions
 WHERE id <> sqlc.arg(keep)
   AND user_id IN (SELECT better_auth_user_id FROM auth_user_links WHERE identity_id = sqlc.arg(identity_id));
+
+-- name: BrowserBearerSessionLive :one
+-- signOutOtherSessions, in its write: whether the presenting browser bearer
+-- and the session it came from are both still live.
+SELECT count(*) FROM credentials c JOIN auth_sessions s ON s.id = c.auth_session_id
+WHERE c.id = sqlc.arg(credential_id) AND c.identity_id = sqlc.arg(identity_id) AND c.kind = 'browser'
+  AND c.revoked_at IS NULL AND (c.expires_at IS NULL OR c.expires_at > sqlc.arg(now))
+  AND s.expires_at > sqlc.arg(now);

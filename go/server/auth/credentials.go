@@ -369,8 +369,21 @@ func (s *Service) SignOutOtherSessions(ctx context.Context, p *Principal) (int64
 	}
 	var ended int64
 	err := s.store.Write(ctx, func(tx *storage.Tx) error {
-		var err error
-		ended, err = query.New(tx).DeleteOtherAuthSessionsOfIdentity(ctx, query.DeleteOtherAuthSessionsOfIdentityParams{
+		// The request authenticated before this write: a browser that
+		// another one signed out meanwhile (the single writer ran that
+		// first) signs out nobody. Its bearer and its session must still be
+		// live now.
+		q := query.New(tx)
+		live, err := q.BrowserBearerSessionLive(ctx, query.BrowserBearerSessionLiveParams{
+			CredentialID: p.Credential.ID, IdentityID: p.Identity.ID, Now: sql.NullInt64{Int64: s.micros(), Valid: true},
+		})
+		if err != nil {
+			return err
+		}
+		if live == 0 {
+			return domainerr.New("INVALID_CREDENTIAL", "Credential is invalid, revoked, or expired")
+		}
+		ended, err = q.DeleteOtherAuthSessionsOfIdentity(ctx, query.DeleteOtherAuthSessionsOfIdentityParams{
 			Keep: *p.Credential.AuthSessionID, IdentityID: p.Identity.ID,
 		})
 		return err
