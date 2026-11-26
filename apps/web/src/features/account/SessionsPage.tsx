@@ -33,6 +33,20 @@ export function SessionsPage() {
     onSuccess: invalidate,
     onError: (err) => toast.error("Could not revoke", { description: errorMessage(err) }),
   });
+  // Every other browser is signed out by its session, whether or not it
+  // holds a bearer now (one idle or whose bearer went to the CLI handoff
+  // has none); the other live CLI logins and tokens are revoked one by one.
+  const signOutOthers = useMutation({
+    mutationFn: async (ids: string[]) => {
+      await api.signOutOtherSessions();
+      for (const id of ids) await api.revokeMyCredential(id);
+    },
+    onSuccess: invalidate,
+    onError: (err) => {
+      invalidate();
+      toast.error("Could not sign out everywhere else", { description: errorMessage(err) });
+    },
+  });
 
   const items = (creds.data?.items ?? []) as OwnCredential[];
   const current = items.find((c) => c.current);
@@ -43,12 +57,10 @@ export function SessionsPage() {
   const rest = others
     .filter((c) => c.kind !== "browser")
     .sort((a, b) => Number(!live(a)) - Number(!live(b)) || b.createdAt.localeCompare(a.createdAt));
-  const revocableOthers = others.filter(live);
-  // A browser idle for more than 15 minutes has only expired bearers, but
-  // its session still lasts: revoking one of them ends that session, so
-  // "Sign out everywhere else" sends them too. An expired bearer of this
-  // browser's own session is only revoked; this browser stays signed in.
-  const signOutOthers = [...revocableOthers, ...endedBrowsers.filter((c) => !c.revokedAt)];
+  const revocableOthers = others.filter((c) => c.kind !== "browser" && live(c));
+  // Only a browser bearer may sign the other browsers out: it names the
+  // session that stays.
+  const inBrowser = current?.kind === "browser";
 
   const revokeOne = async (c: OwnCredential) => {
     if (c.current) {
@@ -69,7 +81,7 @@ export function SessionsPage() {
       description="Revocation is immediate and per credential. Your passkeys are separate and stay valid."
       data-testid="credentials-list"
       actions={
-        signOutOthers.length > 0 && (
+        inBrowser && (
           <Button
             variant="danger"
             icon={<LogOut size={14} />}
@@ -79,12 +91,12 @@ export function SessionsPage() {
                 title: "Sign out everywhere else?",
                 description:
                   revocableOthers.length > 0
-                    ? `Revokes ${revocableOthers.length} other credential${revocableOthers.length === 1 ? "" : "s"}: browser sessions, CLI logins and tokens issued to you, and signs out your other browsers. This browser stays signed in.`
+                    ? `Signs out your other browsers and revokes ${revocableOthers.length} other credential${revocableOthers.length === 1 ? "" : "s"}: CLI logins and tokens issued to you. This browser stays signed in.`
                     : "Signs out your other browsers. This browser stays signed in.",
                 confirmLabel: "Sign out everywhere else",
                 tone: "danger",
               });
-              if (ok) revoke.mutate(signOutOthers.map((c) => c.id));
+              if (ok) signOutOthers.mutate(revocableOthers.map((c) => c.id));
             }}
           >
             Sign out everywhere else
