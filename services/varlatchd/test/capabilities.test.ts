@@ -251,6 +251,31 @@ describe("exercise", () => {
     expect((await revoked.json()).error.details.reason).toBe("revoked");
   });
 
+  it("retiring the Agent revokes its Capabilities at once, and reactivation does not bring them back", async () => {
+    await grantUse();
+    const cap = await (await issue()).json();
+    expect((await exercise(cap.id, cap.secret)).status).toBe(200);
+    const retire = await post(`/v1/organizations/acme/identities/${agentId}/retire`, {});
+    expect(retire.status).toBe(200);
+    const after = await exercise(cap.id, cap.secret);
+    expect(after.status).toBe(403);
+    expect((await after.json()).error.details.reason).toBe("revoked");
+    expect(await auditCount("capability.revoked", "identity-retired")).toBe(1);
+
+    expect((await post(`/v1/organizations/acme/identities/${agentId}/reactivate`, {})).status).toBe(200);
+    const reactivated = await exercise(cap.id, cap.secret);
+    expect(reactivated.status).toBe(403);
+    expect((await reactivated.json()).error.details.reason).toBe("revoked");
+  });
+
+  it("retiring the Broker revokes the Capabilities it issued", async () => {
+    await grantUse();
+    const cap = await (await issue()).json();
+    expect((await post(`/v1/organizations/acme/identities/${brokerId}/retire`, {})).status).toBe(200);
+    const row = await ctx.db.query("SELECT revoked_at FROM capabilities WHERE id = $1", [cap.id]);
+    expect((row.rows[0] as { revoked_at: unknown }).revoked_at).not.toBeNull();
+  });
+
   it("non-broker principals cannot exercise, even the Agent itself", async () => {
     await grantUse();
     const cap = await (await issue()).json();

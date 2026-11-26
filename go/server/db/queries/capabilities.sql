@@ -33,3 +33,14 @@ WHERE id = sqlc.arg(id) AND organization_id = sqlc.arg(organization_id) AND revo
 -- name: CapabilityOf :one
 -- captureExercise: the Capability, in the route's environment.
 SELECT * FROM capabilities WHERE id = ? AND organization_id = ? AND environment_id = ?;
+
+-- name: LiveCapabilitiesOfIdentity :many
+-- retireIdentity: the unrevoked Capabilities issued for the identity as
+-- Agent or by it as Broker, in id order.
+SELECT id FROM capabilities
+WHERE (agent_identity_id = sqlc.arg(identity_id) OR broker_identity_id = sqlc.arg(identity_id)) AND revoked_at IS NULL
+ORDER BY id;
+
+-- name: RevokeCapabilitiesOfIdentity :exec
+UPDATE capabilities SET revoked_at = sqlc.arg(now)
+WHERE (agent_identity_id = sqlc.arg(identity_id) OR broker_identity_id = sqlc.arg(identity_id)) AND revoked_at IS NULL;

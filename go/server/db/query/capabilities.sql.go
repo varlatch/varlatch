@@ -167,6 +167,37 @@ func (q *Queries) ListCapabilities(ctx context.Context, arg ListCapabilitiesPara
 	return items, nil
 }
 
+const liveCapabilitiesOfIdentity = `-- name: LiveCapabilitiesOfIdentity :many
+SELECT id FROM capabilities
+WHERE (agent_identity_id = ?1 OR broker_identity_id = ?1) AND revoked_at IS NULL
+ORDER BY id
+`
+
+// retireIdentity: the unrevoked Capabilities issued for the identity as
+// Agent or by it as Broker, in id order.
+func (q *Queries) LiveCapabilitiesOfIdentity(ctx context.Context, identityID string) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, liveCapabilitiesOfIdentity, identityID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const liveCapability = `-- name: LiveCapability :one
 SELECT id FROM capabilities
 WHERE id = ?1 AND organization_id = ?2 AND revoked_at IS NULL
@@ -186,6 +217,21 @@ func (q *Queries) LiveCapability(ctx context.Context, arg LiveCapabilityParams) 
 	var id string
 	err := row.Scan(&id)
 	return id, err
+}
+
+const revokeCapabilitiesOfIdentity = `-- name: RevokeCapabilitiesOfIdentity :exec
+UPDATE capabilities SET revoked_at = ?1
+WHERE (agent_identity_id = ?2 OR broker_identity_id = ?2) AND revoked_at IS NULL
+`
+
+type RevokeCapabilitiesOfIdentityParams struct {
+	Now        sql.NullInt64
+	IdentityID string
+}
+
+func (q *Queries) RevokeCapabilitiesOfIdentity(ctx context.Context, arg RevokeCapabilitiesOfIdentityParams) error {
+	_, err := q.db.ExecContext(ctx, revokeCapabilitiesOfIdentity, arg.Now, arg.IdentityID)
+	return err
 }
 
 const revokeCapability = `-- name: RevokeCapability :execrows
