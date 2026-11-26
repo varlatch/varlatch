@@ -1264,19 +1264,36 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       throw new DomainError("PERMISSION_DENIED", "Only a browser session bearer may sign out the other browsers");
     }
     const endedSessions = await withTx(ctx.db, async (db) => {
-      // Lock order (domain/liveness.ts): the session rows (step 6) in id
-      // order, then the browser credentials the session-end trigger
-      // revokes (step 7), in its mode, before its audit inserts.
-      const ended = (
+      // Lock order (domain/liveness.ts): every session of the caller (step
+      // 6), the one that stays included, in id order, so that two browsers
+      // signing each other out take them one after the other; then the
+      // browser credentials the session-end trigger revokes (step 7), in
+      // its mode, before its audit inserts.
+      const sessions = (
         await lockedQuery(
           db,
           { table: "session", mode: "update" },
-          `SELECT s.id FROM session s, auth_user_links l
-           WHERE l.better_auth_user_id = s."userId" AND l.identity_id = $1 AND s.id <> $2
+          `SELECT s.id, s."expiresAt" > clock_timestamp() AS live FROM session s, auth_user_links l
+           WHERE l.better_auth_user_id = s."userId" AND l.identity_id = $1
            ORDER BY s.id FOR UPDATE OF s`,
-          [principal.identity.id, keep],
+          [principal.identity.id],
         )
-      ).rows.map((r) => (r as { id: string }).id);
+      ).rows as { id: string; live: boolean }[];
+      // The request authenticated before these locks: the session that
+      // stays, and the bearer presenting it, must still be live now. A
+      // browser that another one signed out meanwhile signs out nobody.
+      const bearerLive = (
+        await db.query(
+          `SELECT 1 FROM credentials
+           WHERE id = $1 AND identity_id = $2 AND auth_session_id = $3 AND revoked_at IS NULL
+             AND (expires_at IS NULL OR expires_at > clock_timestamp())`,
+          [principal.credentialId, principal.identity.id, keep],
+        )
+      ).rows[0];
+      if (!bearerLive || !sessions.some((s) => s.id === keep && s.live)) {
+        throw new DomainError("INVALID_CREDENTIAL", "Credential is invalid, revoked, or expired");
+      }
+      const ended = sessions.filter((s) => s.id !== keep).map((s) => s.id);
       if (ended.length === 0) return 0;
       await lockedQuery(
         db,

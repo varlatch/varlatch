@@ -268,6 +268,46 @@ describe.skipIf(!url)("signing out revokes browser bearers on real PostgreSQL", 
     expect(await rows(`SELECT id FROM "session" WHERE id = $1`, [browser.sessionId])).toHaveLength(1);
   });
 
+  it("two browsers signing each other out at once: one of them stays signed in", async () => {
+    const { browser: a, key } = await bootstrapAdmin();
+    const b = await new Browser().signIn(key);
+    const c = await new Browser().signIn(key);
+    // Session ids in a known order: both sign-outs reach the third browser's
+    // session first, where a lock holds them until both have authenticated.
+    for (const [browser, id] of [[c, "ses_1"], [a, "ses_2"], [b, "ses_3"]] as const) {
+      await db.query(`UPDATE "session" SET id = $2 WHERE id = $1`, [browser.sessionId, id]);
+      browser.sessionId = id;
+    }
+    const [ta, tb] = [await a.bearer(), await b.bearer()];
+    const holder = await db.connect();
+    let results: { status: number; body: any }[];
+    try {
+      await holder.query("BEGIN");
+      await holder.query(`SELECT id FROM "session" WHERE id = 'ses_1' FOR UPDATE`);
+      const both = Promise.all([
+        bearerCall("POST", "/v1/me/sessions/sign-out-others", ta),
+        bearerCall("POST", "/v1/me/sessions/sign-out-others", tb),
+      ]);
+      for (let i = 0; i < 200; i++) {
+        const waiting = await rows(
+          "SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = $1 AND wait_event_type = 'Lock'",
+          [database],
+        );
+        if (waiting[0].n >= 2) break;
+        await sleep(25);
+      }
+      await holder.query("COMMIT");
+      results = await both;
+    } finally {
+      holder.release();
+    }
+    const statuses = results.map((r) => r.status).sort();
+    expect(statuses, JSON.stringify(results)).toEqual([200, 401]);
+    const survivor = results[0]!.status === 200 ? a : b;
+    expect((await rows(`SELECT id FROM "session" ORDER BY id`)).map((r) => r.id)).toEqual([survivor.sessionId]);
+    expect(await works(survivor === a ? ta : tb)).toBe(200);
+  });
+
   describe("against an approval consumption (lock order: session, then credential, then audit)", () => {
     let identityId: string;
     let browser: Browser;
