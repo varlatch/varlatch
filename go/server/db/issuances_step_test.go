@@ -87,7 +87,7 @@ func TestRC1DatabaseUpgradesToVersion2(t *testing.T) {
 }
 
 // Schema version 3: a database 0.50.0 made (schema 2) upgrades to the
-// schema a new database gets, and the step only adds two non-unique
+// schema a new database gets, and the step only adds three non-unique
 // indexes, so it is rollback-safe: compatible_from stays 1. The upgraded
 // database keeps its events, and the indexes take new ones.
 func TestV2DatabaseUpgradesToVersion3(t *testing.T) {
@@ -104,11 +104,11 @@ func TestV2DatabaseUpgradesToVersion3(t *testing.T) {
 		t.Fatalf("the upgraded schema differs from a new one: %v, %v", changes, err)
 	}
 	changes, err := schemadiff.Diff(ctx, v2Schema(t), schemaSQL)
-	if err != nil || schemadiff.Breaks(changes) || len(changes) != 2 {
+	if err != nil || schemadiff.Breaks(changes) || len(changes) != 3 {
 		t.Fatalf("version 3's change: %v, %v", changes, err)
 	}
 	for _, c := range changes {
-		if c.Class != schemadiff.Additive || !strings.HasPrefix(c.Object, "index audit_events_") {
+		if c.Class != schemadiff.Additive || !strings.HasPrefix(c.Object, "index audit_events_") && c.Object != "index capabilities_live_idx" {
 			t.Fatalf("version 3's change: %v", c)
 		}
 	}

@@ -1679,7 +1679,8 @@
     },
     "indexes": {
       "audit_events_capability_issued_idx": "A Capability's capability.issued by Organization, for the repair of Capabilities earlier retirements left live (capabilities.RevokeOfRetired): schema version 3. The TypeScript server's migration 53 adds its PostgreSQL counterpart, after v0.22.0.",
-      "audit_events_identity_lifecycle_idx": "An identity's identity.retired and identity.reactivated by Organization, for the same repair: schema version 3. The TypeScript server's migration 53 adds its PostgreSQL counterpart, after v0.22.0."
+      "audit_events_identity_lifecycle_idx": "An identity's identity.retired and identity.reactivated by Organization, for the same repair: schema version 3. The TypeScript server's migration 53 adds its PostgreSQL counterpart, after v0.22.0.",
+      "capabilities_live_idx": "The unrevoked Capabilities by Organization and id, the same repair's batch cursor: schema version 3. The TypeScript server's migration 53 adds its PostgreSQL counterpart, after v0.22.0."
     },
     "triggers": {
       "audit_events_no_delete": "As audit_events_no_update.",

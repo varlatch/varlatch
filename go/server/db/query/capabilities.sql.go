@@ -232,7 +232,7 @@ func (q *Queries) ListCapabilities(ctx context.Context, arg ListCapabilitiesPara
 const liveCapabilitiesForRepair = `-- name: LiveCapabilitiesForRepair :many
 SELECT id, organization_id, agent_identity_id, broker_identity_id FROM capabilities
 WHERE revoked_at IS NULL AND expires_at > ?1
-  AND (organization_id > ?2 OR (organization_id = ?2 AND id > ?3))
+  AND (organization_id, id) > (?2, ?3)
 ORDER BY organization_id, id
 LIMIT ?4
 `
@@ -252,7 +252,8 @@ type LiveCapabilitiesForRepairRow struct {
 }
 
 // capabilities.RevokeOfRetired: the next at most batch unexpired, unrevoked
-// Capabilities after (after_org, after_id), by Organization and id.
+// Capabilities after (after_org, after_id), by Organization and id: a range
+// of capabilities_live_idx from the cursor on, with no sort of the rest.
 func (q *Queries) LiveCapabilitiesForRepair(ctx context.Context, arg LiveCapabilitiesForRepairParams) ([]LiveCapabilitiesForRepairRow, error) {
 	rows, err := q.db.QueryContext(ctx, liveCapabilitiesForRepair,
 		arg.Now,

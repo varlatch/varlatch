@@ -19,15 +19,18 @@ CREATE TABLE certificate_issuances (
 ) STRICT;
 CREATE INDEX certificate_issuances_name_started ON certificate_issuances (name, started_at);
 `},
-	// 3: two partial indexes on audit_events for the repair of
-	// Capabilities earlier retirements left live (capabilities.RevokeOfRetired):
+	// 3: three partial indexes for the repair of Capabilities earlier
+	// retirements left live (capabilities.RevokeOfRetired): on audit_events,
 	// an identity's lifecycle events and a Capability's issuance, each by
-	// Organization. Indexes only, so rollback-safe: schema 1's and 2's
-	// varlatchd may open the database, and their writes keep the indexes.
+	// Organization; on capabilities, the unrevoked ones by Organization and
+	// id, the repair's batch cursor. Indexes only, so rollback-safe: schema
+	// 1's and 2's varlatchd may open the database, and their writes keep the
+	// indexes.
 	{To: 3, CompatibleFrom: 1, SQL: `
 CREATE INDEX audit_events_identity_lifecycle_idx ON audit_events (organization_id, json_extract(resource, '$.identityId'), event_order)
   WHERE event_type IN ('identity.retired', 'identity.reactivated');
 CREATE INDEX audit_events_capability_issued_idx ON audit_events (organization_id, json_extract(resource, '$.capabilityId'), event_order)
   WHERE event_type = 'capability.issued';
+CREATE INDEX capabilities_live_idx ON capabilities (organization_id, id) WHERE revoked_at IS NULL;
 `},
 }

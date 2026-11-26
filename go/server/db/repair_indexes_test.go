@@ -32,16 +32,22 @@ func namedQuery(t *testing.T, file, name string) string {
 
 // The repair of Capabilities earlier retirements left live reads an
 // identity's latest lifecycle event and a Capability's issuance by the
-// indexes of schema version 3, never by a scan of the audit log.
+// indexes of schema version 3, never by a scan of the audit log; and it
+// reads the live Capabilities batch by batch along
+// capabilities_live_idx, from the cursor on, with no sort of what remains.
 func TestRepairQueriesUseTheirIndexes(t *testing.T) {
 	s := openDB(t)
-	for query, index := range map[string]string{
-		"LatestIdentityLifecycle": "audit_events_identity_lifecycle_idx",
-		"CapabilityIssuedOrder":   "audit_events_capability_issued_idx",
+	for _, c := range []struct {
+		query, index string
+		args         []any
+	}{
+		{"LatestIdentityLifecycle", "audit_events_identity_lifecycle_idx", []any{"org_a", "idn_a"}},
+		{"CapabilityIssuedOrder", "audit_events_capability_issued_idx", []any{"org_a", "cap_a"}},
+		{"LiveCapabilitiesForRepair", "capabilities_live_idx", []any{int64(1), "org_a", "cap_a", int64(200)}},
 	} {
-		rows, err := s.Reader().QueryContext(context.Background(), "EXPLAIN QUERY PLAN "+namedQuery(t, "capabilities.sql", query), "org_a", "idn_a")
+		rows, err := s.Reader().QueryContext(context.Background(), "EXPLAIN QUERY PLAN "+namedQuery(t, "capabilities.sql", c.query), c.args...)
 		if err != nil {
-			t.Fatalf("%s: %v", query, err)
+			t.Fatalf("%s: %v", c.query, err)
 		}
 		var plan []string
 		for rows.Next() {
@@ -54,8 +60,8 @@ func TestRepairQueriesUseTheirIndexes(t *testing.T) {
 		}
 		rows.Close()
 		joined := strings.Join(plan, "; ")
-		if !strings.Contains(joined, "USING INDEX "+index) || strings.Contains(joined, "TEMP B-TREE") {
-			t.Errorf("%s: %s, want it read by %s with no sort", query, joined, index)
+		if !strings.Contains(joined, "USING INDEX "+c.index) || strings.Contains(joined, "TEMP B-TREE") {
+			t.Errorf("%s: %s, want it read by %s with no sort", c.query, joined, c.index)
 		}
 	}
 }

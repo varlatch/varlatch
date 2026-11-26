@@ -47,10 +47,11 @@ WHERE (agent_identity_id = sqlc.arg(identity_id) OR broker_identity_id = sqlc.ar
 
 -- name: LiveCapabilitiesForRepair :many
 -- capabilities.RevokeOfRetired: the next at most batch unexpired, unrevoked
--- Capabilities after (after_org, after_id), by Organization and id.
+-- Capabilities after (after_org, after_id), by Organization and id: a range
+-- of capabilities_live_idx from the cursor on, with no sort of the rest.
 SELECT id, organization_id, agent_identity_id, broker_identity_id FROM capabilities
 WHERE revoked_at IS NULL AND expires_at > sqlc.arg(now)
-  AND (organization_id > sqlc.arg(after_org) OR (organization_id = sqlc.arg(after_org) AND id > sqlc.arg(after_id)))
+  AND (organization_id, id) > (sqlc.arg(after_org), sqlc.arg(after_id))
 ORDER BY organization_id, id
 LIMIT sqlc.arg(batch);
 
