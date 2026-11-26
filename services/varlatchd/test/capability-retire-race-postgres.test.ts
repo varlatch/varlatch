@@ -151,4 +151,11 @@ describe.skipIf(!url)("Capability issuance racing an identity's retirement on re
     expect((await res.json()).error.message).toBe("Agent identity is disabled");
     expect(await liveCapabilitiesOf(agentId)).toBe(0);
   });
+
+  it("an issuance by a Broker retired while it waited is refused", async () => {
+    const res = await issueWhileRetiring(brokerId);
+    expect(res.status, await res.clone().text()).toBe(401);
+    expect((await res.json()).error.code).toBe("INVALID_CREDENTIAL");
+    expect(await liveCapabilitiesOf(brokerId)).toBe(0);
+  });
 });
