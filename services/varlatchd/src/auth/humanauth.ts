@@ -281,11 +281,17 @@ export function buildHumanAuth(deps: HumanAuthDeps): HumanAuth {
         // "Sign out everywhere else" takes (sessionend.ts): its own
         // /revoke-sessions deletes them in scan order, which can wait on it
         // in a cycle. The person is the one its session cookie signs in
-        // (as its sensitive-session check, the cookie cache aside); without
-        // one, its handler answers as it always does.
+        // (as its sensitive-session check, the cookie cache aside). Without
+        // one, or when it cannot be read, 401 here: the native handler is
+        // never reached, since it would read the session again on its own
+        // and revoke in scan order.
         if (actx.path === REVOKE_SESSIONS_PATH || actx.path === REVOKE_OTHER_SESSIONS_PATH) {
-          const current = await getSessionFromCtx(actx, { disableCookieCache: true });
-          if (!current?.user?.id || !current.session?.id) return;
+          const unauthorized = () => new APIError("UNAUTHORIZED", { message: "Unauthorized", code: "UNAUTHORIZED" });
+          const current = await getSessionFromCtx(actx, { disableCookieCache: true }).catch((err: unknown) => {
+            if (!isAPIError(err)) console.error("varlatchd: the session could not be read for a bulk revocation:", err);
+            throw unauthorized();
+          });
+          if (!current?.user?.id || !current.session?.id) throw unauthorized();
           await withTx(ctx.db, (db) =>
             endSessionsInOrder(db, { betterAuthUserId: current.user.id }, {
               keep: actx.path === REVOKE_OTHER_SESSIONS_PATH ? current.session.id : null,
@@ -296,7 +302,7 @@ export function buildHumanAuth(deps: HumanAuthDeps): HumanAuth {
                 const live = (
                   await tx.query(`SELECT 1 FROM session WHERE id = $1 AND "expiresAt" > clock_timestamp()`, [current.session.id])
                 ).rows[0];
-                if (!live) throw new APIError("UNAUTHORIZED", { message: "Unauthorized", code: "UNAUTHORIZED" });
+                if (!live) throw unauthorized();
               },
             }),
           ).catch((err: unknown) => {

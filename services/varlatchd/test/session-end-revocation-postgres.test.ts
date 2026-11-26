@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { issueCredential } from "../src/auth/credentials.js";
 import { buildHumanAuth, type HumanAuth } from "../src/auth/humanauth.js";
 import { createPgQuerier } from "../src/db/pg.js";
@@ -11,6 +11,19 @@ import { changeControl } from "../src/domain/securitycontrols.js";
 import { buildApp } from "../src/http/app.js";
 import { PUBLIC_URL, RP } from "./helpers/device-sign-in.js";
 import { softAuthenticator, type UnregisteredAuthenticator } from "./helpers/soft-authenticator.js";
+
+
+// Better Auth's session helper, as the revocation hook calls it: itself,
+// unless a test makes it answer no session or fail.
+const sessionHelper = vi.hoisted(() => ({ override: null as null | (() => Promise<unknown>) }));
+vi.mock("better-auth/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("better-auth/api")>();
+  return {
+    ...actual,
+    getSessionFromCtx: ((...args: Parameters<typeof actual.getSessionFromCtx>) =>
+      sessionHelper.override ? sessionHelper.override() : actual.getSessionFromCtx(...args)) as typeof actual.getSessionFromCtx,
+  };
+});
 
 /**
  * Signing out ends the dashboard's bearers (migration 43), through Better
@@ -54,6 +67,7 @@ describe.skipIf(!url)("signing out revokes browser bearers on real PostgreSQL", 
     app = buildApp(ctx, { publicUrl: PUBLIC_URL, humanAuth, clientAddress: () => "203.0.113.7" });
   });
   afterEach(async () => {
+    sessionHelper.override = null;
     await humanAuth?.close();
     await db?.end();
     if (admin) {
@@ -423,6 +437,31 @@ describe.skipIf(!url)("signing out revokes browser bearers on real PostgreSQL", 
     expect(res.status, JSON.stringify(res.body)).toBe(401);
     expect(await rows(`SELECT id FROM "session" WHERE id = $1`, [b.sessionId])).toHaveLength(1);
     expect(await works(tb)).toBe(200);
+  });
+
+  it("revoke-sessions and revoke-other-sessions end nothing (401) when the caller's session cannot be read", async () => {
+    const { browser: a, key } = await bootstrapAdmin();
+    const b = await new Browser().signIn(key);
+    const ta = await a.bearer();
+    const tb = await b.bearer();
+    const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      for (const path of ["/auth/revoke-sessions", "/auth/revoke-other-sessions"]) {
+        for (const unresolved of [async () => null, async () => { throw new Error("connection reset"); }]) {
+          // The native handler reads the session again on its own: if the
+          // hook let the request through, it would revoke in scan order.
+          sessionHelper.override = unresolved;
+          const res = await a.request("POST", path, {});
+          sessionHelper.override = null;
+          expect(res.status, `${path}: ${JSON.stringify(res.body)}`).toBe(401);
+          expect(await rows(`SELECT id FROM "session" WHERE id = ANY($1) ORDER BY id`, [[a.sessionId, b.sessionId]])).toHaveLength(2);
+          expect(await works(ta)).toBe(200);
+          expect(await works(tb)).toBe(200);
+        }
+      }
+    } finally {
+      quiet.mockRestore();
+    }
   });
 
   it("two browsers signing each other out at once: one of them stays signed in", async () => {
