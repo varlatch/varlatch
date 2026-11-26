@@ -8,7 +8,8 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
  * Active sessions: "Sign out everywhere else" signs the other browsers out
  * by their sessions (POST /v1/me/sessions/sign-out-others), so a browser
  * with no bearer of its own is reached too, and revokes the other live
- * non-browser credentials one by one.
+ * non-browser credentials one by one; "Sign out" on this browser ends its
+ * session with the cookie sign-out, and says so when the server refuses.
  */
 
 const fake = vi.hoisted(() => ({
@@ -87,4 +88,21 @@ it("signs the other browsers out by their sessions and revokes the other live cr
   await click("revoke-others");
   expect(fake.api.signOutOtherSessions).toHaveBeenCalledTimes(1);
   expect(fake.api.revokeMyCredential!.mock.calls.map((c) => c[0])).toEqual(["crd_cli"]);
+});
+
+it("signs this browser out with its session cookie", async () => {
+  await mount();
+  await click("revoke-credential-crd_this");
+  expect(fake.signOut).toHaveBeenCalledTimes(1);
+  expect(fake.api.revokeMyCredential).not.toHaveBeenCalled();
+  expect(fake.toastError).not.toHaveBeenCalled();
+});
+
+it("says so when the server does not sign this browser out", async () => {
+  fake.signOut = vi.fn(async () => {
+    throw new Error("sign-out failed: 503");
+  });
+  await mount();
+  await click("revoke-credential-crd_this");
+  expect(fake.toastError).toHaveBeenCalledWith("Could not sign out", { description: "sign-out failed: 503" });
 });
