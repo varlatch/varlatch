@@ -46,14 +46,15 @@ SELECT * FROM capabilities WHERE id = ? AND organization_id = ? AND environment_
 
 -- name: LiveCapabilitiesOfIdentity :many
 -- retireIdentity: the unrevoked Capabilities issued for the identity as
--- Agent or by it as Broker, in id order.
+-- Agent, for it as Broker, or by it for another Broker (ADR-0060), in id
+-- order.
 SELECT id FROM capabilities
-WHERE (agent_identity_id = sqlc.arg(identity_id) OR broker_identity_id = sqlc.arg(identity_id)) AND revoked_at IS NULL
+WHERE (agent_identity_id = sqlc.arg(identity_id) OR broker_identity_id = sqlc.arg(identity_id) OR created_by = sqlc.arg(identity_id)) AND revoked_at IS NULL
 ORDER BY id;
 
 -- name: RevokeCapabilitiesOfIdentity :exec
 UPDATE capabilities SET revoked_at = sqlc.arg(now)
-WHERE (agent_identity_id = sqlc.arg(identity_id) OR broker_identity_id = sqlc.arg(identity_id)) AND revoked_at IS NULL;
+WHERE (agent_identity_id = sqlc.arg(identity_id) OR broker_identity_id = sqlc.arg(identity_id) OR created_by = sqlc.arg(identity_id)) AND revoked_at IS NULL;
 
 -- name: LiveCapabilitiesForRepair :many
 -- capabilities.RevokeOfRetired: the next at most batch unexpired, unrevoked

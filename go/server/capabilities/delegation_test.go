@@ -542,6 +542,21 @@ func TestTheIssuersRightIsEvaluatedAtExercise(t *testing.T) {
 	w.wantValue("granted again", w.exercise("broker", c, nil))
 	w.want("retire", w.call("POST", "/v1/organizations/cap/identities/"+w.idn("svc")+"/retire", "alice", nil), 200, "")
 	w.want("retired", w.exercise("broker", c, nil), 403, "PERMISSION_DENIED")
+	// Retiring the issuer revoked what it issued for another Broker, as
+	// retiring a Broker or an Agent does theirs: a reactivation brings none
+	// back.
+	if got := w.text("SELECT count(*) FROM capabilities WHERE id = ? AND revoked_at IS NOT NULL", c.id); got != "1" {
+		t.Errorf("the retired issuer's Capability is not revoked")
+	}
+	if got := w.text(`SELECT count(*) FROM audit_events WHERE event_type = 'capability.revoked' AND json_extract(resource, '$.capabilityId') = ?
+		AND json_extract(metadata, '$.reason') = 'identity-retired' AND json_extract(metadata, '$.identityId') = ?`, c.id, w.idn("svc")); got != "1" {
+		t.Errorf("%s capability.revoked events for the retired issuer's Capability, want 1", got)
+	}
+	w.want("reactivate", w.call("POST", "/v1/organizations/cap/identities/"+w.idn("svc")+"/reactivate", "alice", nil), 200, "")
+	a = w.want("reactivated", w.exercise("broker", c, nil), 403, "PERMISSION_DENIED")
+	if !strings.Contains(a.raw, `"reason":"revoked"`) {
+		t.Errorf("after the issuer's reactivation: %s", a.raw)
+	}
 	// A Capability a Broker issued for itself depends on no one's Grant.
 	w.wantValue("a Broker's own", w.exercise("broker", w.issue("broker", nil), nil))
 }

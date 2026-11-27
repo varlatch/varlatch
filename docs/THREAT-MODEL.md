@@ -249,8 +249,9 @@ limits each party, and no further than this:
   broker, and hand their secrets out. It cannot exercise one itself. What
   they reach is bounded by the Agents' `secret.use` Grants: an Agent of its
   own for what the orchestrator schedules keeps that small. Removing its
-  Grant, or retiring it, refuses every Capability it issued from the next
-  exercise on. On an earlier server without delegation checks (after a
+  Grant refuses every Capability it issued from the next exercise on;
+  retiring it revokes them, and reactivating it brings none back. On an
+  earlier server without delegation checks (after a
   rollback or reverse migration), delegated Capabilities fail closed and
   cannot be exercised at all.
 - **An orchestrator that also signs the brokers' OIDC tokens is both at

@@ -354,12 +354,13 @@ func (q *Queries) LiveCapabilitiesForRepair(ctx context.Context, arg LiveCapabil
 
 const liveCapabilitiesOfIdentity = `-- name: LiveCapabilitiesOfIdentity :many
 SELECT id FROM capabilities
-WHERE (agent_identity_id = ?1 OR broker_identity_id = ?1) AND revoked_at IS NULL
+WHERE (agent_identity_id = ?1 OR broker_identity_id = ?1 OR created_by = ?1) AND revoked_at IS NULL
 ORDER BY id
 `
 
 // retireIdentity: the unrevoked Capabilities issued for the identity as
-// Agent or by it as Broker, in id order.
+// Agent, for it as Broker, or by it for another Broker (ADR-0060), in id
+// order.
 func (q *Queries) LiveCapabilitiesOfIdentity(ctx context.Context, identityID string) ([]string, error) {
 	rows, err := q.db.QueryContext(ctx, liveCapabilitiesOfIdentity, identityID)
 	if err != nil {
@@ -430,7 +431,7 @@ func (q *Queries) ReleaseCapability(ctx context.Context, arg ReleaseCapabilityPa
 
 const revokeCapabilitiesOfIdentity = `-- name: RevokeCapabilitiesOfIdentity :exec
 UPDATE capabilities SET revoked_at = ?1
-WHERE (agent_identity_id = ?2 OR broker_identity_id = ?2) AND revoked_at IS NULL
+WHERE (agent_identity_id = ?2 OR broker_identity_id = ?2 OR created_by = ?2) AND revoked_at IS NULL
 `
 
 type RevokeCapabilitiesOfIdentityParams struct {

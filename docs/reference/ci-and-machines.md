@@ -147,8 +147,9 @@ Then, for each job:
    (`DELETE …/capabilities/{id}`), and sees what it issued with
    `GET …/capabilities`. Expiry is the fallback.
 
-Removing the orchestrator's grant, or retiring it, refuses every Capability
-it issued from the next exercise on. Revoking an OIDC binding stops new token
+Removing the orchestrator's grant refuses every Capability it issued from
+the next exercise on; retiring it revokes them, and reactivating it brings
+none back. Revoking an OIDC binding stops new token
 exchanges immediately, while credentials already exchanged from it stay valid
 until they expire (at most an hour) unless you revoke the credential or
 retire the identity. If the orchestrator also signs the machines' tokens, it
