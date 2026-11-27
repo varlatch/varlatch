@@ -44,9 +44,10 @@ describe("rewrite", () => {
 });
 
 describe("pages", () => {
-  it("gives every page its own route", () => {
+  it("gives every page its own route and excludes internal release-gate evidence", () => {
     const list = pages();
     expect(new Set(list.map(page => page.route)).size).toBe(list.length);
     expect(list.map(page => page.source)).toContain("docs/getting-started.md");
+    expect(list.some(page => page.source.startsWith("docs/evidence/"))).toBe(false);
   });
 });

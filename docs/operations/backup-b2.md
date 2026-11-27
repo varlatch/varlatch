@@ -89,11 +89,26 @@ placeholder:
 Copy the endpoint from B2 rather than guessing it. The region is the segment
 between `s3.` and `.backblazeb2.com`.
 
-Then add both settings to `varlatchd.conf`, restart, test the bucket and make
-a backup: [S3-compatible destinations](backup.md#s3-compatible-destinations)
-has the commands. Download that archive with the read key to an isolated
-machine, and [rehearse a restore](backup.md#rehearse-a-restore) there. A
-successful upload is not a restore test.
+Add both lines to `/etc/varlatch/varlatchd.conf`:
+
+```ini
+backup_destinations_file = /etc/varlatch/backup-destinations.json
+backup_destination = offsite
+```
+
+Then restart `varlatchd`, test the bucket, and run your first off-host backup:
+
+```sh
+sudo varlatchd admin config check
+sudo systemctl restart varlatchd
+sudo varlatch admin backup test-bucket
+sudo varlatch admin backup run
+```
+
+Download that archive with your off-host read key onto an isolated machine and
+[rehearse a restore](backup.md#rehearse-a-restore) there—a successful upload is
+not a restore test. For more options and other S3 providers, see
+[Backup and recovery](backup.md#s3-compatible-destinations).
 
 Then choose the bucket's retention. Include an
 incomplete-multipart-upload expiry rule. Retain both encryption keys

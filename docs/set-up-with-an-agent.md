@@ -43,6 +43,11 @@ Your agent never sees a secret value on this path. Assisted mode
 ([Assisted mode](reference/assisted-mode.md)) protects against accidents:
 your agent runs as you, so your approvals are what stop deliberate misuse.
 
+---
+
+> **Humans can stop reading here.** Everything below is the step-by-step
+> runbook your coding agent follows when you give it the prompt above.
+
 ## For the coding agent
 
 Follow these steps in order. They hold until `varlatch init` has installed
@@ -87,7 +92,7 @@ it is: each step runs only when the one before it succeeded (`&&`), so a
 failed download or check never reaches `install`.
 
 ```sh
-V=0.50.0  # serverVersion from step 1
+V=0.50.2  # serverVersion from step 1
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
 ARCH=$(uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')
 CLI="varlatch-$V-$OS-$ARCH"

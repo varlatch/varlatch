@@ -3,7 +3,30 @@
 Consolidated from Varlatch's design decisions and readable on its own. Honesty is the design
 principle: every strong claim below either maps to an automated test, an
 integration/E2E check, or a deployment invariant, or it explicitly states why
-the property cannot be enforced. Claims carry one of three statuses:
+the property cannot be enforced.
+
+## In plain English (TL;DR)
+
+- **What is protected:** Every stored value is envelope-encrypted inside
+  `varlatchd` (`Root KEK → Organization KEK → per-version DEK`). A stolen
+  database or backup alone reveals no plaintext values. Authorization is
+  default-deny, every disclosure is audited before decryption, and human logins
+  are passkey-only.
+- **What is protected with AI agents:** In `--agent-safe` mode, an AI agent
+  holds opaque Placeholders instead of Secrets, and a local Broker injects real
+  values only into HTTPS requests to allowlisted hosts and declared locations.
+  In `--assisted` mode, the CLI guards against accidental leaks (output masking,
+  explicit confirmations) when an agent acts with your own credential.
+- **Who is trusted:** Anyone with `root` on the server host, access to the
+  `varlatchd` process/container, or access to the Root KEK is an
+  **Infrastructure Operator**—above application-level policy. Varlatch audits
+  host interventions rather than pretending to block root.
+- **What is NOT claimed:** Plain `varlatch run` hands plaintext to the child
+  process (so the app can use it). Output redaction, secret scanning, and
+  assisted mode guard against accidents, not a malicious process running as your
+  own OS user. Root KEK rotation in place is not yet shipped.
+
+Claims below carry one of three statuses:
 
 - **SHIPPED GUARANTEE**: implemented and verified by tests/E2E/deployment invariants.
 - **DESIGNED INVARIANT**: an architectural rule the implementation follows and enforces where it applies today.

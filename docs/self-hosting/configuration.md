@@ -167,7 +167,7 @@ refuses to start with one in its environment.
 
 Each file holds 32 bytes, as hex or base64. On a host they are readable by
 root only, and systemd hands them to the service. Keep copies off the host:
-[The Root KEK is your responsibility](../self-hosting.md#the-root-kek-is-your-responsibility).
+[The Root KEK is your responsibility](operate.md#the-root-kek-is-your-responsibility).
 
 ### `root_kek_file`
 
@@ -403,7 +403,8 @@ directory). `SSL_CERT_FILE` changes which certificate authorities it trusts:
 `VARLATCH_KEK_PASSPHRASE` gives `varlatchd admin kek export` and `kek
 restore` their passphrase on a host, instead of `--passphrase-file`.
 
-## From the variables of 0.23.0
+<details>
+<summary>Migrating from 0.23.0 environment variables</summary>
 
 `varlatch migrate` writes `varlatchd.conf` for you. For reading old notes:
 
@@ -451,3 +452,5 @@ does not use. 0.23.0's settings are in
 <a id="client-addresses"></a>
 <a id="fixed-settings"></a>
 <a id="operator-cli-environment"></a>
+
+</details>

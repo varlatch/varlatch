@@ -1,81 +1,79 @@
 # Install the CLI
 
-The CLI is one program, `varlatch`, for Linux, macOS and Windows, on amd64
-and arm64. It needs nothing else. Use the version your installation runs:
-the dashboard shows it under Settings, then Server.
+The `varlatch` CLI is a single standalone binary for Linux, macOS, and Windows
+(amd64 and arm64) with no external dependencies. Match the release version your
+Varlatch server runs (shown in the dashboard under **Settings → Server**).
+
+## On Linux and macOS
+
+```sh
+V=0.50.2  # match the release your server runs
+curl -fsSL -o install.sh https://github.com/varlatch/varlatch/releases/download/v$V/install.sh
+sh install.sh
+```
+
+The script downloads `varlatch` from GitHub, verifies it against `SHA256SUMS`
+and the release workflow's Sigstore signature, and installs it to
+`~/.local/bin` (no `sudo` needed). Pass `--dir <path>` to choose another
+directory.
+
+## On Windows
+
+In PowerShell (no administrator rights needed):
+
+```powershell
+$V = "0.50.2"  # match the release your server runs
+irm "https://github.com/varlatch/varlatch/releases/download/v$V/install.ps1" -OutFile install.ps1
+if ($?) { powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 }
+```
+
+This verifies the signature, installs `varlatch.exe` in
+`%LOCALAPPDATA%\Programs\Varlatch`, and adds it to your user `PATH` (open a new
+terminal to use it). [Varlatch for Windows](https://github.com/varlatch/windows-tray)
+can also install the CLI for you.
 
 ## From your installation
 
-When whoever runs your installation
-[turned it on](../self-hosting/configuration.md#serving-the-cli), the
-installation serves its own CLI, always the version it runs. On Linux and
-macOS:
+*(Optional — only if your server administrator enabled
+[`serve_cli = on`](../self-hosting/configuration.md#serving-the-cli), which is
+off by default.)* Your server can host the exact CLI version it runs:
+
+**Linux and macOS:**
 
 ```sh
 curl -fsSLo install.sh https://vault.example.com/install.sh && sh install.sh
 ```
 
-On Windows, in PowerShell:
+**Windows (PowerShell):**
 
 ```powershell
 irm https://vault.example.com/install.ps1 -OutFile install.ps1
 if ($?) { powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 }
 ```
 
-It installs for you alone, in `~/.local/bin` (or
-`%LOCALAPPDATA%\Programs\Varlatch` on Windows), without `sudo`. It leaves a
-copy Homebrew or winget installed to them. Where it is not turned on, the
-installation answers 404: install it from the release instead.
+If that returns `404`, `serve_cli` is off—use the GitHub release commands above
+instead. Note that installing from your server trusts that server (and its host
+operator) to serve the install script; the downloaded CLI still checks the
+official release signature.
 
-Installing this way trusts your installation, and whoever controls its
-host or its address, to run code on your machine. The script downloads the
-CLI from it, and the downloaded CLI checks that Varlatch's release workflow
-signed it.
-
-## On Linux and macOS
+## Update the CLI
 
 ```sh
-V=0.50.0  # the release your installation runs
-curl -fsSL -o install.sh https://github.com/varlatch/varlatch/releases/download/v$V/install.sh
-sh install.sh
+varlatch self-update
 ```
 
-The script downloads the CLI from GitHub and checks it against the
-release's `SHA256SUMS`. The downloaded CLI then checks that the release
-workflow signed `SHA256SUMS` for this version. When a check fails, nothing
-is installed. It ends with the `varlatch login` line to run, and tells you
-when `~/.local/bin` is not on your `PATH`.
+Shows old and new versions, verifies the signature, and asks before replacing
+the binary (pass `--yes` in scripts). If you installed via Homebrew or winget,
+update through them instead.
 
-`--dir <directory>` chooses another directory. Read the script first if
-you like: it is a short shell script.
+## Verify manually without running an install script
 
-The first check runs code you just downloaded. To check the signature with
-cosign before you run anything, install by hand:
-[Without running the script](#without-running-the-script).
-
-## On Windows
-
-```powershell
-$V = "0.50.0"  # the release your installation runs
-irm "https://github.com/varlatch/varlatch/releases/download/v$V/install.ps1" -OutFile install.ps1
-if ($?) { powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 }
-```
-
-It makes the same checks, installs `varlatch.exe` in
-`%LOCALAPPDATA%\Programs\Varlatch`, and adds that directory to your user
-`PATH`, keeping the variables in it. Open a new terminal to use it. It
-needs no administrator rights.
-
-[Varlatch for Windows](https://github.com/varlatch/windows-tray), the tray
-app, can install the CLI too.
-
-## Without running the script
-
-Download the file for your system, `SHA256SUMS` and its signature. On Linux,
-amd64:
+To check the Sigstore signature with `cosign` before executing any downloaded
+file, download the binary, `SHA256SUMS`, and `SHA256SUMS.sigstore.json`
+directly. Example for Linux amd64:
 
 ```sh
-V=0.50.0
+V=0.50.2
 B=https://github.com/varlatch/varlatch/releases/download/v$V
 curl -fLO "$B/varlatch-$V-linux-amd64"
 curl -fLO "$B/SHA256SUMS"
@@ -83,9 +81,8 @@ curl -fLO "$B/SHA256SUMS.sigstore.json"
 sha256sum --ignore-missing -c SHA256SUMS
 ```
 
-Check the signature on `SHA256SUMS` with cosign, as
-[Verifying a release](../operations/verify-release.md#release-assets)
-describes, then install the file:
+Verify `SHA256SUMS` with `cosign` ([Verifying a release](../operations/verify-release.md#release-assets)),
+then install:
 
 ```sh
 mkdir -p ~/.local/bin
@@ -93,63 +90,47 @@ install -m 755 "varlatch-$V-linux-amd64" ~/.local/bin/varlatch
 varlatch --version
 ```
 
-The other files are `linux-arm64`, `darwin-amd64`, `darwin-arm64`,
-`windows-amd64.exe` and `windows-arm64.exe`. On macOS, check the file with
+Other builds: `linux-arm64`, `darwin-amd64`, `darwin-arm64`,
+`windows-amd64.exe`, and `windows-arm64.exe`. On macOS, verify the hash with
 `grep " varlatch-$V-darwin-arm64\$" SHA256SUMS | shasum -a 256 -c -`.
 
-### Warnings on macOS and Windows
+<details>
+<summary>Browser download warnings on macOS (Gatekeeper) and Windows (SmartScreen)</summary>
 
-The binaries are signed with Sigstore, not with an Apple or Microsoft
-certificate. A file you download in a browser is marked as coming from the
-internet, and the system warns about it:
+Release binaries are signed with Sigstore rather than an Apple or Microsoft
+code-signing certificate. `curl` and `install.ps1` do not trigger OS quarantine
+warnings, but downloading via a web browser will:
 
-- **macOS** (Gatekeeper) refuses to open it. The scripts above use `curl`,
-  which does not mark files. For a file you checked as above and downloaded
-  in a browser, remove the mark:
-  `xattr -d com.apple.quarantine ./varlatch-$V-darwin-arm64`.
-- **Windows** (SmartScreen) says it protected your PC. `install.ps1` does
-  not cause this. For a file you checked and downloaded in a browser, use
-  `Unblock-File .\varlatch-$V-windows-amd64.exe`, or choose **More info**,
-  then **Run anyway**.
+- **macOS:** After verifying the checksum and signature, clear quarantine:
+  `xattr -d com.apple.quarantine ./varlatch-$V-darwin-arm64`
+- **Windows:** After verifying, run
+  `Unblock-File .\varlatch-$V-windows-amd64.exe` (or click **More info → Run anyway**).
 
-Remove a mark only after the checksum and the signature are right.
+</details>
 
-## On the installation's host
+## On a Varlatch server host
 
-`install.sh --server` installs the CLI in `/usr/local/bin`, with
-`varlatchd`: [Run an installation](../run-an-installation.md#install).
-`varlatch upgrade` replaces both.
+`install.sh --server` installs both `varlatch` and `varlatchd` into
+`/usr/local/bin` ([Install Varlatch](../self-hosting.md#install)), and
+`varlatch upgrade` updates both together.
 
-## Update it
+## Removing the CLI
 
-```sh
-varlatch self-update
-```
+See [Removing Varlatch](uninstall.md#what-varlatch-puts-on-your-machine).
 
-It shows both versions, checks the file and the release's signature, and
-asks before it replaces the CLI. Without a terminal, add `--yes`. It never
-installs an older release without `--allow-downgrade`, nor a prerelease
-without `--prerelease` unless you run one. A copy that Homebrew or winget
-installed is updated with them.
+<details>
+<summary>Upgrading from the 0.23.0 Node.js CLI</summary>
 
-`self-update` of 0.23.0 and earlier does not reach 0.50: it installs nothing
-and says that `releases before 0.9.0 predate the single-file CLI`. Run the
-script for your system, above, or `brew upgrade varlatch`.
+<a id="nodejs-version"></a>
 
-## Node.js version
+From 0.50, the CLI is a native binary and no longer needs Node.js. `self-update`
+from 0.23.0 or earlier cannot jump to 0.50 directly—run `install.sh`,
+`install.ps1`, or `brew upgrade varlatch` above to replace it. Your sign-ins
+and settings carry over automatically. (On a legacy Compose host, the old CLI
+is kept alongside as `varlatch-ts` for migration.) For 0.23.0 Node.js
+requirements, see the
+[0.23.0 docs](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/reference/install-the-cli.md#nodejs-version).
 
-From 0.50, the CLI does not need Node.js. The CLI of 0.23.0 and earlier
-runs on Node.js 22, 24 or 26:
-[their version of this page](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/reference/install-the-cli.md#nodejs-version).
-
-`install.sh` and `install.ps1` replace that CLI when they find it where they
-install, once the new one runs. Your sign-ins and settings carry over. On
-the host of a Compose installation it is kept beside the new one as
-`varlatch-ts`: that installation's host commands need it.
-
-## Removing it
-
-[What Varlatch puts on your machine](uninstall.md#what-varlatch-puts-on-your-machine)
-lists the CLI's files and how to remove them.
+</details>
 
 <a id="from-the-release"></a>

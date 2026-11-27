@@ -22,15 +22,18 @@ export const sourceRef = process.env.DOCS_SOURCE_REF || "main";
 
 const EXTRA = [
   // docs/self-hosting.md is the page at /self-hosting/, where this one was.
-  { source: "infra/compose/README.md", route: "self-hosting/compose", title: "Docker Compose (0.23.0 and earlier)" },
-  { source: "CONTEXT.md", route: "concepts", title: "Concepts" },
+  { source: "infra/compose/README.md", route: "self-hosting/compose", title: "Docker Compose (0.23.0 legacy)" },
+  { source: "CONTEXT.md", route: "concepts", title: "Glossary" },
   { source: "CHANGELOG.md", route: "changelog" },
 ];
+
+const EXCLUDED_PREFIXES = ["docs/evidence/"];
 
 function markdownUnder(dir) {
   return readdirSync(join(repoRoot, dir), { recursive: true, withFileTypes: true })
     .filter(entry => entry.isFile() && entry.name.endsWith(".md"))
     .map(entry => posix.join(posix.relative(repoRoot, entry.parentPath).split("\\").join("/"), entry.name))
+    .filter(source => !EXCLUDED_PREFIXES.some(prefix => source.startsWith(prefix)))
     .sort();
 }
 

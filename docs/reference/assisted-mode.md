@@ -1,31 +1,31 @@
 # Assisted mode: a coding agent driving the CLI
 
 When a coding agent such as Claude Code, Codex, or Cursor runs `varlatch`
-commands for you, it uses your own credential, and everything a command
-prints goes into what the agent reads. Assisted mode keeps Secret values out
-of that output by accident-proofing the commands an agent uses:
+commands for you, it uses your own sign-in—and everything a command prints goes
+into the agent's context. **Assisted mode** (`varlatch --assisted ...`)
+accident-proofs CLI commands so Secret values stay out of that context.
 
-- `varlatch run` masks Secrets in the command's output by default, and
-  refuses to start when it cannot mask one.
-- `values set` and `values rotate` never take a Secret's value from the
-  command line, and never prompt.
-- `values delete` deletes only an item named again with `--confirm`.
-- `member remove` and `member leave` act only on a person or organization
-  named again with `--confirm`.
-- `project delete` and `org delete` act only on a Project or Organization
-  named again with `--confirm`, and so does approving an Organization's
-  deletion.
-- `login` with no sign-in method starts a device sign-in that the human
-  approves in a browser, instead of waiting for a browser on this machine.
+> **Mental model:** Assisted mode is client-side accident prevention for a
+> coding agent acting as *you* (it never changes your server permissions). For
+> stronger isolation where an agent never even runs with your credential or
+> plaintext secrets, use [Agent-safe runs](agent-safe-runs.md).
 
-Assisted mode changes only what the CLI does on your machine. It never
-changes what you are allowed to do. The server sees it only in the CLI's
-User-Agent, `varlatch-cli/<version> (<platform>; <arch>; assisted)`, and
-the audit log records it as the client of each event the command causes,
-such as `varlatch CLI 0.16.0 on Linux, assisted`, next to your name and
-the credential used. That is what the CLI says about itself, not proof: it
-tells you a coding agent was driving the CLI, but a coding agent that drops
-`--assisted` and sets none of the markers below is recorded as you.
+## At a glance: what changes
+
+| Command | Behaviour in assisted mode |
+| --- | --- |
+| `varlatch run` | Automatically masks delivered and inherited Secrets in stdout/stderr (even on a TTY); refuses to start if a Secret is under 8 bytes (unmaskable); refuses `--no-redact` and `--allow-unmasked`. |
+| `values set` / `rotate` | Refuses Secret values on the command line and never prompts; replacing an existing value requires `--replace <ITEM>`. |
+| `values delete` | Requires `--confirm <ITEM>`. |
+| `member remove` / `leave` | Requires `--confirm <member\|org>`. |
+| `project delete` / `org delete` | Requires `--confirm <slug>`. |
+| `login` | Starts non-blocking device sign-in (`--start` / `--wait`) instead of hanging on a browser. |
+| Passkey-approved changes | Prints the approval URL and exits `75` immediately instead of waiting. |
+
+The server sees assisted mode only in the CLI's User-Agent
+(`varlatch-cli/<version> (<platform>; <arch>; assisted)`), which the audit log
+records next to your name and credential. It is self-reported by the CLI, not
+cryptographic proof.
 
 ## Turning it on
 

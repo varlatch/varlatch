@@ -1,9 +1,8 @@
 # Host requirements
 
 This page lists what a host needs to run a Varlatch installation.
-[Run an installation](../run-an-installation.md) walks you through the
-installation itself, and [Configuration](configuration.md) lists every
-setting.
+[Install Varlatch](../self-hosting.md) walks through setup in three commands,
+and [Configuration](configuration.md) lists every setting.
 
 | | Minimum |
 |---|---|
@@ -35,7 +34,7 @@ Node.js. The container image is published for the same two architectures.
 
 `varlatch setup` and the other host commands run as root. Anyone who is root
 on the host is an Infrastructure Operator of the installation:
-[Break-glass recovery](../self-hosting.md#break-glass-recovery) says what
+[Break-glass recovery](operate.md#break-glass-recovery) says what
 that means.
 
 The service itself runs as the `varlatch` user, with no privilege but
@@ -138,85 +137,60 @@ I/O.
 
 ### Sharing the host with other workloads
 
-The figures above are for a host that runs Varlatch alone. On a host shared
-with other containers, they all compete for the same cores. When the cores
-are busy, the kernel shares CPU time between containers by their CPU
-weight, and every container has the same weight unless it sets one.
+The figures above assume a host dedicated to Varlatch. On a small (2-core) host
+shared with other containers—especially **Coolify**, whose scheduler spikes CPU
+during the first 10 seconds of every minute—give Varlatch higher CPU priority:
 
-This matters most on a small host that also runs Coolify. Coolify's
-scheduler does its periodic work at the start of every minute.
-- **What was measured:** a 2-core host on 2026-11-19, with a Varlatch
-  server under a benchmark load of 50 requests a second, first with extra
-  writes (1.7 times the profile's), then without.
-- **Coolify:** over the first ten seconds of each minute (:00 to :09), its
-  container used on average 0.65 to 0.70 of a core, and the host's two
-  cores were 88 to 94 % busy from :01 to :06.
-- **The Varlatch server** got less CPU in those seconds, and its requests
-  waited. Its p95 latency was up to 858 ms in them (132 ms without the
-  extra writes), against 22 to 28 ms in the rest of the minute.
-
-To give Varlatch priority, give it a higher CPU weight than the other
-workloads:
-
-- **Installed with `install.sh`,** in a drop-in for the service. 100 is what
-  a service that sets nothing has:
-
-  ```sh
-  sudo systemctl edit varlatchd     # add the two lines below
-  sudo systemctl restart varlatchd
-  ```
-
+- **systemd (`install.sh`):** add a drop-in (`sudo systemctl edit varlatchd`)
+  with:
   ```ini
   [Service]
   CPUWeight=300
   ```
+  Then `sudo systemctl restart varlatchd`.
+- **Docker / Coolify container:** set `cpu_shares` to **`4096`** (not `1024` or
+  `2048`—on older cgroup v2 runtimes, `1024` maps to weight `39`, *below* the
+  default `100`).
 
-- **In a container,** with `cpu_shares`, in the Compose file or in Coolify's
-  setting ([Deploying on Coolify](../../infra/coolify/README.md#sharing-the-host)).
+<details>
+<summary>Measured Coolify latency benchmarks & cgroup v2 conversion details</summary>
 
-**Measured once (2026-11-19).** The same host and load, with the extra
-writes. The Varlatch server ran in one container that Coolify deployed, so
-its CPU weight came from Coolify's setting. The server's p95 latency at the 50 requests a second:
+- **What was measured (2026-11-19):** a 2-core host running a Varlatch server
+  under 50 requests/second alongside Coolify.
+- **Coolify's minute spike:** from `:00` to `:09` of each minute, Coolify's
+  container used 0.65–0.70 cores and total CPU hit 88–94%.
+- **Effect on Varlatch p95 latency** (with extra writes, 1.7× profile):
 
-| CPU weight | Runs | :00 to :09 | :10 to :59 |
-|---|---|---|---|
-| 39 (Coolify's default on that host) | 2 | 1,329 and 1,549 ms | 33 and 31 ms |
-| 157 (`cpu_shares` 4096 on that host) | 1 | 55 ms | 25 ms |
+  | CPU weight | Runs | `:00` to `:09` | `:10` to `:59` |
+  | --- | --- | --- | --- |
+  | `39` (Coolify default `cpu_shares=1024`) | 2 | 1,329 ms / 1,549 ms | 33 ms / 31 ms |
+  | `157` (`cpu_shares=4096`) | 1 | 55 ms | 25 ms |
 
-- Coolify's container used the same CPU in those seconds in all three runs.
-- In the runs at weight 39, some requests could not be sent on time, so
-  their figures are the requests' own response times. The run at 157 is
-  measured from each request's scheduled start.
-- The comparison is not fully controlled. In the two runs at 39, the
-  server's Sync Target runs overlapped the first seconds of every minute;
-  in the run at 157 they did not.
+  (Without extra writes on a separate systemd test, p95 during `:00–:09` was
+  132 ms vs 22–28 ms in the rest of the minute. In the weight-39 runs, Sync
+  Target runs also overlapped the minute boundary; in the weight-157 run they
+  did not.)
 
-- **It changes nothing on an idle host.** The weight counts only while the
-  cores are busy. It also favours Varlatch's own heavy work over the other
-  containers, a backup capture for instance.
-- **In a container, use 4096, not 1024 or 2048.** On cgroup v2, Docker
-  converts `cpu_shares` to the kernel's CPU weight, where a container that
-  sets nothing gets 100. The conversion depends on the container runtime:
+- **Why `4096` on cgroup v2:** Docker maps `cpu_shares` to `cpu.weight`
+  (default `100` for containers that set nothing):
 
-  | `cpu_shares` | Weight, older runtimes (linear) | Weight, runc 1.5 |
-  |---|---|---|
-  | 1024 | 39 | 100 |
-  | 2048 | 79 | 174 |
-  | 4096 | 157 | 303 |
+  | `cpu_shares` | Weight (older runtimes, linear) | Weight (`runc` 1.5) |
+  | --- | --- | --- |
+  | `1024` | `39` | `100` |
+  | `2048` | `79` | `174` |
+  | `4096` | `157` | `303` |
 
-  Only 4096 is above 100 under both. 2048 would lower Varlatch's priority
-  on an older runtime. On such a runtime, Coolify's default of 1024 for
-  the containers it deploys gives them weight 39.
-- **Check the weight a container gets.** Read it from the host, which works
-  whatever the image contains (the path is for Docker's systemd cgroup driver, the
-  usual one):
+  Only `4096` stays above `100` under both formulas. Check a container's actual
+  weight from the host (Docker systemd cgroup driver):
 
   ```sh
-  cat /sys/fs/cgroup/system.slice/docker-$(docker inspect -f '{{.Id}}' <the varlatchd container>).scope/cpu.weight
+  cat /sys/fs/cgroup/system.slice/docker-$(docker inspect -f '{{.Id}}' <varlatchd-container>).scope/cpu.weight
   ```
-- **cgroup v2 only.** Current distributions use cgroup v2. On a cgroup v1
-  host there is no `cpu.weight`, and `cpu_shares` applies as `cpu.shares`
-  (1024 for a container that sets nothing).
+
+  Weight has no effect on an idle host. On legacy cgroup v1 hosts, `cpu_shares`
+  applies directly as `cpu.shares` (default `1024`).
+
+</details>
 
 ### Disk
 

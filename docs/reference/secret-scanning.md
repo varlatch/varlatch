@@ -311,6 +311,19 @@ See docs/reference/secret-scanning.md and docs/reference/import.md.
   `a symbolic link, not followed`, without looking at its target. A
   directory given on the command line is resolved first, so it may itself
   be a link.
+- **Git state.** For each file, the search asks Git whether it ignores it
+  (`ignored by Git`, `not ignored by Git`, or `not in a Git repository`) using
+  `git check-ignore --no-index` (without reading Git's index or object store).
+- **Next steps.** Move a dotenv file in with
+  [`varlatch import <file> --delete-source`](import.md), and store a key or
+  certificate file as one Secret with `varlatch values set <ITEM>
+  --from-file <file>`, then delete the file. Both run in a Varlatch project.
+  Rotate the secrets of a file that was committed or that you cannot
+  account for.
+
+<details>
+<summary>Details: bounds, non-UTF-8 filenames, and when Git status is reported as unknown</summary>
+
 - **Bounds.** The search reads at most 200,000 directory entries, counted
   as they are read, so a huge directory is never held in memory whole, and
   does not enter directories more than 20 levels down. Both are reported,
@@ -322,17 +335,6 @@ See docs/reference/secret-scanning.md and docs/reference/import.md.
   are not UTF-8 is shown quoted, with each control escaped (`\n`,
   `\u009b`) and each such byte as `\xfe`. Messages that quote a path are
   escaped the same way.
-- **Git state.** For each file, the search asks Git whether it ignores
-  it, in the repository that holds it (a nested repository or a linked
-  worktree counts as its own): `ignored by Git`, `not ignored by Git` (a
-  `git add .` would commit it, and it may already be committed: check with
-  `git log --all -- <file>`), or `not in a Git repository`. Whether a file
-  is tracked is not reported: answering it would make Git read the index
-  and more. Git runs once per repository, as `git check-ignore
-  --no-index`, which reads no index and no object, with none of your `GIT_`
-  environment variables, without the system or global configuration (the
-  global `core.excludesFile` is passed to it after the check below), with
-  `core.fsmonitor` off, and for at most 30 seconds.
 - **When the Git status is unknown.** Git's configuration and ignore
   files can make Git open other files, and one of them could be a secret
   copy. So Git is not run at all for a repository where anything is
@@ -365,12 +367,8 @@ See docs/reference/secret-scanning.md and docs/reference/import.md.
   `~/.config/git/config` and then `~/.gitconfig`, which wins, as Git
   reads them) is read only for its `core.excludesFile`. When one of its
   files is a link to a file named like a copy, every state is unknown.
-- **Next steps.** Move a dotenv file in with
-  [`varlatch import <file> --delete-source`](import.md), and store a key or
-  certificate file as one Secret with `varlatch values set <ITEM>
-  --from-file <file>`, then delete the file. Both run in a Varlatch project.
-  Rotate the secrets of a file that was committed or that you cannot
-  account for.
+
+</details>
 
 `--find-files` takes `--json` and no other option: `--staged`, paths to
 scan, `-e`, and the other options of the value scan are refused.
