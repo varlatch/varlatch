@@ -47,6 +47,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/authz"
 	"github.com/varlatch/varlatch/go/server/db/query"
 	"github.com/varlatch/varlatch/go/server/domainerr"
+	"github.com/varlatch/varlatch/go/server/environments"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
 	"github.com/varlatch/varlatch/go/server/oauth/oauthparams"
 	"github.com/varlatch/varlatch/go/server/outbound"
@@ -164,9 +165,10 @@ func rowOf(r query.OAuthConnectionByIDRow) (*row, error) {
 func notFound() error { return domainerr.New("RESOURCE_NOT_FOUND", "OAuth connection not found") }
 
 // expired refuses a connection whose environment has expired, as every
-// write to that environment is refused (ADR-0020).
+// write to that environment is refused (ADR-0020), and at the same instant:
+// expiry is compared as values compares it, in milliseconds.
 func (r *row) expired(now time.Time) error {
-	if r.EnvironmentExpiresAt.Valid && r.EnvironmentExpiresAt.Int64 <= now.UnixMicro() {
+	if environments.Expired(environments.Environment{ExpiresAt: r.EnvironmentExpiresAt}, now.UnixMicro()) {
 		return domainerr.New("ENVIRONMENT_EXPIRED", "This environment has expired; retrieval and mutation are disabled until it is deleted or its expiry is changed")
 	}
 	return nil
@@ -1038,6 +1040,10 @@ func (s *Service) Disconnect(ctx context.Context, req Request, item string, revo
 			if access != "" {
 				if g := s.revoke(dctx, c, access, "access_token"); refresh == "" {
 					f = g
+				} else if f == nil {
+					// The answer stays revoked, as the refresh token is; a
+					// provider's refusal of the access token is still audited.
+					s.noteRefusal(dctx, r, req, g)
 				}
 			}
 			if f != nil {
