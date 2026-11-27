@@ -11,7 +11,7 @@ release workflow via Sigstore—no separate signing key to fetch or trust.
 Set the release you want to check:
 
 ```sh
-V=0.50.2                                      # the release to verify
+V=0.51.0                                      # the release to verify
 REPO=varlatch/varlatch                        # the repository releases come from
 IDENTITY="https://github.com/${REPO}/.github/workflows/release.yml@refs/tags/v${V}"
 ISSUER=https://token.actions.githubusercontent.com
@@ -49,7 +49,7 @@ verify the record, signature, build provenance, and SBOMs before pulling:
 
 ```sh
 set -euo pipefail
-V=0.50.2                                      # the release to verify
+V=0.51.0                                      # the release to verify
 REPO=varlatch/varlatch
 IDENTITY="https://github.com/${REPO}/.github/workflows/release.yml@refs/tags/v${V}"
 ISSUER=https://token.actions.githubusercontent.com

@@ -9,7 +9,7 @@
 On a Linux host (amd64 or arm64, with systemd and `sudo`):
 
 ```sh
-V=0.50.2  # latest release
+V=0.51.0  # latest release
 curl -fsSL -o install.sh https://github.com/varlatch/varlatch/releases/download/v$V/install.sh
 sudo sh install.sh --server
 ```

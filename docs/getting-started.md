@@ -10,7 +10,7 @@ Run `varlatchd` on any Linux host in three commands—one binary with its own
 SQLite database, dashboard, HTTPS certificates, and encrypted backups:
 
 ```sh
-V=0.50.2  # latest release
+V=0.51.0  # latest release
 curl -fsSL -o install.sh https://github.com/varlatch/varlatch/releases/download/v$V/install.sh
 sudo sh install.sh --server
 ```

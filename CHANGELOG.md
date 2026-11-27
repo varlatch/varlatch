@@ -5,7 +5,16 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
-## Unreleased
+## 0.51.0 (2026-11-27)
+
+New ways for brokers and agents to use a Secret without reading it, on the
+Go server: Capabilities issued for another broker, one-time codes (TOTP)
+from a stored seed, OAuth connections that keep their tokens current,
+one-time entry links through which someone enters a Secret's value, and
+destinations for brokers that type into pages and applications. The
+container image now upgrades the database schema when it starts, when the
+previous release can still open the result. The database goes to schema
+version 7, safe to roll back to 0.50.2.
 
 ### API
 
