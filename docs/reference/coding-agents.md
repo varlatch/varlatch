@@ -69,6 +69,9 @@ each one reads, according to its documentation. An unknown name exits 64.
 Running it again changes nothing unless the CLI has changed: install after
 each CLI upgrade to update the skill.
 
+<details>
+<summary>File safety details (UTF-8, symbolic links, hard links, permissions)</summary>
+
 The CLI edits only UTF-8 text files. An `AGENTS.md` that is not one stops
 the command with status 78; an adapter's file that is not one is left as it
 is, with the edit printed.
@@ -102,6 +105,8 @@ anything is changed.
 
 An unknown option, a missing option value, or an extra argument exits 64
 before anything is written, so a mistyped `--check` never installs.
+
+</details>
 
 ### Options
 
@@ -252,6 +257,13 @@ server, whether or not a coding agent read the skill: see
 
 ## Evaluated coding agents
 
+Varlatch's agent evaluation suite tests Claude Code and Codex CLI across 10
+real-world secret-handling tasks (40/40 passing on v0.14.3, with and without
+shell markers).
+
+<details>
+<summary>Evaluation methodology, versions, and scope</summary>
+
 Varlatch's agent evaluation drives a real coding agent, with a model,
 through ten tasks against a local test server and a local payments API:
 moving a project's `.env` file in, starting an app and checking it,
@@ -283,3 +295,5 @@ other coding agents, the same vendors' editor or cloud agents, setups
 with hooks, or features added after that commit, which are tested
 separately and are not part of this evaluation. Other coding agents have
 not been evaluated.
+
+</details>

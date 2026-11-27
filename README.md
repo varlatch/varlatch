@@ -145,42 +145,42 @@ PostgreSQL and a self-hosted Convex backend:
 
 ## Getting started
 
-[Getting started](docs/getting-started.md) sends you to the short path for
-where you are: [joining a team](docs/join-a-team.md) you were invited to,
-[setting up a project](docs/set-up-a-project.md), or
-[running an installation](docs/run-an-installation.md).
+Choose your path:
 
-### Run your own installation
+### 1. Self-host Varlatch
 
-Varlatch runs on any Linux host, amd64 or arm64, and on Coolify. From 0.50,
-it is one program with its own database:
-[Run an installation](docs/run-an-installation.md). The previous release
-line, 0.23.0, runs with Docker Compose: follow
-[its documentation](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/run-an-installation.md).
+Varlatch runs as one standalone binary (`varlatchd`) on Linux (amd64 or arm64)
+with its own SQLite database, dashboard, HTTPS certificates, and encrypted
+backups:
 
-### Use the CLI
+```sh
+V=0.50.2  # latest release
+curl -fsSL -o install.sh https://github.com/varlatch/varlatch/releases/download/v$V/install.sh
+sudo sh install.sh --server
+```
 
-The CLI is one file attached to every release. From 0.50 it needs nothing
-else: [Install the CLI](docs/reference/install-the-cli.md). 0.23.0's needs
-Node.js ([install it](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/reference/install-the-cli.md)).
+- **Full server setup & local trial:** [Install Varlatch](docs/self-hosting.md)
+- **Docker or Coolify:** [Docker and Coolify](docs/self-hosting/docker-and-coolify.md)
+- **Upgrading from 0.23.0 (Docker Compose):** [Migrating to 0.50](docs/operations/migrate-to-0.50.md)
+
+### 2. Join a team or connect a project
+
+Install the standalone CLI ([Install the CLI](docs/reference/install-the-cli.md)),
+then sign in with your passkey and run your app without `.env` files on disk:
 
 ```sh
 varlatch login --server https://varlatch.example.com
-varlatch init --org acme --project api
+varlatch init
 varlatch run -- npm run dev
 ```
 
-`varlatch run` passes the environment's values to your command directly, so
-no file of secrets lands on disk. `varlatch types --out src/config.ts`
-generates typed access to them for a TypeScript application, and
-`varlatch types --out app/varlatch_config.py` for a Python one.
+- **Received an invitation link?** [Join a team](docs/join-a-team.md)
+- **Connecting a repository?** [Connect a project](docs/set-up-a-project.md) or [Set up with a coding agent](docs/set-up-with-an-agent.md)
 
-`varlatch run` forwards SIGINT, SIGTERM, SIGHUP, SIGQUIT, SIGUSR1, and SIGUSR2
-to your command (only the first two on Windows), so a service manager can stop
-or reload a service through it, and it exits with your command's status: 128
-plus the signal's number when a signal ended it, 130 for Ctrl-C. A signal sent
-to the whole process group, such as Ctrl-C in a terminal, reaches your command
-twice: from the terminal and forwarded.
+`varlatch types --out src/config.ts` (or `app/varlatch_config.py`) generates
+typed configuration access for TypeScript and Python. `varlatch run` forwards
+`SIGINT`, `SIGTERM`, `SIGHUP`, `SIGQUIT`, `SIGUSR1`, and `SIGUSR2` (`SIGINT`
+and `SIGTERM` on Windows) and exits with your command's status.
 
 ### Develop Varlatch
 

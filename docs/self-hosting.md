@@ -1,201 +1,137 @@
-# Install and operate
+# Install Varlatch
 
-This page is for the person who runs an installation. To install one,
-start with [Run an installation](run-an-installation.md).
+Varlatch is a single program (`varlatchd`) with its own SQLite database,
+embedded dashboard, HTTPS certificates, and encrypted backups. It needs no
+Docker, no database server, and no other services.
 
-It describes Varlatch 0.50 and later, where an installation is one program,
-`varlatchd`. 0.23.0 and earlier run on Docker Compose: see
-[Docker Compose (0.23.0 and earlier)](../infra/compose/README.md), and
-[Migrating to 0.50](operations/migrate-to-0.50.md).
+> Someone on your team already runs a server? Skip this page and go to
+> [Join a team](join-a-team.md). Prefer containers? Use
+> [Docker and Coolify](self-hosting/docker-and-coolify.md).
 
-## What is where
+## Install
 
-| Path | Holds | Owner and mode |
-|---|---|---|
-| `/usr/local/bin/varlatch` | the CLI, which also runs the host commands | root, 0755 |
-| `/usr/local/bin/varlatchd` | the server | root, 0755 |
-| `/etc/systemd/system/varlatchd.service` | the unit | root, 0644 |
-| `/etc/varlatch/varlatchd.conf` | the [configuration](self-hosting/configuration.md); no secrets | `root:varlatch`, 0640 |
-| `/etc/varlatch/root-kek`, `/etc/varlatch/backup-key` | the two keys | root, 0600 |
-| `/etc/varlatch/setup.json`, `upgrade.json` | what setup was told, and the last upgrade | root |
-| `/var/lib/varlatch` | the data: the database `varlatch.db`, `backups/`, `upgrades/`, and, when used, `acme/`, `tailnet/` and `cli/` | `varlatch`, 0700 |
-| `/usr/local/lib/varlatch/releases` | the binaries of the releases you upgraded from and to | root |
-| `/usr/local/lib/varlatch/snapshots` | the encrypted snapshots from before upgrades ([how long](operations/upgrade.md#what-is-kept)) | root |
-
-The service runs as the `varlatch` user. systemd hands it the two keys when
-it starts (`LoadCredential` in the unit), so `varlatchd` never needs to read
-`/etc/varlatch/root-kek` itself, and no key is in its environment.
-
-## Host commands
-
-Host commands need root on the host, and nothing else: no sign-in and no
-passkey.
+On a Linux server (amd64 or arm64, with systemd and `sudo`):
 
 ```sh
-sudo systemctl status varlatchd
-sudo journalctl -u varlatchd        # its log, requests included
-sudo varlatch doctor                # a read-only health check
-sudo varlatch admin backup run      # a backup now
-sudo varlatch upgrade --check       # is there a newer release?
+V=0.50.2  # latest release
+curl -fsSL -o install.sh https://github.com/varlatch/varlatch/releases/download/v$V/install.sh
+sudo sh install.sh --server
 ```
 
-| Command | What it does |
-|---|---|
-| `varlatch setup` | installs, or continues an install that stopped |
-| `varlatch doctor` | [checks the installation's health](#health-check) |
-| `varlatch upgrade` | [upgrades, and goes back when the new release fails its checks](operations/upgrade.md) |
-| `varlatch move` | [moves the installation to another address](operations/move-installation.md) |
-| `varlatch admin ...` | backups, a restored installation's hold, maintenance, re-enrollment, the outbound check, and the ways back below |
-| `varlatchd admin ...` | the same commands, and the rarer ones: keys, recovery, the tailnet |
+That downloads `varlatch`, `varlatchd`, and the systemd unit, verifies the
+release's cryptographic signature and `SHA256SUMS`, installs both binaries to
+`/usr/local/bin`, and launches the interactive `varlatch setup` wizard.
 
-After you change `varlatchd.conf`, check it, then restart the service:
+Want to inspect the signature with `cosign` before running `install.sh`? See
+[Verifying a release](operations/verify-release.md).
+
+## What you need
+
+- **Linux (amd64 or arm64)** with systemd, `curl`, `sha256sum`, and `sudo`
+  (1 GiB RAM, 1–2 CPU cores, 5 GB local disk — see
+  [Host requirements](self-hosting/requirements.md)).
+- **An address for people to reach it** (or none if you are trying it on
+  `localhost` first):
+
+| Mode | Address | What you need |
+| --- | --- | --- |
+| **public** | `https://vault.example.com` (automatic Let's Encrypt HTTPS) | DNS pointing to this host, plus TCP ports `80` and `443` open |
+| **proxy** | Whatever your reverse proxy serves (also for LAN or tailnet-only dashboards) | A reverse proxy forwarding the root of the hostname to `127.0.0.1:8686` |
+| **localhost** | `http://localhost:8686` (this machine only) | Nothing—great for trying Varlatch in 2 minutes |
+| **tailnet** | Your proxy's address, plus `varlatchd` joins your tailnet | A tagged Tailscale auth key ([Tailscale setup](self-hosting/configuration.md#tailscale)) |
+
+Choose your address carefully: passkeys are bound to the hostname, so changing
+it later means everyone re-registers their passkey with
+[`varlatch move`](operations/move-installation.md).
+
+## What `varlatch setup` does
+
+1. Creates the `varlatch` system user and benchmarks local disk write latency.
+2. Generates the **Root KEK** (encrypts stored values) and **backup key**
+   (encrypts backups), readable by `root` only.
+3. Writes `/etc/varlatch/varlatchd.conf` and starts `varlatchd.service`.
+4. Prints a one-time link to register the first administrator's passkey, and
+   waits until you complete it.
+5. Displays both recovery keys **once** and asks you to confirm you saved them
+   off this host (apart from each other). Without both keys, no backup can be
+   restored.
+6. Runs the first encrypted backup, verifies it, and runs `varlatch doctor`.
+
+If setup is interrupted, run `sudo varlatch setup` again—it picks up where it
+left off and never overwrites keys it already created.
+
+<details>
+<summary>Non-interactive / headless setup (flags for scripts)</summary>
+
+Every prompt has a flag. For example, to install behind your own reverse proxy:
 
 ```sh
-sudo varlatchd admin config check
-sudo systemctl restart varlatchd
+sudo varlatch setup --ingress proxy --public-url https://vault.example.com \
+  --backups host --admin-wait 0s --admin-link-out /root/admin-link \
+  --root-kek-out /root/root-kek --backup-key-out /root/backup-key
 ```
 
-A configuration error stops `varlatchd` with status 78. systemd does not
-restart it until you fix the file and start it again; the journal says
-which line is wrong.
+It exits `75` twice while waiting for human steps:
 
-## Health check
+1. Open the link written to `/root/admin-link` and register your passkey, then
+   run the exact same command again.
+2. Copy the keys written to `/root/root-kek` and `/root/backup-key` off this
+   host (apart from each other), delete those temporary files, and run the
+   command a third time with `--attest` added.
 
-```sh
-sudo varlatch doctor
-```
+On a disk whose 99th-percentile write latency exceeds 10 ms, pass
+`--accept-slow-disk` to continue.
 
-It checks readiness, the configuration, file modes, free space, the disk's
-write latency, the clock, the database, the certificate, the tailnet,
-backups and the keys' attestations. Each is `PASS`, `FAIL` or `UNKNOWN`,
-with what to do about it. It changes nothing. It exits 1 when a mandatory
-check fails; a check marked `advisory` never changes the exit code.
-`--json` prints the report as JSON.
+</details>
 
-## Behind your own proxy
+## Try it on your own machine
 
-With the proxy ingress, `varlatchd` listens on `127.0.0.1:8686` in plain
-HTTP, and your proxy serves HTTPS. The proxy must:
+To try Varlatch before provisioning a server, run the same three install
+commands on your own Linux machine and pick **localhost**. Browsers allow
+passkeys on `http://localhost`, so you need no domain, certificate, or proxy.
 
-- forward everything to that address, at the root of the host name. A path
-  prefix does not work;
-- keep the `Host` header, and allow long-lived responses: the dashboard's
-  live updates are a stream;
-- replace `X-Forwarded-For` with the client's address, or append it, and be
-  listed in [`trusted_proxies`](self-hosting/configuration.md#trusted_proxies).
-  Setup lists this machine (`127.0.0.1,::1`).
+`varlatchd` listens only on `127.0.0.1:8686`. When you're done evaluating,
+[Removing Varlatch](reference/uninstall.md#what-varlatch-puts-on-your-machine)
+lists the exact cleanup commands, or you can
+[move it](operations/move-installation.md) to a real domain later.
 
-## The Root KEK is your responsibility
+## Next steps
 
-Every stored value depends on the Root KEK, and every backup archive on the
-backup key as well. Whoever loses both the host and a key loses the data.
+1. **Back up off this host:** [Backup and recovery](operations/backup.md) or the
+   step-by-step [Backblaze B2 guide](operations/backup-b2.md). Local daily
+   backups run automatically, but off-host storage protects you if you lose the
+   server.
+2. **Connect your first repo:** [Connect a project](set-up-a-project.md) (or
+   [Set up with a coding agent](set-up-with-an-agent.md)).
+3. **Day-2 operations:** [Operate and recover](self-hosting/operate.md)
+   (`varlatch doctor`, key custody, break-glass recovery),
+   [Upgrading](operations/upgrade.md), and
+   [Configuration](self-hosting/configuration.md).
 
-- Keep at least two copies of each, in two places, neither of them this
-  host or the bucket that holds the backups. A password manager and a copy
-  on paper are good choices.
-- Keep the Root KEK and the backup key apart from each other.
-- Say so: `varlatchd admin custody attest` records, with a date, that the
-  copies exist. `varlatch doctor` shows the attestations. Nobody can check
-  copies held elsewhere but you.
+> **Upgrading from 0.23.0 (Docker Compose)?** Do not run a fresh install—follow
+> [Migrating from 0.23.0 to 0.50](operations/migrate-to-0.50.md). Legacy Compose
+> docs are in [Docker Compose (0.23.0 legacy)](../infra/compose/README.md).
 
-```sh
-sudo varlatchd admin kek verify                          # the installed key
-sudo varlatchd admin kek verify --file /path/to/a/copy   # a copy, without showing it
-sudo varlatchd admin custody attest --key root-kek --method copy
-sudo varlatchd admin custody attest --key backup-key --method copy
-sudo varlatchd admin custody status
-```
+<details>
+<summary>Moved sections (links from older pages)</summary>
 
-`--method` is `copy`, `passphrase-escrow` or `shamir-split`.
-
-### A passphrase-protected copy
-
-`kek export` wraps the Root KEK with a passphrase. The file it writes is
-safe to store anywhere, backups included; only the passphrase must be kept
-apart. `kek restore` checks the key against the installation's database
-before it writes it. When it cannot read one, on a fresh host or with a
-database it cannot open, it writes the key with a warning instead: run `kek
-verify` once the installation is restored.
-
-```sh
-sudo varlatchd admin kek export --passphrase-file /root/passphrase > kek-escrow.json
-sudo varlatchd admin kek restore --in kek-escrow.json --out /root/root-kek \
-  --passphrase-file /root/passphrase
-```
-
-In a terminal, leave `--passphrase-file` out and type the passphrase.
-
-### Shares for several people
-
-`kek split` makes shares, of which any few you choose give the key back and
-fewer reveal nothing. Give each to another person, and never store two
-together.
-
-```sh
-sudo varlatchd admin kek split --shares 3 --threshold 2
-sudo varlatchd admin kek combine --out /root/root-kek
-```
-
-`combine` reads the shares from standard input: paste one per line, then
-press Ctrl-D. Never give shares as arguments: they would be in the shell's
-history, and visible to other users while the command runs. Clear the
-terminal afterwards.
-
-## Break-glass recovery
-
-When nobody can sign in any more, the host can let a person back in:
-
-```sh
-sudo varlatchd admin bootstrap-status                         # the administrators
-sudo varlatchd admin recover --identity <identity id>         # a one-time link for one
-sudo varlatchd admin recover --identity <identity id> --enable  # one that was disabled
-sudo varlatchd admin recover --new-admin                      # only when none is enabled
-sudo varlatch admin reenroll --identity <identity id>         # any person: a link for a new passkey
-```
-
-Each prints a one-time link. Send it only to its person. Whoever has root
-on the host already has this authority; these commands make it explicit and
-record it in the audit log.
-
-When nobody can give the approval that an organization's
-[security controls](reference/security-controls.md#the-way-back-the-host-operators-reset)
-ask for, set them back to off. When an organization is
-[frozen](reference/incident-freeze.md) and nobody can lift the freeze, lift
-it from the host:
-
-```sh
-sudo varlatch admin security reset --org <slug> --all
-sudo varlatch admin security reset --org <slug> --control <name>
-sudo varlatch admin unfreeze --org <slug> --confirm <slug>
-```
-
-Before anyone relies on the freeze, keep a deploy and rollback credential
-for this installation outside Varlatch: a freeze stops every deploy whose
-credentials Varlatch serves.
-
-## Remove an installation
-
-[What Varlatch puts on your machine](reference/uninstall.md#what-varlatch-puts-on-your-machine)
-has the commands.
-
-## Moved sections
-
-This page described the Docker Compose deployment. Those sections are
-[here](../infra/compose/README.md) now; these links still lead to the right
-place.
-
-- <a id="first-install"></a>First install: [Run an installation](run-an-installation.md)
-- <a id="with-varlatch-setup-recommended"></a>With `varlatch setup`: [Run an installation](run-an-installation.md#install)
+- <a id="first-install"></a>First install: [Install](#install)
+- <a id="with-varlatch-setup-recommended"></a>With `varlatch setup`: [Install](#install)
 - <a id="existing-installations-varlatch-adopt"></a>`varlatch adopt`: [Docker Compose](../infra/compose/README.md#existing-installations-varlatch-adopt)
 - <a id="by-hand"></a>By hand: [Docker Compose](../infra/compose/README.md#by-hand)
-- <a id="where-to-keep-the-backup"></a>Where to keep the backup: [The Root KEK is your responsibility](#the-root-kek-is-your-responsibility)
-- <a id="passphrase-wrapped-escrow-recommended"></a>Passphrase-wrapped escrow: [A passphrase-protected copy](#a-passphrase-protected-copy)
-- <a id="shamir-secret-sharing-multi-custodian"></a>Shamir secret sharing: [Shares for several people](#shares-for-several-people)
+- <a id="where-to-keep-the-backup"></a>Where to keep the backup: [Operate and recover](self-hosting/operate.md#the-root-kek-is-your-responsibility)
+- <a id="the-root-kek-is-your-responsibility"></a>The Root KEK is your responsibility: [Operate and recover](self-hosting/operate.md#the-root-kek-is-your-responsibility)
+- <a id="passphrase-wrapped-escrow-recommended"></a>Passphrase-wrapped escrow: [Operate and recover](self-hosting/operate.md#a-passphrase-protected-copy)
+- <a id="shamir-secret-sharing-multi-custodian"></a>Shamir secret sharing: [Operate and recover](self-hosting/operate.md#shares-for-several-people)
+- <a id="break-glass-recovery"></a>Break-glass recovery: [Operate and recover](self-hosting/operate.md#break-glass-recovery)
 - <a id="backup"></a>Backup: [Backup and recovery](operations/backup.md)
 - <a id="upgrade-backup-gated-forward-only"></a>Upgrade: [Upgrading](operations/upgrade.md)
 - <a id="outbound-destinations-after-upgrading-to-0220"></a>Outbound destinations after upgrading to 0.22.0: [Docker Compose](../infra/compose/README.md#outbound-destinations-after-upgrading-to-0220)
 - <a id="newer-releases-in-the-dashboard"></a>Newer releases in the dashboard: [Upgrading](operations/upgrade.md#newer-releases-in-the-dashboard)
-- <a id="health-check-read-only"></a>Health check: [Health check](#health-check)
+- <a id="health-check-read-only"></a>Health check: [Operate and recover](self-hosting/operate.md#health-check)
+- <a id="health-check"></a>Health check: [Operate and recover](self-hosting/operate.md#health-check)
 - <a id="optional-tailscale-integration"></a>Tailscale: [Configuration](self-hosting/configuration.md#tailscale)
 - <a id="september-2026-upgrade-compatibility"></a>September 2026 upgrade compatibility: [Docker Compose](../infra/compose/README.md#september-2026-upgrade-compatibility)
 - <a id="client-addresses-behind-proxies"></a>Client addresses behind proxies: [`trusted_proxies`](self-hosting/configuration.md#trusted_proxies)
+
+</details>

@@ -19,24 +19,20 @@ one device never locks you out:
 
 ## 2. Install the CLI
 
-If your installation serves the CLI, install it from there, on Linux and
-macOS:
+On Linux and macOS, install the release your server runs (shown in the dashboard
+under **Settings → Server**):
 
 ```sh
-curl -fsSLo install.sh https://vault.example.com/install.sh && sh install.sh
-```
-
-Otherwise, install the release your installation runs. The dashboard
-shows it under Settings, then Server:
-
-```sh
-V=0.50.0  # the release your installation runs
+V=0.50.2  # the release your installation runs
 curl -fsSL -o install.sh https://github.com/varlatch/varlatch/releases/download/v$V/install.sh
 sh install.sh
 ```
 
-Both check the release's signature before they put anything in place. On
-Windows, or to check the signature with cosign yourself, follow
+*(If your admin enabled CLI hosting on the server, you can also run
+`curl -fsSLo install.sh https://vault.example.com/install.sh && sh install.sh`.)*
+
+The script verifies the release's signature before installing to `~/.local/bin`.
+On Windows, or to verify with `cosign` yourself, see
 [Install the CLI](reference/install-the-cli.md).
 
 ## 3. Sign in and run

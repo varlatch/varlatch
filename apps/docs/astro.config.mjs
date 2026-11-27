@@ -32,32 +32,51 @@ export default defineConfig({
       sidebar: [
         {
           label: "Start here",
-          items: ["getting-started", "join-a-team", "set-up-a-project", "run-an-installation", "set-up-with-an-agent", "concepts"],
+          items: [
+            { label: "How Varlatch works", slug: "overview" },
+            { label: "Choose your path", slug: "getting-started" },
+            { label: "Join a team", slug: "join-a-team" },
+            { label: "Connect a project", slug: "set-up-a-project" },
+            { label: "Set up with a coding agent", slug: "set-up-with-an-agent" },
+          ],
         },
         {
           label: "Self-hosting",
           items: [
-            "self-hosting/requirements",
-            "self-hosting",
-            "self-hosting/configuration",
-            { label: "Self-hosted tailnet control server (Headscale)", slug: "self-hosting/self-hosted-tailnet-control" },
-            { label: "Upgrading", slug: "operations/upgrade" },
-            { label: "Migrating to 0.50", slug: "operations/migrate-to-0.50" },
+            { label: "Install Varlatch", slug: "self-hosting" },
+            { label: "Docker and Coolify", slug: "self-hosting/docker-and-coolify" },
+            { label: "Operate and recover", slug: "self-hosting/operate" },
+            { label: "Host requirements", slug: "self-hosting/requirements" },
+            { label: "Configuration", slug: "self-hosting/configuration" },
+            { label: "Self-hosted tailnet (Headscale)", slug: "self-hosting/self-hosted-tailnet-control" },
             { label: "Backup and recovery", slug: "operations/backup" },
-            { label: "First off-host backup (B2)", slug: "operations/backup-b2" },
+            { label: "Off-host backup with B2", slug: "operations/backup-b2" },
+            { label: "Upgrading", slug: "operations/upgrade" },
             { label: "Moving to another address", slug: "operations/move-installation" },
             { label: "Verifying a release", slug: "operations/verify-release" },
-            { label: "Docker Compose (0.23.0 and earlier)", slug: "self-hosting/compose" },
+          ],
+        },
+        {
+          label: "Using Varlatch",
+          items: [
+            { label: "Install the CLI", slug: "reference/install-the-cli" },
+            { label: "Members and access", slug: "reference/members" },
+            { label: "Passkeys and sessions", slug: "reference/passkeys-and-sessions" },
+            { label: "CI and other machines", slug: "reference/ci-and-machines" },
+            { label: "Integrations (GitHub, Coolify, Convex)", slug: "reference/integrations" },
+            { label: "Checking sync drift", slug: "reference/sync-check" },
+            { label: "Scripting the CLI", slug: "reference/scripting" },
+            { label: "Removing Varlatch", slug: "reference/uninstall" },
           ],
         },
         {
           label: "Contracts",
           items: [
             { label: "The .env.schema file", slug: "reference/env-schema" },
-            { label: "Contract semantics", slug: "reference/contract-semantics" },
             { label: "Importing a .env file", slug: "reference/import" },
             { label: "Type generation", slug: "reference/type-generation" },
             { label: "Strict startup", slug: "reference/strict-startup" },
+            { label: "Contract semantics", slug: "reference/contract-semantics" },
           ],
         },
         {
@@ -72,17 +91,6 @@ export default defineConfig({
           ],
         },
         {
-          label: "Using Varlatch",
-          items: [
-            { label: "Install the CLI", slug: "reference/install-the-cli" },
-            { label: "Members and access", slug: "reference/members" },
-            { label: "Passkeys and sessions", slug: "reference/passkeys-and-sessions" },
-            { label: "CI and other machines", slug: "reference/ci-and-machines" },
-            { label: "Scripting the CLI", slug: "reference/scripting" },
-            { label: "Removing Varlatch", slug: "reference/uninstall" },
-          ],
-        },
-        {
           label: "Security",
           items: [
             { label: "Security controls", slug: "reference/security-controls" },
@@ -92,7 +100,16 @@ export default defineConfig({
             { label: "Threat model", slug: "threat-model" },
           ],
         },
-        { label: "Changelog", link: "/changelog/" },
+        {
+          label: "Reference & legacy",
+          collapsed: true,
+          items: [
+            { label: "Glossary", slug: "concepts" },
+            { label: "Migrating from 0.23.0 to 0.50", slug: "operations/migrate-to-0.50" },
+            { label: "Docker Compose (0.23.0 legacy)", slug: "self-hosting/compose" },
+            { label: "Changelog", link: "/changelog/" },
+          ],
+        },
       ],
     }),
   ],

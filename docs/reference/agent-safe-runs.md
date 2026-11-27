@@ -1,10 +1,7 @@
 # Agent-safe runs
 
-`varlatch run --agent-safe` starts a process you do not trust with plaintext,
-such as an AI coding agent, with Placeholders instead of Secrets. The run
-starts a local Broker. The Broker replaces a Placeholder with its Secret only
-in requests it sends itself, over verified TLS, to destinations you allow,
-and only at the places you name.
+`varlatch run --agent-safe` runs an untrusted process—such as an autonomous AI
+coding agent—so it can **use** API credentials without ever **reading** them.
 
 ```sh
 varlatch run --agent-safe --agent "coding agent" \
@@ -14,10 +11,26 @@ varlatch run --agent-safe --agent "coding agent" \
   -- my-agent
 ```
 
-Every agent-safe run needs a Varlatch 0.11.0 server or later, even one with
-no Secrets to mediate: removing Secrets inherited from your shell relies on
-the server's account of the active Contract. The CLI refuses an older server,
-names the version it needs, and starts nothing.
+## How it works in 30 seconds
+
+```text
+my-agent (holds opaque Placeholder vlch_ph_v1_..., never the real Secret)
+   │  varlatch request -H "Authorization: Bearer $STRIPE_KEY" https://api.stripe.com/...
+   ▼
+Local Broker (checks destination host + declared target location)
+   │  requests secret.use from varlatchd (audited per use)
+   ▼
+https://api.stripe.com  (receives real Secret over verified TLS; response scrubbed on way back)
+```
+
+- **Placeholders, not Secrets:** the agent receives random tokens in its
+  environment and no reusable Varlatch credential.
+- **Explicit allowlist:** every stored Secret must either declare where it may
+  be injected (`--target`) or be excluded (`--omit`).
+- **Response scrubbing:** if the upstream API echoes the Secret back, the
+  Broker replaces it with the Placeholder before the agent sees the response.
+
+Every agent-safe run requires a Varlatch 0.11.0+ server.
 
 ## Substitution targets
 

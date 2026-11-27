@@ -27,7 +27,7 @@ to keep elsewhere. Losing either key makes every archive that needs it
 useless. Keep old copies for as long as you keep archives that need them.
 Never put a key in the backup bucket. Keep the two keys apart from each
 other: whoever has the archive and both keys has every value.
-[The Root KEK is your responsibility](../self-hosting.md#the-root-kek-is-your-responsibility)
+[The Root KEK is your responsibility](../self-hosting/operate.md#the-root-kek-is-your-responsibility)
 says how to keep the copies.
 
 ## Create and verify
@@ -339,7 +339,7 @@ Step by step:
    read:
 
    ```sh
-   V=0.50.0  # the release that made the archive, or a newer one
+   V=0.50.2  # the release that made the archive, or a newer one
    curl -fsSL -o install.sh https://github.com/varlatch/varlatch/releases/download/v$V/install.sh
    sudo sh install.sh --server -- --restore /root/backup.vltbak \
      --root-kek-file /root/root-kek --backup-key-file /root/backup-key
@@ -408,7 +408,7 @@ Close every way in before you restore, and open it again after `resume`:
 | public HTTPS | `listen_https = 127.0.0.1:443` and `listen_http_redirect = :80` in `varlatchd.conf` | put your own two lines back |
 | your own proxy | let the proxy listen on `127.0.0.1` only, or accept only your own address | undo it in the proxy |
 | the tailnet | put a `#` in front of every `tailnet` line in `varlatchd.conf`, all of them | remove the `#`s ([the node](#the-tailnet-node)) |
-| the container image | run it by hand on a network of its own: [Restore in the container image](../../infra/coolify/README.md#restore-in-the-container-image) | remove that container and network, and deploy |
+| the container image | run it by hand on a network of its own: [Restoring a backup in a container](../self-hosting/docker-and-coolify.md#restoring-a-backup-in-a-container) | remove that container and network, and deploy |
 
 Port 80 stays open with public HTTPS: it answers the certificate authority
 and redirects, and serves nothing else. `listen = 127.0.0.1:8686` closes the
@@ -499,7 +499,8 @@ machine, isolated from the network the real installation reaches, and look
 at what you find. Delete that machine and its copies of the keys
 afterwards.
 
-## Archives of 0.23.0 and earlier
+<details>
+<summary>Legacy: archives from 0.23.0 and earlier</summary>
 
 Varlatch 0.50 does not restore an archive made by 0.23.0 or earlier. Keep
 the old release, its archives and their keys together for as long as you
@@ -517,3 +518,5 @@ with `--dir`) are in
 - <a id="first-upgrade-from-the-published-v070-release"></a>[First upgrade from the published v0.7.0 release](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/operations/backup.md#first-upgrade-from-the-published-v070-release)
 - <a id="coolify-and-older-emergency-dumps"></a>[Coolify and older emergency dumps](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/operations/backup.md#coolify-and-older-emergency-dumps)
 - <a id="passkeys-that-shared-a-credential-migration-39"></a>[Passkeys that shared a credential (migration 39)](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/operations/backup.md#passkeys-that-shared-a-credential-migration-39)
+
+</details>

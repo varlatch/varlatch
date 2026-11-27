@@ -1,51 +1,49 @@
-# Set up a project
+# Connect a project
 
-This page connects a repository to an installation you can sign in to.
-No installation yet? [Run an installation](run-an-installation.md) first.
+Connect a repository to a Varlatch server you can sign in to.
+No server yet? [Install Varlatch](self-hosting.md) first.
 No CLI yet? [Install the CLI](reference/install-the-cli.md).
 
-Varlatch keeps configuration in **organizations**, which contain
-**projects**, which contain **environments** such as `development` and
-`production`. A project usually matches one repository. Its **contract**
-lists the items the application needs, with a type for each and whether it
-is a Secret, and Varlatch checks every environment against it.
+Varlatch organizes configuration into **Organizations → Projects →
+Environments** (such as `development` and `production`). A project usually maps
+to one repository and has a **Contract** declaring which keys the app needs,
+their types, and which ones are Secrets.
 
 ## The quick way
 
-In the repository, on a terminal:
+In your repository directory, run one interactive command:
 
 ```sh
 varlatch init
 ```
 
-It asks for what it needs, one step at a time, and prints the command
-each step stands for:
+The wizard walks you through everything and prints the equivalent command at
+each step:
 
-1. The server: your default server, or the address you type. When you
-   are not signed in, it signs you in first.
-2. The organization and the project: one you can see, or a new one it
-   creates after asking.
-3. The environments: when the project has none, it offers `development`
-   and `production`.
-4. It writes `varlatch.toml` and the files coding agents read.
-5. Your `.env` files: for each one, which environment it goes to. It shows
-   the names, types and Secrets it would store, never a value, and asks
-   before replacing a value the environment already has (in a production
-   environment you type its name). It adds the new items to the contract
-   in one revision and asks before activating it.
-6. Last, it offers to delete each `.env` file whose values are all stored.
-   It keeps a file you declined anything from, or one that changed since
-   it was read.
+1. **Sign in** to your server if you aren't already.
+2. **Pick or create** the organization and project.
+3. **Create environments** (`development` and `production` by default if none exist).
+4. **Write `varlatch.toml`** and the instruction files coding agents read.
+5. **Import your `.env` files**—showing names, inferred types, and sensitivity
+   (never values), adding new items to the Contract, and asking before
+   overwriting existing values or activating the Contract.
+6. **Clean up** by offering to delete each `.env` file once every value is
+   safely stored.
 
-Then [run your application](#run-your-application). The rest of this page
-does the same step by step, as scripts and coding agents do: `varlatch
-init` asks nothing off a terminal or in assisted mode, and needs `--org`
-and `--project` there.
+Once that finishes, jump straight to [Run your application](#run-your-application)
+below.
 
-## Create the project
+---
 
-Sign in from your machine. The CLI opens your browser, or prints the
-address to open, and you sign in with your passkey:
+## Step-by-step (manual or scripted)
+
+Use the individual commands below if you prefer doing each step manually, or in
+scripts / CI where `varlatch init` does not prompt interactively.
+
+### Create the project
+
+Sign in from your machine. The CLI opens your browser, or prints the address to
+open, and you approve with your passkey:
 
 ```sh
 varlatch login --server https://vault.example.com

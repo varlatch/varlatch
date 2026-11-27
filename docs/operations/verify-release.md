@@ -1,59 +1,26 @@
 # Verifying a release
 
-A Varlatch release after 0.15.0 is signed by the repository's release
-workflow; 0.15.0 and earlier are not (see
-[signed and unsigned releases](#signed-and-unsigned-releases)). Signing is
-keyless: Sigstore certifies the workflow's GitHub Actions identity for the
-release tag, so there is no key to fetch or trust separately. Each image also
-carries a build-provenance attestation and an SBOM, and is published for
-linux/amd64 and linux/arm64.
+Every Varlatch release after 0.15.0 is signed keylessly by its GitHub Actions
+release workflow via Sigstore—no separate signing key to fetch or trust.
 
-From 0.50, `install.sh`, `install.ps1`, `varlatch upgrade` and `varlatch
-self-update` check the signature themselves, before they put anything in
-place. The checks on this page are for doing it first, with tools you
-already trust. With cosign and `curl` alone, the
-[release assets](#release-assets) check is enough for the binaries.
+> `install.sh`, `install.ps1`, `varlatch upgrade`, and `varlatch self-update`
+> already verify these signatures automatically before installing anything. Use
+> this page when you want to verify artifacts first with tools you already
+> trust (`cosign`, `sha256sum`, `gh`, `docker buildx`, `jq`).
 
-You need [cosign](https://docs.sigstore.dev/cosign/system_config/installation/)
-2.x or later, `docker buildx`, `jq`, and the GitHub CLI. A release from a
-private repository also needs a `gh` login with access to the repository and
-a registry login that can read its images (`docker login ghcr.io` with a
-token that has the `read:packages` scope).
+Set the release you want to check:
 
 ```sh
-V=0.50.0                                      # the release to verify
+V=0.50.2                                      # the release to verify
 REPO=varlatch/varlatch                        # the repository releases come from
 IDENTITY="https://github.com/${REPO}/.github/workflows/release.yml@refs/tags/v${V}"
 ISSUER=https://token.actions.githubusercontent.com
 ```
 
-## Signed and unsigned releases
-
-The release workflow always signs a release published from a public
-repository: the GitHub release is not published if signing fails, although
-the release's images may already have been pushed. A private repository's
-releases are signed only when its `SIGN_PRIVATE_RELEASES` repository
-variable is `true`, because keyless signatures are recorded in Sigstore's
-public transparency log with the repository, tag, and digests they cover.
-
-Releases up to and including 0.15.0 were published while this repository
-was private, and are not signed. Every later release is published from the
-public repository, so it is signed.
-
-A signed release has `SHA256SUMS.sigstore.json` among its assets and a
-signature on each of Varlatch's three images. An unsigned release has
-neither.
-
-Treat a release as unsigned only when it is 0.15.0 or earlier. A later
-release is always signed, whatever its notes say. If a release you expect
-to be signed has no `SHA256SUMS.sigstore.json`, or a signature check below
-fails, stop: do not install it, and do not fall back to the checks for
-unsigned releases. Its missing signatures may mean it was tampered with or
-published incorrectly.
-
-For 0.15.0 and earlier, go to [unsigned releases](#unsigned-releases).
-
 ## Release assets
+
+Download the release files (or just the binary you need), verify the Sigstore
+signature on `SHA256SUMS`, and check the file hashes:
 
 ```sh
 gh release download "v$V" -R "$REPO"
@@ -62,10 +29,7 @@ cosign verify-blob SHA256SUMS --bundle SHA256SUMS.sigstore.json \
 sha256sum --check --ignore-missing SHA256SUMS
 ```
 
-The first check proves that `SHA256SUMS` was produced by the release
-workflow for this tag. The second checks every downloaded asset against it.
-
-Without the GitHub CLI, fetch the files you need with `curl`:
+Without the GitHub CLI, fetch with `curl` instead:
 
 ```sh
 BASE="https://github.com/$REPO/releases/download/v$V"
@@ -74,16 +38,69 @@ curl -fLO "$BASE/SHA256SUMS.sigstore.json"
 curl -fLO "$BASE/varlatch-$V-linux-amd64"
 ```
 
-For 0.50 and later, the image's checks are
-[below](#the-go-lines-image-0500-and-later). The next two sections are for
-0.23.0 and earlier.
+## Container image (0.50.0 and later)
 
-## Images
+<a id="the-go-lines-image-0500-and-later"></a>
 
-A release of 0.23.0 or earlier has three images of Varlatch's own. Its
-release manifest pins each image by digest. Their signatures are kept in a
-separate package, `ghcr.io/varlatch/varlatch-signatures`, so tell cosign to
-look there. Then verify the three images against the same identity:
+Each 0.50+ release records its container image digest in `varlatchd-image.txt`
+(covered by the signed `SHA256SUMS`). Save and run this script with Bash
+(`bash verify-go.sh`; requires `gh`, `cosign`, `docker buildx`, and `jq`) to
+verify the record, signature, build provenance, and SBOMs before pulling:
+
+```sh
+set -euo pipefail
+V=0.50.2                                      # the release to verify
+REPO=varlatch/varlatch
+IDENTITY="https://github.com/${REPO}/.github/workflows/release.yml@refs/tags/v${V}"
+ISSUER=https://token.actions.githubusercontent.com
+mkdir "varlatch-$V" && cd "varlatch-$V"
+gh release download "v$V" --repo "$REPO" -p SHA256SUMS -p SHA256SUMS.sigstore.json -p varlatchd-image.txt
+assets=$(gh release view "v$V" --repo "$REPO" --json assets -q '.assets[].name')
+if grep -q '^sbom-varlatchd-' <<< "$assets"; then
+  gh release download "v$V" --repo "$REPO" -p 'sbom-varlatchd-*.spdx.json'
+fi
+
+# Verify SHA256SUMS and varlatchd-image.txt
+cosign verify-blob SHA256SUMS --bundle SHA256SUMS.sigstore.json \
+  --certificate-identity "$IDENTITY" --certificate-oidc-issuer "$ISSUER"
+grep -E '^[0-9a-f]{64}  varlatchd-image\.txt$' SHA256SUMS | sha256sum --check --strict -
+
+# Verify the image signature by digest
+ref=$(cat varlatchd-image.txt)                # ghcr.io/varlatch/varlatchd:V@sha256:...
+image="${ref%%:*}@${ref##*@}"
+COSIGN_REPOSITORY=ghcr.io/varlatch/varlatch-signatures \
+  cosign verify "$image" --certificate-identity "$IDENTITY" --certificate-oidc-issuer "$ISSUER" >/dev/null
+
+# Verify provenance and per-platform SBOMs
+gh api -H 'Accept: application/vnd.github.raw' \
+  "repos/$REPO/contents/go/image/check-attestations.sh?ref=v$V" > check-attestations.sh
+bash check-attestations.sh "$image" "$V" --sbom-dir . --sums SHA256SUMS
+
+echo "verified $image"
+```
+
+Then pull and run the image by that exact verified digest.
+
+## Signed and unsigned releases
+
+- Releases **after 0.15.0** are published from the public repository and are
+  **always signed** (`SHA256SUMS.sigstore.json` plus image signatures). If a
+  release after 0.15.0 is missing its signature or fails verification, **stop
+  and do not install it**—never fall back to unsigned checks.
+- Releases **0.15.0 and earlier** were published while the repository was
+  private and are unsigned.
+- Every night, the repository's
+  [image scan](https://github.com/varlatch/varlatch/actions/workflows/image-scan.yml)
+  scans the latest published images with OSV-Scanner and reports known
+  vulnerabilities in the run summary.
+
+<details>
+<summary>Legacy: verifying 0.23.0 and earlier (three Compose images, provenance, SBOM)</summary>
+
+<a id="images"></a>
+
+Releases up to 0.23.0 ship three images pinned in `varlatch-release.json`, with
+signatures stored in `ghcr.io/varlatch/varlatch-signatures`:
 
 ```sh
 export COSIGN_REPOSITORY=ghcr.io/varlatch/varlatch-signatures
@@ -95,13 +112,9 @@ for image in $(jq -r '.images | to_entries[]
 done
 ```
 
-Without `COSIGN_REPOSITORY`, cosign looks beside each image and reports
-that no signatures were found. 0.15.1's signatures are in both places.
+<a id="provenance-and-sbom"></a>
 
-The third-party images (PostgreSQL, the Convex backend, Caddy, Tailscale)
-are pinned by digest in the same manifest, which `SHA256SUMS` covers.
-
-## Provenance and SBOM
+Inspect provenance and SBOM attestations:
 
 ```sh
 image=$(jq -r '.images.varlatchd.digest' varlatch-release.json)
@@ -109,110 +122,36 @@ docker buildx imagetools inspect "$image" --format '{{ json (index .Provenance "
 docker buildx imagetools inspect "$image" --format '{{ json (index .SBOM "linux/arm64") }}'
 ```
 
-The provenance records the repository, commit, and workflow that built the
-image. The SBOM lists every package in it, operating-system packages
-included. `THIRD-PARTY-NOTICES.md` lists the third-party components with
-their licenses.
+Releases built on self-hosted runners attach SPDX 2.3 SBOMs as release files
+(`sbom-IMAGE-VERSION-linux-ARCH.spdx.json`), covered by `SHA256SUMS`. Up to
+0.23.0, `varlatch upgrade` did not verify signatures automatically—verify
+before upgrading.
 
-A release whose images were built on a self-hosted runner has no SBOM
-attestation, and its release notes say so. It attaches each image's SBOM as
-a release file instead, one per image and architecture
-(`sbom-IMAGE-VERSION-linux-ARCH.spdx.json`, in SPDX 2.3 JSON). `SHA256SUMS`
-lists them, so the release-asset checks above cover them.
+</details>
 
-Every night, the repository's
-[image scan](https://github.com/varlatch/varlatch/actions/workflows/image-scan.yml)
-checks the varlatchd and varlatch-web images of the latest release, by
-the digests its manifest pins, for known vulnerabilities with
-OSV-Scanner, and lists what it finds in the run's summary. It only
-reports: it never changes a published release or holds back the next one.
+<details>
+<summary>Legacy: unsigned releases (0.15.0 and earlier)</summary>
 
-## The Go line's image (0.50.0 and later)
+<a id="unsigned-releases"></a>
 
-A release of the Go line has no `varlatch-release.json`: it records its
-container image in `varlatchd-image.txt`, which its signed `SHA256SUMS`
-lists. Check the record, then the image by its digest:
-
-```sh
-set -euo pipefail
-V=0.50.0                                      # the release to verify
-REPO=varlatch/varlatch
-IDENTITY="https://github.com/${REPO}/.github/workflows/release.yml@refs/tags/v${V}"
-ISSUER=https://token.actions.githubusercontent.com
-mkdir "varlatch-$V" && cd "varlatch-$V"
-gh release download "v$V" --repo "$REPO" -p SHA256SUMS -p SHA256SUMS.sigstore.json -p varlatchd-image.txt
-assets=$(gh release view "v$V" --repo "$REPO" --json assets -q '.assets[].name')
-if grep -q '^sbom-varlatchd-' <<< "$assets"; then
-  gh release download "v$V" --repo "$REPO" -p 'sbom-varlatchd-*.spdx.json'
-fi
-
-# SHA256SUMS is the release workflow's, and lists the record.
-cosign verify-blob SHA256SUMS --bundle SHA256SUMS.sigstore.json \
-  --certificate-identity "$IDENTITY" --certificate-oidc-issuer "$ISSUER"
-grep -E '^[0-9a-f]{64}  varlatchd-image\.txt$' SHA256SUMS | sha256sum --check --strict -
-
-# The image, by the digest the record names: signed by the same identity,
-# its signature in the signatures package.
-ref=$(cat varlatchd-image.txt)                # ghcr.io/varlatch/varlatchd:V@sha256:...
-image="${ref%%:*}@${ref##*@}"
-COSIGN_REPOSITORY=ghcr.io/varlatch/varlatch-signatures \
-  cosign verify "$image" --certificate-identity "$IDENTITY" --certificate-oidc-issuer "$ISSUER" >/dev/null
-
-# Provenance and an SBOM for each platform, from the repository at the
-# release's tag: an attested SBOM, or an SBOM release file whose bytes
-# match the signed SHA256SUMS.
-gh api -H 'Accept: application/vnd.github.raw' \
-  "repos/$REPO/contents/go/image/check-attestations.sh?ref=v$V" > check-attestations.sh
-bash check-attestations.sh "$image" "$V" --sbom-dir . --sums SHA256SUMS
-
-echo "verified $image"
-```
-
-Save it as `verify-go.sh` and run it with Bash (`bash verify-go.sh`; it
-needs `gh`, `cosign`, `docker buildx` and `jq`). It stops at the first
-failed check, with a nonzero status, and prints `verified` only when every
-check passed. An image built on a hosted runner carries its SBOMs as
-attestations and the release has no SBOM files; one built on a
-self-hosted runner has SBOM release files instead
-(`sbom-varlatchd-VERSION-linux-ARCH.spdx.json`), which
-`check-attestations.sh` checks against `SHA256SUMS`. Then pull and run the
-image by that digest.
-
-## Unsigned releases
-
-These checks are for 0.15.0 and earlier, which are not signed. They show
-that your download is complete and consistent, and that the pinned images
-describe the expected build. They do not verify the release workflow's
-identity: read [what they cannot show](#what-unsigned-checks-cannot-show)
-before you rely on them.
-
-The checks are one script. Save it as `verify-unsigned.sh` and run it with
-Bash, giving the version, and the repository if releases come from another
-one:
-
-```sh
-bash verify-unsigned.sh 0.15.0
-```
-
-It downloads the release into a new temporary directory and stops at the
-first failed check, with a nonzero status. Do not paste it into an
-interactive shell, where a failed check would not stop the commands after
-it. It runs the downloaded CLI only at the end, once every other check has
-passed; that runs code from the release, as installing it would.
+Releases 0.15.0 and earlier are not cryptographically signed. Checksums and
+unsigned attestations confirm download integrity and claimed provenance, **not**
+who published them (anyone with repo/registry write access could replace both).
+Save as `verify-unsigned.sh` and run `bash verify-unsigned.sh 0.15.0`:
 
 ```bash
 #!/usr/bin/env bash
 # Checks for an unsigned Varlatch release (0.15.0 and earlier).
 # Usage: bash verify-unsigned.sh VERSION [REPOSITORY]
 set -euo pipefail
-shopt -s dotglob nullglob # "*" below also matches hidden files
+shopt -s dotglob nullglob
 
 V=${1:?usage: bash verify-unsigned.sh VERSION [REPOSITORY]}
 REPO=${2:-varlatch/varlatch}
 WORKFLOW="$REPO/.github/workflows/release.yml@refs/tags/v$V"
 fail() { echo "FAILED: $*" >&2; exit 1; }
 
-COMMIT=$(gh api "repos/$REPO/commits/v$V" --jq .sha) # the commit the tag names
+COMMIT=$(gh api "repos/$REPO/commits/v$V" --jq .sha)
 case $COMMIT in *[!0-9a-f]*) fail "the tag v$V names no commit ('$COMMIT')" ;; esac
 [ "${#COMMIT}" -eq 40 ] || fail "the tag v$V names no commit ('$COMMIT')"
 dir=$(mktemp -d)
@@ -220,29 +159,20 @@ cd "$dir"
 echo "v$V of $REPO, tagged at $COMMIT, downloading to $dir"
 gh release download "v$V" -R "$REPO"
 
-# Every file SHA256SUMS lists is present and matches it.
 sha256sum --check --strict --quiet SHA256SUMS
-# Every downloaded file, hidden or not, is listed in SHA256SUMS.
 for f in *; do
   if [ "$f" = SHA256SUMS ]; then continue; fi
   F=$f awk '$2 == ENVIRON["F"] { found = 1 } END { exit !found }' SHA256SUMS \
     || fail "$f is not listed in SHA256SUMS"
 done
-# Every file matches the digest GitHub recorded when it was uploaded.
 gh release view "v$V" -R "$REPO" --json assets \
   --jq '.assets[] | "\(.digest | ltrimstr("sha256:"))  \(.name)"' \
   | sha256sum --check --strict --quiet
-# The first-install archive carries the same manifest, and it is for $V.
 tar -xzOf "varlatch-compose-$V.tar.gz" "varlatch-$V/varlatch-release.json" \
   | cmp -s - varlatch-release.json || fail "the archive's manifest differs from varlatch-release.json"
 test "$(jq -r .version varlatch-release.json)" = "$V" || fail "the manifest is not for $V"
 echo "assets: complete, listed in SHA256SUMS, and as GitHub recorded them"
 
-# Varlatch's own images, by the digests the manifest pins: both platforms,
-# provenance naming the tag's commit and release workflow in one run, and an
-# SBOM for each platform, attested or as a release file.
-# An SBOM lists its packages: a non-empty array of objects, each named. A
-# release file must also be the SPDX 2.3 document the release workflow writes.
 sbom_packages='.packages | if type == "array" and length > 0
   and all(.[]; type == "object" and (.name | type) == "string") then length else empty end'
 spdx_document='select(.spdxVersion == "SPDX-2.3" and .SPDXID == "SPDXRef-DOCUMENT"
@@ -277,48 +207,12 @@ for key in varlatchd varlatch-web convex-deploy; do
   done
 done
 
-# Only now, with every other check passed, run the downloaded CLI.
 cli=$(node "varlatch-cli-$V.cjs" --version)
 case $cli in "varlatch $V "*) ;; *) fail "the CLI reports '$cli'" ;; esac
 echo "$cli"
 echo "all checks passed; the release files are in $dir"
 ```
 
-`--ignore-missing` is left out, so every file `SHA256SUMS` lists must be
-present, and a downloaded file it does not list fails the check. GitHub's
-digests are the ones it recorded when each file was uploaded. The manifest
-pins each image by digest, and Compose pulls them by digest, so the images
-you run are the ones checked here even if a tag is moved later. A missing,
-empty, or malformed build run in any provenance fails the check, as do runs
-that differ. Images built on a self-hosted runner have no SBOM attestation:
-their SBOMs are release files, which must be SPDX 2.3 documents listing
-packages; the asset checks cover their bytes.
+<a id="what-unsigned-checks-cannot-show"></a>
 
-### What unsigned checks cannot show
-
-Checksums and unsigned metadata do not verify the release workflow's
-cryptographic identity:
-
-- `SHA256SUMS` comes from the same release as the files it lists. Anyone
-  able to replace an asset can replace `SHA256SUMS` along with it. Matching
-  checksums show that your download is complete and intact, not who
-  published it.
-- GitHub records an asset's digest when the file is uploaded. A match shows
-  that the file has not changed since then, not that the release workflow
-  uploaded it.
-- An unsigned image's provenance and SBOM attestations are unsigned
-  metadata stored with it in the registry. Anyone able to push to that
-  image repository can push an image with whatever provenance they choose.
-  Inspecting them shows what an image claims about its build, not that the
-  claim is true.
-- The release notes are not signed either, including their statement that
-  a release is unsigned. That is why a release after 0.15.0 needs its
-  signatures whatever its notes say.
-
-An unsigned release is therefore only as trustworthy as access to the
-repository and its packages: who can push tags, publish releases, and push
-images. If that is not enough for your installation, do not install an
-unsigned release.
-
-Up to 0.23.0, `varlatch upgrade` does not verify signatures. Verify a release
-before you upgrade to it.
+</details>

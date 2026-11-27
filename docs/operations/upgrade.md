@@ -1,9 +1,9 @@
 # Upgrading
 
-This page is for installations on 0.50 or later that `install.sh --server`
-installed. From 0.23.1, [migrate](migrate-to-0.50.md) first. On Coolify,
-you change the image's digest:
-[Pinning and upgrading by digest](../../infra/coolify/README.md#pinning-and-upgrading-by-digest).
+This page is for Linux systemd installations (`install.sh --server`). On
+Docker or Coolify, upgrade by changing the pinned image digest:
+[Upgrading by digest](../self-hosting/docker-and-coolify.md#upgrading-by-digest).
+Still on 0.23.1? [Migrate to 0.50](migrate-to-0.50.md) first.
 
 ## Upgrade
 

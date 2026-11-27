@@ -91,9 +91,8 @@ A freeze takes effect for every request that starts after it:
 - processes that already hold values (a `varlatch run` child, a deployed
   application, a CI job past its fetch) keep them: Varlatch does not reach
   back;
-- the Convex token a browser already holds stays valid for up to 10
-  minutes; it carries metadata only, and new tokens leave the frozen
-  organization out;
+- open dashboard live-update streams for the frozen organization close
+  immediately and no further signals are sent;
 - credentials and Capabilities are not revoked, and their expiry keeps
   running.
 

@@ -18,6 +18,26 @@ At a glance:
 | [`passkey-verification`](#passkey-verification) | A person's request to the organization is refused unless their sign-in was made with a trusted passkey that verified them. | each such request, per person and reason | `admin reenroll`, or reset `--control passkey-verification` |
 | [`credential-lifetime`](#credential-lifetime) | Machine credentials get a default lifetime and none above a maximum. | would-default and would-refuse | reset `--control credential-lifetime` |
 
+## Quick start (safe rollout)
+
+Every control starts **`off`**. Always test a control in **`report`** mode
+first—it blocks nothing and counts every request that `enforce` would stop:
+
+```sh
+# 1. Start counting without blocking anyone
+varlatch security set admin-step-up report
+
+# 2. After a few days of normal work & CI runs, check what would have been affected
+varlatch security status
+
+# 3. Turn on enforcement once the counts look right
+varlatch security set admin-step-up enforce
+```
+
+Make sure every organization admin has at least one **trusted passkey** first
+(checked on the organization's **Security** page), because turning a control
+down or off requires approving with a trusted passkey.
+
 ## Off by default
 
 - **Every control is off** on every installation and in every
@@ -39,9 +59,8 @@ At a glance:
     passkeys only](#trusted-passkeys-only)) and, for each sign-in, whether
     the passkey verified the person and which passkey it was;
   - the dashboard removes passkeys through Varlatch's
-    `DELETE /v1/me/passkeys/{id}` instead of Better Auth's own endpoint,
-    which is turned off; with no control enforced anywhere you belong, it
-    behaves as before;
+    `DELETE /v1/me/passkeys/{id}`; with no control enforced anywhere you belong,
+    it behaves as before;
   - the read-only views: the [Security page](#the-security-page),
     `varlatch security status`, `varlatch security report`, machine reach,
     and the `Varlatch-Credential-Expires` header with the CLI's expiry
@@ -338,10 +357,8 @@ What the reasons mean:
   request would have been refused.
 
 For `passkey-verification`, the operation is the first permission the
-request was allowed (for example `project.read` or `secret.reveal`),
-`organization.access` for a request allowed without one, or
-`convex.token` for the dashboard's realtime token, which counts once for
-each organization it covers.
+request was allowed (for example `project.read` or `secret.reveal`), or
+`organization.access` for a request allowed without one.
 
 ### How counts appear
 
@@ -721,9 +738,9 @@ record of how it was made), `not-user-verified`, or `untrusted-passkey`.
 
 - **Every route of the organization**, reads included: projects,
   environments, values, retrieval and `varlatch run`, validation,
-  disclosure and export, access, settings and the Security page. The
-  organization's Convex token for the dashboard's live updates leaves it
-  out.
+  disclosure and export, access, settings and the Security page. Live-update
+  streams also hold back signals for organizations whose sign-in would be
+  refused.
 - **People only.** Machine credentials (services, CI and OIDC, brokers
   and agents) are never affected, whatever their mode. Capability exercise
   is a broker's, so it is never affected either.
@@ -833,9 +850,8 @@ to the installation or to other organizations.
   decrypting or calling out, which a refused request never does: such a
   request is refused, never told.
 - **A request already under way finishes under the mode it read** (see
-  [When it decides](#when-it-decides)). A Convex token minted before the
-  control was enforced stays valid until it expires, at most 10 minutes;
-  it carries metadata, never values.
+  [When it decides](#when-it-decides)). Open dashboard live-update streams
+  stop receiving signals for the organization immediately.
 - **Whoever controls the host or the deployment can turn it off** with
   the [host operator's reset](#the-way-back-the-host-operators-reset).
 
@@ -910,6 +926,9 @@ live membership in the organization (see [Removing a
 passkey](#removing-a-passkey)).
 
 Report mode counts the same requests without refusing them.
+
+<details>
+<summary>Full list of all 40 operations covered by <code>admin-step-up</code> and what each approval binds to</summary>
 
 These operations, and what an approval for each covers. Machine
 identities:
@@ -1056,6 +1075,11 @@ Grant, demoting an admin, removing a member and revoking a connection.
 Every other operation is refused with `ORGANIZATION_FROZEN`, and no
 approval is created (see [Incident freeze](incident-freeze.md)).
 
+</details>
+
+<details>
+<summary>Evaluation order when multiple controls apply</summary>
+
 ### With the other controls
 
 The controls meet in one place, in this order. A request refused at any
@@ -1085,6 +1109,8 @@ step is refused there, and only the last step creates an approval:
 `admin-step-up` never covers; a host reset of one closes only its own open
 approvals. With `admin-step-up` in `report`, its operations run and are
 counted while `requirement-protection` at `enforce` still asks for its own.
+
+</details>
 
 ### What it does not do
 
@@ -1132,8 +1158,7 @@ Removing a trusted passkey needs an approval while you are a member of an
 organization with any control at `enforce`. Approve it with a trusted passkey, which may be
 the one you are removing. When none of your organizations enforces a
 control, removing a passkey works as before. Removing an unconfirmed
-passkey never needs one. Better Auth's own passkey removal endpoint is
-turned off: the dashboard removes passkeys through Varlatch's
+passkey never needs one. Passkeys are removed through Varlatch's
 `DELETE /v1/me/passkeys/{id}`.
 
 If you are left with unconfirmed passkeys only, you cannot approve
@@ -1191,6 +1216,9 @@ meet:
   and made: removing an OIDC binding, revoking a Grant, demoting an admin,
   removing a member and revoking a connection. Adding a Requirement still
   works.
+
+<details>
+<summary>HTTP API reference &amp; post-approval recheck details</summary>
 
 ## When an approved request is refused after all
 
@@ -1274,3 +1302,5 @@ Every route of an operation that can ask for an approval documents the
 `403 STEP_UP_REQUIRED` answer and the `Varlatch-Approval` header in the
 [OpenAPI description](../../packages/protocol/openapi.yaml)
 (`components.responses.StepUpRequired`).
+
+</details>
