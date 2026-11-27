@@ -366,7 +366,7 @@ linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64, windows/arm
 | github.com/sigstore/sigstore | v1.11.1 | Apache-2.0 | varlatch, varlatchd |
 | github.com/sigstore/sigstore-go | v1.4.0 | Apache-2.0 | varlatch, varlatchd |
 | github.com/sigstore/timestamp-authority/v2 | v2.2.0 | Apache-2.0 | varlatch, varlatchd |
-| github.com/tailscale/hujson | v0.0.0-20260727124030-b80ff77dac4f | BSD-3-Clause | varlatchd |
+| github.com/tailscale/hujson | v0.0.0-20260727124030-b80ff77dac4f | BSD-3-Clause | varlatch, varlatchd |
 | github.com/tailscale/peercred | v0.0.0-20250107143737-35a0c7bd7edc | BSD-3-Clause | varlatchd |
 | github.com/tailscale/web-client-prebuilt | v0.0.0-20260917222731-e0ed2d0d0fea | BSD-3-Clause | varlatchd |
 | github.com/tailscale/wireguard-go | v0.0.0-20260928213032-417aef361226 | MIT | varlatchd |
