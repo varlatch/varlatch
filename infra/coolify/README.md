@@ -556,9 +556,24 @@ Because the Compose file resolves the image through `VARLATCH_VARLATCHD_DIGEST`,
 upgrading to a new 0.50.x release changes that variable and redeploys the
 Coolify application without editing the Compose file.
 
-- **Manual upgrade:** update `VARLATCH_VARLATCHD_DIGEST` in Coolify to the
-  verified target release digest, deploy, and confirm `/readyz` answers `200`.
-  To roll back, restore the previous `VARLATCH_VARLATCHD_DIGEST` and redeploy.
+- **Manual upgrade:** take a backup first (`docker exec <container> varlatchd
+  admin backup run`, a copy kept off the host), then update
+  `VARLATCH_VARLATCHD_DIGEST` in Coolify to the verified target release digest,
+  deploy, and confirm `/readyz` answers `200`. To roll back, restore the
+  previous `VARLATCH_VARLATCHD_DIGEST` and redeploy.
+- **The database schema:** when the target release has a newer schema and its
+  upgrade is rollback-safe (the previous release still opens the upgraded
+  database; every release so far is), `varlatchd` upgrades the schema when the
+  container starts, before it serves, and logs `upgraded the database's
+  schema`. Rolling back by digest then needs no restore. Images up to 0.50.2
+  do not do this and stop on an older database with `run varlatch upgrade`. A
+  release that is not rollback-safe says so in its release notes, and its
+  container stops without changing anything; upgrade it by hand: back up with
+  the previous digest, stop the resource, run the new image once with `admin
+  schema upgrade` on the same mounts, then deploy the new digest. After that,
+  the backup is the only way back.
+  [Upgrading by digest](../../docs/self-hosting/docker-and-coolify.md#upgrading-by-digest)
+  has the commands.
 - **Guarded digest helper (`guarded.mjs` digest mode):** for automated
   deployments where the Coolify API token is held in one helper process across
   deploy, `/readyz` verification, and rollback, `guarded.mjs`'s digest mode

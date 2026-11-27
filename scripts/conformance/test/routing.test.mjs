@@ -199,7 +199,9 @@ function goClosure(start) {
 // check read (go/image itself, and what the Dockerfile copies from the
 // repository), and the Go sources of the key-environment refusal: lib/keyenv
 // with every package it imports, the configuration it shares with
-// varlatchd, the daemon's serve and admin, both entrypoints.
+// varlatchd, the daemon's serve and admin, both entrypoints; and the schema
+// and its upgrade steps (server/db), which serve applies at start in the
+// image (check 9, the upgrade by digest).
 test("go-image's patterns select every file the image's build and check read, and the refusal's Go sources", () => {
   const files = readdirSync(join(REPO, "go/image")).map((f) => `go/image/${f}`);
   const dockerfile = readFileSync(join(REPO, "go/image/Dockerfile"), "utf8");
@@ -217,7 +219,7 @@ test("go-image's patterns select every file the image's build and check read, an
   const compose = /^const COMPOSE = "([^"]+)";$/m.exec(readFileSync(join(REPO, "go/image/check-image.mjs"), "utf8"));
   assert.ok(compose, "check-image.mjs names the Compose file it runs");
   files.push(compose[1]);
-  for (const dir of [...goClosure("lib/keyenv"), "lib/storage", "server/config", "server/daemon", "cmd/varlatchd"]) files.push(...goFiles(dir));
+  for (const dir of [...goClosure("lib/keyenv"), "lib/storage", "server/config", "server/daemon", "server/db", "cmd/varlatchd"]) files.push(...goFiles(dir));
   files.push("go/cmd/varlatch/main.go");
   const unselected = files.filter((f) => !selects(IMAGE_PATTERNS, f)).sort();
   assert.deepEqual(unselected, [], `files go-image reads that do not select it:\n${unselected.join("\n")}`);

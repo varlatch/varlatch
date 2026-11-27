@@ -317,7 +317,8 @@ func serve(opts Options, h *hooks) int {
 	if g, err := backup.ReadGate(cfg.DataDir); err != nil || g != nil && g.Kind == "restore" {
 		log.Warn("a restore has not completed: varlatchd answers 503 MAINTENANCE and leaves the database as it is; run varlatchd admin backup restore again", "file", filepath.Join(cfg.DataDir, backup.GateFile))
 	} else {
-		if _, err := db.Init(ctx, store, buildinfo.Version); err != nil {
+		// In the image, a rollback-safe schema upgrade too (schemastart.go).
+		if err := schemaAtStart(ctx, store, log); err != nil {
 			return fail(ExitFailure, "the database cannot be used", "file", cfg.DatabasePath(), "error", err)
 		}
 		var created bool

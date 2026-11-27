@@ -253,6 +253,10 @@ func printSchemaStatus(stdout io.Writer, asJSON bool, dataDir string, binary sch
 		fmt.Fprintf(stdout, "Database: schema version %d, opens in varlatchd of schema %d and later; created by %s, last changed by %s.\n",
 			d.SchemaVersion, d.CompatibleFrom, d.CreatedByRelease, d.UpdatedByRelease)
 		switch {
+		case needsUpgrade && inImage() && db.RollbackSafeFrom(d.SchemaVersion):
+			fmt.Fprintln(stdout, "It needs an upgrade, which is rollback-safe: this image's varlatchd applies it when it starts, and the previous image still opens the result.")
+		case needsUpgrade && inImage():
+			fmt.Fprintln(stdout, "It needs an upgrade that is not rollback-safe: take a backup, stop varlatchd, and run varlatchd admin schema upgrade with this image.")
 		case needsUpgrade:
 			fmt.Fprintln(stdout, "It needs an upgrade: run varlatch upgrade.")
 		case opens:

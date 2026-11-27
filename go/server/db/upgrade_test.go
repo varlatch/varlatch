@@ -41,7 +41,7 @@ func TestUpgradeAppliesEveryStepInOneJob(t *testing.T) {
 
 	// One step: the rollback-safe one keeps the previous version's
 	// compatible_from.
-	up, err := upgrade(ctx, s, "0.50.1", steps[:target-2], target-1, CompatibleFrom)
+	up, err := upgrade(ctx, s, "0.50.1", steps[:target-2], target-1, CompatibleFrom, false)
 	if err != nil || !up.Changed || up.From != SchemaVersion || up.To != target-1 || up.CompatibleFrom != CompatibleFrom {
 		t.Fatalf("upgrade by one rollback-safe step: %+v, %v", up, err)
 	}
@@ -63,14 +63,14 @@ func TestUpgradeAppliesEveryStepInOneJob(t *testing.T) {
 	}
 
 	// Again with the same steps: nothing to do.
-	up, err = upgrade(ctx, s, "0.50.1", steps[:target-2], target-1, CompatibleFrom)
+	up, err = upgrade(ctx, s, "0.50.1", steps[:target-2], target-1, CompatibleFrom, false)
 	if err != nil || up.Changed || up.From != target-1 || up.To != target-1 {
 		t.Fatalf("a second upgrade to the same version: %+v, %v", up, err)
 	}
 
 	// The next step is not rollback-safe: compatible_from moves to it, and
 	// this varlatchd no longer opens the database.
-	up, err = upgrade(ctx, s, "0.51.0", steps, target, target)
+	up, err = upgrade(ctx, s, "0.51.0", steps, target, target, false)
 	if err != nil || !up.Changed || up.From != target-1 || up.To != target || up.CompatibleFrom != target {
 		t.Fatalf("upgrade by a step that is not rollback-safe: %+v, %v", up, err)
 	}
@@ -88,7 +88,7 @@ func TestUpgradeFromTheFirstVersionRunsEveryStep(t *testing.T) {
 	ctx := context.Background()
 	s := openDB(t)
 	steps, target := syntheticSteps()
-	up, err := upgrade(ctx, s, testRelease, steps, target, target)
+	up, err := upgrade(ctx, s, testRelease, steps, target, target, false)
 	if err != nil || up.From != SchemaVersion || up.To != target {
 		t.Fatalf("%+v, %v", up, err)
 	}
@@ -105,7 +105,7 @@ func TestAFailedUpgradeChangesNothing(t *testing.T) {
 	s := openDB(t)
 	steps, target := syntheticSteps()
 	steps[len(steps)-1].SQL = "ALTER TABLE no_such_table ADD COLUMN x TEXT;"
-	_, err := upgrade(ctx, s, testRelease, steps, target, target)
+	_, err := upgrade(ctx, s, testRelease, steps, target, target, false)
 	if err == nil || !strings.Contains(err.Error(), "upgrading the schema to version") {
 		t.Fatalf("a failing step: %v", err)
 	}
@@ -193,5 +193,96 @@ func TestUpgradeRefusesARecordedVersionThatIsNoSchemaVersion(t *testing.T) {
 			t.Errorf("version %d, compatible from %d: %v", row.version, row.compatibleFrom, err)
 		}
 		_ = s.Close()
+	}
+}
+
+// UpgradeIfRollbackSafe runs only an upgrade whose result the release that
+// wrote the database still opens; one that is not rollback-safe changes
+// nothing.
+func TestUpgradeIfRollbackSafe(t *testing.T) {
+	ctx := context.Background()
+	steps, target := syntheticSteps()
+
+	// From the current version by the rollback-safe step: upgraded, in the
+	// same way as Upgrade, and recorded.
+	s := openDB(t)
+	up, err := upgrade(ctx, s, "0.50.1", steps[:target-2], target-1, CompatibleFrom, true)
+	if err != nil || !up.Changed || up.From != SchemaVersion || up.To != target-1 || up.CompatibleFrom != CompatibleFrom {
+		t.Fatalf("a rollback-safe upgrade: %+v, %v", up, err)
+	}
+	if v := versionOf(t, ctx, query.New(s.Reader())); v.Version != target-1 || v.UpdatedByRelease != "0.50.1" {
+		t.Fatalf("schema_version after a rollback-safe upgrade: %+v", v)
+	}
+	// The same version: nothing to do.
+	if up, err := upgrade(ctx, s, "0.50.1", steps[:target-2], target-1, CompatibleFrom, true); err != nil || up.Changed {
+		t.Fatalf("again: %+v, %v", up, err)
+	}
+
+	// To the version after it, which is not rollback-safe: refused, and
+	// nothing changed (no step, no version).
+	before := versionOf(t, ctx, query.New(s.Reader()))
+	up, err = upgrade(ctx, s, "0.51.0", steps, target, target, true)
+	var nerr *NotRollbackSafeError
+	if !errors.As(err, &nerr) || nerr.Database != target-1 || nerr.CompatibleFrom != target || nerr.Binary != target || up.Changed {
+		t.Fatalf("an upgrade that is not rollback-safe: %+v, %v", up, err)
+	}
+	if !strings.Contains(err.Error(), "is not rollback-safe") {
+		t.Fatalf("the refusal: %v", err)
+	}
+	if v := versionOf(t, ctx, query.New(s.Reader())); v != before {
+		t.Fatalf("schema_version after the refusal: %+v (before %+v)", v, before)
+	}
+	var cols int
+	if err := s.Reader().QueryRowContext(ctx, "SELECT count(*) FROM pragma_table_info('upgrade_added')").Scan(&cols); err != nil || cols != 2 {
+		t.Fatalf("the refused step ran: %d columns, %v", cols, err)
+	}
+
+	// Two steps at once, the last not rollback-safe: refused as a whole,
+	// the rollback-safe one included.
+	s = openDB(t)
+	if _, err := upgrade(ctx, s, "0.51.0", steps, target, target, true); !errors.As(err, &nerr) || nerr.Database != SchemaVersion {
+		t.Fatalf("two steps, the last not rollback-safe: %v", err)
+	}
+	var n int
+	if err := s.Reader().QueryRowContext(ctx, "SELECT count(*) FROM sqlite_schema WHERE name = 'upgrade_added'").Scan(&n); err != nil || n != 0 {
+		t.Fatalf("the rollback-safe step of a refused upgrade ran: %d, %v", n, err)
+	}
+
+	// A newer database this varlatchd may open, or one it may not: as
+	// Upgrade.
+	if _, err := upgrade(ctx, s, testRelease, steps[:target-2], target-1, CompatibleFrom, true); err != nil {
+		t.Fatal(err)
+	}
+	if up, err := upgrade(ctx, s, testRelease, steps[:target-3], target-2, CompatibleFrom, true); err != nil || up.Changed || up.From != target-1 {
+		t.Fatalf("a newer database it may open: %+v, %v", up, err)
+	}
+
+	// The real steps: every one is rollback-safe, so UpgradeIfRollbackSafe
+	// takes the current database as it is.
+	if up, err := UpgradeIfRollbackSafe(ctx, openDB(t), testRelease); err != nil || up.Changed {
+		t.Fatalf("UpgradeIfRollbackSafe of a current database: %+v, %v", up, err)
+	}
+	if !RollbackSafeFrom(SchemaVersion) || RollbackSafeFrom(CompatibleFrom-1) {
+		t.Fatalf("RollbackSafeFrom around CompatibleFrom %d", CompatibleFrom)
+	}
+}
+
+// A failing step of a rollback-safe upgrade leaves the database at its old
+// version, as Upgrade's.
+func TestAFailedRollbackSafeUpgradeChangesNothing(t *testing.T) {
+	ctx := context.Background()
+	s := openDB(t)
+	steps, target := syntheticSteps()
+	steps = steps[:target-2]
+	steps[len(steps)-1].SQL += "ALTER TABLE no_such_table ADD COLUMN x TEXT;"
+	if _, err := upgrade(ctx, s, testRelease, steps, target-1, CompatibleFrom, true); err == nil || !strings.Contains(err.Error(), "upgrading the schema to version") {
+		t.Fatalf("a failing step: %v", err)
+	}
+	if v := versionOf(t, ctx, query.New(s.Reader())); v.Version != SchemaVersion {
+		t.Fatalf("version after a failed upgrade: %+v", v)
+	}
+	var n int
+	if err := s.Reader().QueryRowContext(ctx, "SELECT count(*) FROM sqlite_schema WHERE name = 'upgrade_added'").Scan(&n); err != nil || n != 0 {
+		t.Fatalf("the failed step's table survived: %d, %v", n, err)
 	}
 }
