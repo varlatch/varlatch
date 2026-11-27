@@ -7,6 +7,38 @@ fixes.
 
 ## Unreleased
 
+### API
+
+- **Capabilities issued for another broker, exercise-only credentials, and
+  tokens exchanged once (#421, the Go server only).** Existing calls are
+  unchanged; `/v1/meta` lists `capabilities.delegate`,
+  `capabilities.single-use` and `auth.oidc.limits`, which a client checks
+  before it relies on a limit (a server without them ignores the new
+  members). [Brokers on many machines](docs/reference/ci-and-machines.md#brokers-on-many-machines)
+  shows the calls.
+  - A new action, `capability.issue`, granted like any other but held by no
+    built-in role, lets a service, workload, ci or broker identity issue a
+    Capability for the broker it names (`brokerIdentityId`). Only that
+    broker can exercise it; the issuer can list and revoke it, never
+    exercise it. Removing the issuer's grant refuses the next exercise;
+    retiring the issuer revokes what it issued, as retiring a broker or an
+    agent does.
+  - `singleUse` at issuing: exercised once.
+  - An OIDC binding takes `exerciseOnly` (the exchanged credential exercises
+    the broker's Capabilities and is refused everything else, reads
+    included), `runIdClaim` (only Capabilities whose `runId` equals that
+    claim of the token) and `singleExchange` (each token exchanges once, by
+    its issuer and `jti`, or by the token itself without a `jti`; always on
+    with `exerciseOnly`, off for existing bindings). Claim names that start
+    with `varlatch:` are reserved. An identity's live bindings for one issuer
+    must be all limited or all unlimited; mixed ones exchange nothing.
+  - The `Action` enum gains `capability.issue`: a client generated from the
+    earlier document that rejects unknown values needs regenerating.
+  - The database schema is version 4 (two new tables). It is rollback-safe:
+    on an earlier release, as after a reverse migration to 0.23, an
+    exercise-only credential, a limited binding, a delegated Capability and a
+    single-use Capability are refused, never unlimited.
+
 ### Server
 
 - **The container image upgrades the database schema when it starts.** An
@@ -122,37 +154,6 @@ are part of this release.
   refusal where an earlier listing showed no other device under the name,
   the error now states that no device was listed instead of sending the
   operator to rename or delete another device.
-
-### API
-
-- **Capabilities issued for another broker, exercise-only credentials, and
-  tokens exchanged once (#421, the Go server only).** Existing calls are
-  unchanged; `/v1/meta` lists `capabilities.delegate`,
-  `capabilities.single-use` and `auth.oidc.limits`, which a client checks
-  before it relies on a limit (a server without them ignores the new
-  members). [Brokers on many machines](docs/reference/ci-and-machines.md#brokers-on-many-machines)
-  shows the calls.
-  - A new action, `capability.issue`, granted like any other but held by no
-    built-in role, lets a service, workload, ci or broker identity issue a
-    Capability for the broker it names (`brokerIdentityId`). Only that
-    broker can exercise it; the issuer can list and revoke it, never
-    exercise it. Removing the issuer's grant, or retiring it, refuses the
-    next exercise.
-  - `singleUse` at issuing: exercised once.
-  - An OIDC binding takes `exerciseOnly` (the exchanged credential exercises
-    the broker's Capabilities and is refused everything else, reads
-    included), `runIdClaim` (only Capabilities whose `runId` equals that
-    claim of the token) and `singleExchange` (each token exchanges once, by
-    its issuer and `jti`, or by the token itself without a `jti`; always on
-    with `exerciseOnly`, off for existing bindings). Claim names that start
-    with `varlatch:` are reserved. An identity's live bindings for one issuer
-    must be all limited or all unlimited; mixed ones exchange nothing.
-  - The `Action` enum gains `capability.issue`: a client generated from the
-    earlier document that rejects unknown values needs regenerating.
-  - The database schema is version 3 (two new tables). It is rollback-safe:
-    on an earlier release, as after a reverse migration to 0.23, an
-    exercise-only credential, a limited binding, a delegated Capability and a
-    single-use Capability are refused, never unlimited.
 
 ## 0.50.0 (2026-11-25)
 
