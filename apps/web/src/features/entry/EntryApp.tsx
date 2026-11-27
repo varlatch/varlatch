@@ -76,7 +76,15 @@ export function EntryApp() {
     const mine = turn.current;
     const link = token.current;
     try {
-      let view = await lookup(link, bearer.current);
+      let view = await lookup(link, bearer.current).catch((err: unknown) => {
+        // A session that ended meanwhile is dropped, and the link looked up
+        // once without it: a link open to anyone needs none, and one for a
+        // member asks for the sign-in below.
+        const ended = err instanceof EntryRefusal && (err.code === "INVALID_CREDENTIAL" || err.code === "AUTHENTICATION_REQUIRED");
+        if (!ended || bearer.current === null || turn.current !== mine) throw err;
+        bearer.current = null;
+        return lookup(link, null);
+      });
       if (turn.current !== mine) return;
       if (view.signInRequired) {
         // Somebody signed in in this browser already is asked nothing.

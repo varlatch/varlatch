@@ -327,6 +327,42 @@ describe("a session that ended", () => {
     expect(header(asked.at(-1)!.init)).toBeUndefined();
     expect(one("entry-done")).toBeDefined();
   });
+  it("is dropped when looking up a link open to anyone, which asks no sign-in", async () => {
+    const SECOND = `vlt_entry_${"b".repeat(43)}`;
+    const header = (init: RequestInit) => (init.headers as Record<string, string>).Authorization;
+    session.authPost.mockResolvedValue({ ok: true, json: async () => ({ token: "vlt_web_made_up" }) });
+    let ended = false;
+    answers["/v1/entry-links/lookup"] = (body, init) =>
+      ended && header(init)
+        ? refusal(401, "INVALID_CREDENTIAL", "The bearer has ended")
+        : body.token === SECOND
+          ? [200, { ...view, item: "OPEN_KEY" }]
+          : header(init)
+            ? [200, { ...view, restrictedTo: "member" }]
+            : [200, { restrictedTo: "member", signInRequired: true }];
+    await render(<EntryApp />);
+    session.browserSession.mockResolvedValue({ csrfToken: "c", identityId: "idn_1" });
+    await act(async () => one("entry-sign-in-button").props.onClick());
+    await flush();
+    expect(text()).toContain("PROVIDER_KEY");
+    ended = true;
+    session.authPost.mockReset();
+    session.browserSession.mockResolvedValue({ csrfToken: "c", identityId: null });
+    page.location.hash = `#${SECOND}`;
+    await act(async () => page.listeners.hashchange!.forEach((f) => f()));
+    await flush();
+    expect(all("entry-sign-in")).toEqual([]);
+    expect(text()).toContain("OPEN_KEY");
+    expect(asked.slice(-2).map((a) => [a.path, Boolean(header(a.init))])).toEqual([
+      ["/v1/entry-links/lookup", true],
+      ["/v1/entry-links/lookup", false],
+    ]);
+    await type("made-up");
+    await send();
+    expect(asked.at(-1)!.path).toBe("/v1/entry-links/submit");
+    expect(header(asked.at(-1)!.init)).toBeUndefined();
+    expect(one("entry-done")).toBeDefined();
+  });
   it("asks for the sign-in again for a link for a member", async () => {
     session.authPost.mockResolvedValue({ ok: true, json: async () => ({ token: "vlt_web_made_up" }) });
     answers["/v1/entry-links/lookup"] = (_, init) =>
