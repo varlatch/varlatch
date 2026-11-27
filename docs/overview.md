@@ -12,7 +12,7 @@ Most people arrive at Varlatch in one of two ways:
 1. **You are setting up a server for yourself or your team.**
    One person installs `varlatchd` once on a Linux host (or in Docker / Coolify).
    It is a single binary with its own SQLite database, dashboard, HTTPS
-   certificates, and encrypted backups—no Postgres or extra containers needed.
+   certificates, and encrypted backups: no Postgres or extra containers needed.
    Start at [Install Varlatch](self-hosting.md).
 2. **Someone invited you to an existing server.**
    You open your one-time invitation link, create a passkey (there are no

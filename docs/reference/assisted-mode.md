@@ -1,7 +1,7 @@
 # Assisted mode: a coding agent driving the CLI
 
 When a coding agent such as Claude Code, Codex, or Cursor runs `varlatch`
-commands for you, it uses your own sign-in—and everything a command prints goes
+commands for you, it uses your own sign-in, and everything a command prints goes
 into the agent's context. **Assisted mode** (`varlatch --assisted ...`)
 accident-proofs CLI commands so Secret values stay out of that context.
 

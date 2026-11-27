@@ -6,7 +6,7 @@ you:
 
 ## 1. Self-host Varlatch (setting up a server)
 
-Run `varlatchd` on any Linux host in three commands—one binary with its own
+Run `varlatchd` on any Linux host in three commands: one binary with its own
 SQLite database, dashboard, HTTPS certificates, and encrypted backups:
 
 ```sh
@@ -31,7 +31,7 @@ varlatch run -- npm run dev
 
 ## 3. Connect a repository (server already running)
 
-Wire up a repo and move existing `.env` files into Varlatch interactively—or
+Wire up a repo and move existing `.env` files into Varlatch interactively, or
 hand the setup to your coding agent:
 
 ```sh

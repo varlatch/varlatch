@@ -119,7 +119,7 @@ curl -fLO "$BASE/$CLI" &&
 release has no `SHA256SUMS.sigstore.json`, tell the human what failed: do
 not install the file another way. Releases 0.15.0 and earlier are not signed: for those,
 stop and point the human to
-[Verifying a release](operations/verify-release.md). An installation on 0.23.0 or earlier has no such file: follow
+[Verifying a release](operations/verify-release.md). An installation on 0.23.x or earlier has no such file: follow
 [its version of this page](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/set-up-with-an-agent.md).
 On Windows, follow
 [On Windows](reference/install-the-cli.md#on-windows), with the signature check

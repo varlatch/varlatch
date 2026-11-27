@@ -6,7 +6,7 @@ a self-hosted Varlatch installation. Looking to install a new server? Start at
 
 ## Common host commands
 
-Host commands run as `root` on the server—no Varlatch sign-in or passkey is
+Host commands run as `root` on the server: no Varlatch sign-in or passkey is
 needed.
 
 ```sh
@@ -88,7 +88,7 @@ Every stored value depends on the **Root KEK**, and every backup archive depends
 on the **backup key** as well. Losing both the host and either key means the
 data cannot be recovered.
 
-- Keep at least **two copies** of each key in separate locations—neither on the
+- Keep at least **two copies** of each key in separate locations, neither on the
   Varlatch host nor inside your backup bucket (for example, a password manager
   and a paper copy in a safe).
 - Keep the Root KEK and backup key **apart from each other**.
@@ -117,7 +117,7 @@ sudo varlatchd admin kek restore --in kek-escrow.json --out /root/root-kek \
 ```
 
 Omit `--passphrase-file` in an interactive terminal to be prompted. On a fresh
-host where no database exists yet, `kek restore` writes the key with a warning—run
+host where no database exists yet, `kek restore` writes the key with a warning: run
 `kek verify` once the database is restored.
 
 ### Shares for several people

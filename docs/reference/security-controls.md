@@ -21,7 +21,7 @@ At a glance:
 ## Quick start (safe rollout)
 
 Every control starts **`off`**. Always test a control in **`report`** mode
-first—it blocks nothing and counts every request that `enforce` would stop:
+first: it blocks nothing and counts every request that `enforce` would stop:
 
 ```sh
 # 1. Start counting without blocking anyone

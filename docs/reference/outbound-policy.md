@@ -70,7 +70,7 @@ certificates in the system's directories (or `SSL_CERT_DIR`'s) are read
 too. Where those hold the public authorities, as in the image, they stay
 trusted: `SSL_CERT_FILE` is no way to distrust them.
 
-The TypeScript server (0.23.0 and earlier) took extra authorities from
+The TypeScript server (0.23.x and earlier) took extra authorities from
 `NODE_EXTRA_CA_CERTS`. `varlatchd` does not read that variable: when you
 migrate, add those authorities to the host. The CLI still reads it, on each
 person's machine.
@@ -100,7 +100,7 @@ A comma-separated list of entries. Spaces are ignored. Empty or unset means
 no exceptions. varlatchd reads it at startup: change it in
 `/etc/varlatch/varlatchd.conf`, then `sudo systemctl restart varlatchd`. An
 invalid entry stops varlatchd from starting, with an error that names the
-entry. (In 0.23.0 and earlier, the setting was `VARLATCH_OUTBOUND_ALLOW`.)
+entry. (In 0.23.x and earlier, the setting was `VARLATCH_OUTBOUND_ALLOW`.)
 
 | Entry | Matches |
 |---|---|

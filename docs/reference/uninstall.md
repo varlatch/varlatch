@@ -129,7 +129,7 @@ backup bucket.
 With the container image, remove the container, then the data, keys and
 configuration paths you mounted (`/srv/varlatch` on Coolify).
 
-An installation of 0.23.0 or earlier runs on Docker Compose:
+An installation of 0.23.x or earlier runs on Docker Compose:
 [how to remove it](https://github.com/varlatch/varlatch/tree/v0.23.0/docs/reference/uninstall.md#what-varlatch-puts-on-your-machine).
 
 **Your passkey** stays where you created it, on your device, in your

@@ -26,8 +26,8 @@ trusted passkeys.
 
 Signing in and approving a CLI sign-in work with any of your passkeys, and
 you can remove any of them, as before. Only a **trusted** passkey can approve
-sensitive changes—such as turning a security control down or off
-([Security controls and approvals](security-controls.md))—or satisfy an
+sensitive changes, such as turning a security control down or off
+([Security controls and approvals](security-controls.md)), or satisfy an
 organization's `passkey-verification` control.
 
 If none of your passkeys is trusted, you cannot confirm one yourself: ask

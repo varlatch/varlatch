@@ -500,9 +500,9 @@ at what you find. Delete that machine and its copies of the keys
 afterwards.
 
 <details>
-<summary>Legacy: archives from 0.23.0 and earlier</summary>
+<summary>Legacy: archives from 0.23.x and earlier</summary>
 
-Varlatch 0.50 does not restore an archive made by 0.23.0 or earlier. Keep
+Varlatch 0.50 does not restore an archive made by 0.23.x or earlier. Keep
 the old release, its archives and their keys together for as long as you
 may need them. [Old archives: the converter](migrate-to-0.50.md#old-archives-the-converter)
 turns one into an archive 0.50 restores.

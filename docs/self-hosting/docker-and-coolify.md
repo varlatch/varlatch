@@ -2,7 +2,7 @@
 
 Varlatch ships as a single distroless container image
 (`ghcr.io/varlatch/varlatchd`) with its embedded SQLite database and built-in
-Tailscale support—no PostgreSQL, Convex, nginx, or sidecar containers.
+Tailscale support: no PostgreSQL, Convex, nginx, or sidecar containers.
 
 > **Prefer a plain Linux server?** [Install Varlatch](../self-hosting.md) sets up
 > `varlatchd` directly via systemd in three commands with a guided wizard. The
@@ -200,5 +200,5 @@ compete for CPU on a 2-core host. See
 [Sharing the host with other workloads](requirements.md#sharing-the-host-with-other-workloads)
 for `cpu_shares` tuning (`4096`).
 
-> **Upgrading from a 0.23.0 Coolify stack?** Follow
-> [Migrating from 0.23.0 to 0.50](../operations/migrate-to-0.50.md#on-coolify).
+> **Upgrading from a 0.23.x Coolify stack?** Follow
+> [Migrating from 0.23.x to 0.50](../operations/migrate-to-0.50.md#on-coolify).
