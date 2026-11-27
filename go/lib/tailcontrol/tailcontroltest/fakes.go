@@ -91,6 +91,20 @@ type Tailscale struct {
 	// ReleaseDelay has passed. Zero both: a freed name is free at once.
 	ReleaseRenames int
 	ReleaseDelay   time.Duration
+	// Policy is the tailnet policy file the API serves (HuJSON, as given)
+	// to a token whose scopes include policy_file:read; any other token is
+	// refused with 403. Empty: "{}".
+	Policy string
+	// PolicyForbidden refuses every read of the policy file with 403,
+	// whatever the token's scopes.
+	PolicyForbidden bool
+	// PolicyReads counts the policy file's reads answered.
+	PolicyReads int
+	// Blocked are names the fake never gives a device, as Tailscale does
+	// not when the tailnet policy file defines them (a hosts alias): a
+	// rename to one is applied with a dedup suffix, though no device lists
+	// it (2026-11-27).
+	Blocked []string
 	// Deduped counts the renames applied with a dedup suffix.
 	Deduped  int
 	pending  map[string]string // device id -> name a lagged rename sets
@@ -98,9 +112,10 @@ type Tailscale struct {
 
 	mu        sync.Mutex
 	nodes     []*Node
-	tokens    map[string]bool // live tokens
-	Exchanges int             // token exchanges made
-	Used      map[string]int  // requests made with each token
+	tokens    map[string]bool   // live tokens
+	scopes    map[string]string // each token's scopes, as exchanged
+	Exchanges int               // token exchanges made
+	Used      map[string]int    // requests made with each token
 }
 
 // NewTailscale serves a fake with these nodes; Close stops it.
@@ -125,6 +140,13 @@ func (f *Tailscale) ReleaseAll() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.reserved = nil
+}
+
+// SetBlocked sets Blocked under the fake's lock.
+func (f *Tailscale) SetBlocked(names ...string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.Blocked = names
 }
 
 // SetReleaseRenames sets ReleaseRenames under the fake's lock.
@@ -231,6 +253,10 @@ func (f *Tailscale) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		tok := "tskey-api-" + random(16)
 		f.tokens[tok] = true
+		if f.scopes == nil {
+			f.scopes = map[string]string{}
+		}
+		f.scopes[tok] = f.Scope
 		f.Exchanges++
 		scope := f.Scope
 		if f.EchoScope {
@@ -248,6 +274,19 @@ func (f *Tailscale) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	f.Used[tok]++
 	switch {
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v2/tailnet/") && strings.HasSuffix(r.URL.Path, "/acl"):
+		if f.PolicyForbidden || !slices.Contains(strings.Fields(f.scopes[tok]), "policy_file:read") {
+			f.fail(w, r, http.StatusForbidden, "calling actor does not have enough permissions to perform this function")
+			return
+		}
+		policy := f.Policy
+		if policy == "" {
+			policy = "{}"
+		}
+		f.PolicyReads++
+		w.Header().Set("Content-Type", "application/hujson")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(policy))
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v2/tailnet/") && strings.HasSuffix(r.URL.Path, "/devices"):
 		// A lagged rename shows from the second listing: this one shows the
 		// old name and arms the next.
@@ -302,7 +341,8 @@ func (f *Tailscale) serve(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		if !strings.EqualFold(target.Name, stored) && f.unreleased(stored) {
+		blocked := slices.ContainsFunc(f.Blocked, func(b string) bool { return strings.EqualFold(b, stored) })
+		if !strings.EqualFold(target.Name, stored) && (blocked || f.unreleased(stored)) {
 			stored = f.dedup(target, stored)
 			f.Deduped++
 		}

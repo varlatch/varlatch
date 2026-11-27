@@ -451,6 +451,9 @@ func (e *Engine) prepareTailnet(ctx context.Context, j *Journal) error {
 		return fmt.Errorf("preflight: the target has no tailnet auth key: %w; nothing was done", ErrNoTailnetAuthority)
 	}
 	name := strings.ToLower(info.Machine)
+	if err := e.checkTailnetPolicy(ctx, name); err != nil {
+		return fmt.Errorf("preflight: %w; nothing was done", err)
+	}
 	op := ""
 	switch {
 	case tn.HeldAs != "":
@@ -524,6 +527,35 @@ func (e *Engine) prepareTailnet(ctx context.Context, j *Journal) error {
 	}
 	if _, err := he.Prepare(ctx, plan); err != nil {
 		return fmt.Errorf("preflight: the tailnet handoff: %w", err)
+	}
+	return nil
+}
+
+// checkTailnetPolicy refuses a handoff of name that the tailnet policy file
+// would block: Tailscale does not assign a machine name equal to one of the
+// policy's hosts aliases, so the name, once let go of, would go to no
+// device (2026-11-27: the old node held it only because it predated the
+// alias). It reads the policy file only when the authority may
+// (tailcontrol.PolicyReader with the OAuth client's optional
+// policy_file:read scope); when it may not, or the read fails, it says to
+// check by hand and goes on. A self-hosted control server (Headscale) has
+// no such rule: nothing is checked.
+func (e *Engine) checkTailnetPolicy(ctx context.Context, name string) error {
+	pr, ok := e.Tailnet.Control.(tailcontrol.PolicyReader)
+	if !ok {
+		return nil
+	}
+	hosts, err := pr.PolicyHosts(ctx)
+	if err != nil {
+		why := fmt.Sprintf("it could not be read (%v)", err)
+		if errors.Is(err, tailcontrol.ErrPolicyNoScope) {
+			why = fmt.Sprintf("the OAuth client may not read it (adding the %s scope to the client lets the migration check it)", tailcontrol.PolicyScope)
+		}
+		e.say("Warning: the tailnet policy file was not checked: %s. Tailscale does not give a device a machine name the policy file also defines, so before the name moves, check by hand that its hosts section has no alias %q (rename one that does); otherwise the name, once let go of, goes to no device and the handoff fails.", why, name)
+		return nil
+	}
+	if alias, found := tailcontrol.PolicyAlias(hosts, name); found {
+		return fmt.Errorf("the tailnet policy file has a hosts alias %q, the name the handoff moves: Tailscale does not give a device a machine name the policy file also defines, so the name, once let go of, would go to no device: rename that alias in the policy file, and in the rules that use it", alias)
 	}
 	return nil
 }
@@ -680,6 +712,9 @@ func (e *Engine) unwindTailnet(ctx context.Context, j *Journal) error {
 		rec.Reverse = nil
 	}
 	if rec.Reverse == nil {
+		if err := e.checkTailnetPolicy(ctx, rec.Name); err != nil {
+			return fmt.Errorf("giving the tailnet name back: %w", err)
+		}
 		plan := tailhandoff.NewReverse(rec.Operation, rec.Name, rec.IncomingID, rec.ServingID, retained, rec.Certificates)
 		if _, err := he.Prepare(ctx, plan); err != nil {
 			return fmt.Errorf("giving the tailnet name back: %w", err)
@@ -695,6 +730,9 @@ func (e *Engine) unwindTailnet(ctx context.Context, j *Journal) error {
 			// with the target's node again): planned and switched again.
 			rec.Reverse = nil
 			plan := tailhandoff.NewReverse(rec.Operation, rec.Name, rec.IncomingID, rec.ServingID, retained, rec.Certificates)
+			if err = e.checkTailnetPolicy(ctx, rec.Name); err != nil {
+				return fmt.Errorf("giving the tailnet name back: %w", err)
+			}
 			if _, err = he.Prepare(ctx, plan); err == nil {
 				st, err = e.moveName(ctx, he.Switch, rec.Operation)
 			}
@@ -766,6 +804,14 @@ func (e *Engine) rollbackTailnet(ctx context.Context, j *Journal) error {
 	var st *tailhandoff.State
 	switch {
 	case rec.Rollback == nil || rec.Rollback.Phase == tailhandoff.Undone:
+		// The policy check first: a refusal here changes nothing (no
+		// ledger merge, no operation, no message that the name moves).
+		if err := e.checkTailnetPolicy(ctx, rec.Name); err != nil {
+			if servedAt(j) != "" {
+				return fmt.Errorf("the tailnet name back: %w; %s", err, keptForResume(j))
+			}
+			return e.undoReverse(ctx, j, fmt.Errorf("the tailnet name back: %w", err))
+		}
 		op, err := tailcontrol.NewOperationID()
 		if err != nil {
 			return err
@@ -784,7 +830,7 @@ func (e *Engine) rollbackTailnet(ctx context.Context, j *Journal) error {
 		rec.RollbackOperation, rec.Rollback = op, nil
 		plan := tailhandoff.NewReverse(op, rec.Name, rec.IncomingID, rec.ServingID, retained, rec.Certificates)
 		e.say("Tailnet: the name %s goes back to the TypeScript release's node.", rec.Name)
-		if _, err := he.Prepare(ctx, plan); err != nil {
+		if _, err = he.Prepare(ctx, plan); err != nil {
 			if servedAt(j) != "" {
 				return fmt.Errorf("the tailnet name back: %w; %s", err, keptForResume(j))
 			}

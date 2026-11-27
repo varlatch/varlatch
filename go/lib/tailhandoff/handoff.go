@@ -322,7 +322,12 @@ func (e *HandoffError) Error() string {
 		// A refusal no listed device explains is said as such: there is no
 		// device to look for in the listing.
 		if unlisted := (*UnlistedHolderError)(nil); errors.As(e.Err, &unlisted) {
-			return fmt.Sprintf("the handoff failed and its undo could not give the name %s back: the tailnet's control plane still refuses it as taken, but lists no device holding it, and neither installation is opened on the tailnet. Look the name up in the tailnet's admin console, correct its assignment there if needed, then resume (varlatch migrate --resume): %v", unlisted.Name, e.Err)
+			return fmt.Sprintf("the handoff failed and its undo could not give the name %s back: the tailnet's control plane still refuses it as taken, but lists no device holding it, and neither installation is opened on the tailnet. Look the name up in the tailnet's admin console and in its policy file (a hosts alias %q keeps Tailscale from giving the name to any device), correct its assignment or rename that alias, then resume (varlatch migrate --resume): %v", unlisted.Name, unlisted.Name, e.Err)
+		}
+		// A name no device lists, never given out through the wait: on
+		// Tailscale, a name the policy file defines (2026-11-27).
+		if unreleased := (*tailcontrol.UnreleasedError)(nil); errors.As(e.Err, &unreleased) && unreleased.Unlisted {
+			return fmt.Sprintf("the handoff failed and its undo could not give the name %s back: the tailnet's control plane does not give the name to any device (it reads back with a suffix), though no device is listed under it, and neither installation is opened on the tailnet. The likely cause is the tailnet policy file: Tailscale does not assign a machine name the policy file also defines, such as a hosts alias %q. Rename that alias in the policy file, then resume (varlatch migrate --resume): %v", unreleased.Name, unreleased.Name, e.Err)
 		}
 		if errors.Is(e.Err, tailcontrol.ErrNameTaken) {
 			return fmt.Sprintf("the handoff failed and its undo could not give a name back: another device holds it now, and neither installation is opened on the tailnet. Rename or delete that device in the tailnet's admin console, then resume: %v", e.Err)

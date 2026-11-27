@@ -39,7 +39,8 @@ const migrateUsage = `Usage:
                    [--tailscale-oauth-client-file <file> --tailnet-auth-key-file <file> [--accept-rollback-certificate]]
                    [--headscale-url <https://IP[:port]> --headscale-api-key-file <file> | --headscale-cli <path>]
                (a source serving a tailnet address: the name moves to the target's node; the OAuth client has the
-                devices:core scope only, the file {"clientId": ..., "clientSecret": ...}; the auth key is reusable,
+                devices:core scope only, or policy_file:read too (the preflight then refuses a policy file hosts
+                alias equal to the name), the file {"clientId": ..., "clientSecret": ...}; the auth key is reusable,
                 with the node's tags; both from files, never an argument; --accept-rollback-certificate goes on
                 when the old node's certificate cannot be renewed to last the rollback window: a rollback after
                 it ends then needs a new one, about 40 s of downtime.
@@ -584,7 +585,8 @@ func (r *Run) showJournal(j *migrate.Journal, asJSON bool) error {
 
 // tailscaleControl is the tailnet's control plane from the operator's
 // OAuth client file ({"clientId": ..., "clientSecret": ...}; O4: the
-// devices:core scope only, checked at every token exchange), with this
+// devices:core scope, and optionally policy_file:read, checked at every
+// token exchange), with this
 // CLI's own client.
 func tailscaleControl(path string) (tailcontrol.ControlPlane, error) {
 	text, err := secretinput.ReadFile(path)
