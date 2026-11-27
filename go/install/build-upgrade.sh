@@ -27,8 +27,8 @@ mkdir -p "$out/bin" "$out/releases" "$out/from"
 out=$(cd "$out" && pwd)
 arch=$(cd "$go" && go env GOARCH)
 
-# Synthetic stable releases newer than the published 0.50.0 upgrade source.
-CANDIDATE=0.50.9000 NEXT=0.50.9001 UNSAFE=0.50.9002 BROKEN=0.50.9003
+# Synthetic stable releases newer than the published upgrade source (0.51.0).
+CANDIDATE=0.51.9000 NEXT=0.51.9001 UNSAFE=0.51.9002 BROKEN=0.51.9003
 schema=$(jq -r .schemaVersion "$go/release/release.json")
 
 # manifest <version> <previous>: its release.json, as the release makes it.
