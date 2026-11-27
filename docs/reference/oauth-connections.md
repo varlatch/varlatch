@@ -209,7 +209,9 @@ secret.
 
 **Disconnect** revokes the tokens at the provider where it has an endpoint
 for that (RFC 7009) and forgets them here whatever it answers; the answer
-says which (`atProvider`). It works while the Organization is frozen. Many
+says which (`atProvider`). The refresh token and the access token are each
+asked for, whatever came of the other. It works while the Organization is
+frozen, and in an environment that has expired. Many
 providers, Google among them, end everything this client has for this
 account, other connections to it included; with `revokeAtProvider: false`
 they are left as they are. Tokens that were refused or replaced (another

@@ -96,6 +96,9 @@ fixes.
     URI; the dashboard shows them before the client secret can be typed. A
     connection to a person's account is made, and once connected deleted, by a
     person.
+  - A connection belongs to the Organization: when the member who connected
+    it leaves, the background refreshes that keep its refresh token alive go
+    on. Disconnect it to end them.
   - The dashboard makes, connects, pauses, changes and disconnects them.
   - The database schema is version 6 (two new tables). On an earlier
     release, as after a reverse migration to 0.23, a connection has no value

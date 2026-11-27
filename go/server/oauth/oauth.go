@@ -163,6 +163,15 @@ func rowOf(r query.OAuthConnectionByIDRow) (*row, error) {
 
 func notFound() error { return domainerr.New("RESOURCE_NOT_FOUND", "OAuth connection not found") }
 
+// expired refuses a connection whose environment has expired, as every
+// write to that environment is refused (ADR-0020).
+func (r *row) expired(now time.Time) error {
+	if r.EnvironmentExpiresAt.Valid && r.EnvironmentExpiresAt.Int64 <= now.UnixMicro() {
+		return domainerr.New("ENVIRONMENT_EXPIRED", "This environment has expired; retrieval and mutation are disabled until it is deleted or its expiry is changed")
+	}
+	return nil
+}
+
 // find is an environment's own connection.
 func find(ctx context.Context, db query.DBTX, environmentID, item string) (*row, error) {
 	r, err := query.New(db).OAuthConnectionOf(ctx, query.OAuthConnectionOfParams{EnvironmentID: environmentID, ItemName: item})
@@ -401,7 +410,7 @@ func (s *Service) endpoints(ctx context.Context, req Request, in Provider, grant
 		doc, f := s.discover(ctx, p.Issuer)
 		if f != nil {
 			if f.refusal != nil {
-				if err := s.recordRefusal(ctx, req, f.refusal, "connection"); err != nil {
+				if err := s.recordRefusal(ctx, req, f.refusal, "configuration"); err != nil {
 					return p, err
 				}
 				return p, refused(f.refusal)
@@ -683,6 +692,9 @@ func (s *Service) Update(ctx context.Context, req Request, item string, in Chang
 		}
 		r, err := find(ctx, tx, req.Target.Env.ID, item)
 		if err != nil {
+			return err
+		}
+		if err := r.expired(s.now()); err != nil {
 			return err
 		}
 		if reports, err = write.Checkpoint(ctx, tx, req.Principal, req.Target.OrganizationID); err != nil {
@@ -1016,9 +1028,14 @@ func (s *Service) Disconnect(ctx context.Context, req Request, item string, revo
 			if refresh != "" {
 				f = s.revoke(dctx, c, refresh, "refresh_token")
 			}
-			// The access token too: a server need not end it with the refresh
-			// token (RFC 7009 section 2.1), and need not know the one it ended.
-			if access != "" && (f == nil || refresh == "") {
+			// The access token too, whatever came of the refresh token's: a
+			// server need not end it with the refresh token (RFC 7009 section
+			// 2.1), need not know the one it ended, and may end one where it
+			// failed or never heard of the other. Both are forgotten below, so
+			// this is the last time either can be revoked from here. The
+			// refresh token's failure is the one reported: it is the one that
+			// outlives the other.
+			if access != "" {
 				if g := s.revoke(dctx, c, access, "access_token"); refresh == "" {
 					f = g
 				}

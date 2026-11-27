@@ -3,6 +3,7 @@
 package oauthparams
 
 import (
+	"net/url"
 	"strings"
 	"testing"
 
@@ -209,5 +210,32 @@ func TestPresets(t *testing.T) {
 	}
 	if got := strings.Join(Presets["google"].WithScopes([]string{"email", "https://www.googleapis.com/auth/gmail.send"}), " "); got != "openid email https://www.googleapis.com/auth/gmail.send" {
 		t.Error(got)
+	}
+}
+
+// A host is no longer than a DNS name, so the redirect URI's last segment
+// stays well within what a completed authorization may send back.
+func TestLongHosts(t *testing.T) {
+	name := func(c string, n int) string {
+		return c + strings.Repeat("a", 62) + "." + strings.Repeat("b", 63) + "." + strings.Repeat("c", 63) + "." + strings.Repeat("d", n-192)
+	}
+	if h := name("x", 253); len(h) != 253 || CheckEndpoint("https://"+h+"/") != nil {
+		t.Errorf("a name of 253: refused")
+	}
+	if h := name("x", 254); len(h) != 254 || CheckEndpoint("https://"+h+"/") == nil {
+		t.Errorf("a name of 254: accepted")
+	}
+	if _, err := CanonicalEndpointHosts([]string{name("x", 254)}); err == nil {
+		t.Error("an endpoint host of 254: accepted")
+	}
+	p := valid()
+	at := func(c string) string { return "https://" + name(c, 253) + ":65535" }
+	p.Issuer, p.AuthorizationEndpoint, p.TokenEndpoint = at("i"), at("a")+"/a", at("t")+"/t"
+	p.RevocationEndpoint, p.UserinfoEndpoint, p.JWKSURI = at("r")+"/r", at("u")+"/u", at("k")+"/k"
+	if hosts := p.EndpointHosts(); len(hosts) != 6 {
+		t.Fatalf("%d hosts", len(hosts))
+	}
+	if n := len(url.PathEscape(p.RedirectName())); n > 1600 {
+		t.Errorf("a redirect name of %d", n)
 	}
 }

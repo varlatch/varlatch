@@ -18,6 +18,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"maps"
 	"math/big"
@@ -103,7 +104,10 @@ type Provider struct {
 	Userinfo string
 	// RevokeStatus is the revocation endpoint's (200 when 0).
 	RevokeStatus int
-	Now          func() time.Time
+	// DialFails is how many of the next connections to it fail, before
+	// anything is sent.
+	DialFails int
+	Now       func() time.Time
 
 	// Registered, when it is set, are the client's redirect URIs: the
 	// authorization endpoint sends the browser to no other.
@@ -157,6 +161,15 @@ func (p *Provider) Addr() string { return p.server.Listener.Addr().String() }
 // Dial connects to the provider whatever the address, for the outbound
 // policy's options; the policy has decided the address before.
 func (p *Provider) Dial(ctx context.Context, network, _ string) (net.Conn, error) {
+	p.mu.Lock()
+	fail := p.DialFails > 0
+	if fail {
+		p.DialFails--
+	}
+	p.mu.Unlock()
+	if fail {
+		return nil, errors.New("oauthtest: the connection failed")
+	}
 	var d net.Dialer
 	return d.DialContext(ctx, network, p.Addr())
 }

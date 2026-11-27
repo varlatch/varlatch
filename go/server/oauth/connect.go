@@ -78,6 +78,9 @@ func (s *Service) Start(ctx context.Context, req Request, item string, accountCh
 		if err != nil {
 			return err
 		}
+		if err := r.expired(s.now()); err != nil {
+			return err
+		}
 		if reports, err = write.Checkpoint(ctx, tx, req.Principal, req.Target.OrganizationID); err != nil {
 			return err
 		}
@@ -215,6 +218,10 @@ func (s *Service) Complete(ctx context.Context, req Request, item string, in Ans
 	if err != nil {
 		return nil, nil, err
 	}
+	// Before the state is taken: it is still there when the expiry changes.
+	if err := seen.expired(s.now()); err != nil {
+		return nil, nil, err
+	}
 	// The state, once: gone before anything is asked of the provider, and for
 	// nobody but the person and the session that began it.
 	var begun query.OauthAuthorization
@@ -259,6 +266,9 @@ func (s *Service) Complete(ctx context.Context, req Request, item string, in Ans
 				return err
 			}
 			if r, err = find(ctx, tx, req.Target.Env.ID, item); err != nil {
+				return err
+			}
+			if err := r.expired(s.now()); err != nil {
 				return err
 			}
 			if r.ValueID != begun.ValueID || r.VersionID != begun.VersionID {

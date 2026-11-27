@@ -1504,11 +1504,16 @@ func TestDisconnect(t *testing.T) {
 		body  any
 		there string
 		live  bool
+		// unsent: the refresh token's revocation never reaches the provider.
+		unsent  bool
+		revokes int
 	}{
-		"revoked":       {there: "revoked"},
-		"failed":        {set: func(p *oauthtest.Provider) { p.RevokeStatus = 503 }, there: "failed", live: true},
-		"left":          {body: map[string]any{"revokeAtProvider": false}, there: "left", live: true},
-		"not-supported": {set: func(p *oauthtest.Provider) { p.Metadata = map[string]any{"revocation_endpoint": nil} }, there: "not-supported", live: true},
+		"revoked": {there: "revoked", revokes: 2},
+		// Each token is asked for, whatever came of the other.
+		"failed":         {set: func(p *oauthtest.Provider) { p.RevokeStatus = 503 }, there: "failed", live: true, revokes: 2},
+		"refresh unsent": {there: "failed", unsent: true, revokes: 1},
+		"left":           {body: map[string]any{"revokeAtProvider": false}, there: "left", live: true},
+		"not-supported":  {set: func(p *oauthtest.Provider) { p.Metadata = map[string]any{"revocation_endpoint": nil} }, there: "not-supported", live: true},
 	} {
 		t.Run(what, func(t *testing.T) {
 			w := newOAuthWorld(t)
@@ -1519,9 +1524,25 @@ func TestDisconnect(t *testing.T) {
 			w.connect()
 			c := w.mailCapability("broker", with{"singleUse": true})
 			tok := w.token1("before", w.exerciseMail("broker", w.mailCapability("broker", nil), nil))["value"].(string)
+			if x.unsent {
+				w.policy.Close() // the next request connects anew
+				w.idp.Set(func(p *oauthtest.Provider) { p.DialFails = 1 })
+			}
+			before := w.idp.Count("/revoke")
 			a := w.want("disconnect", w.call("POST", mailPath+"/disconnect", "alice", x.body), 200, "")
 			if a.body["atProvider"] != x.there || w.idp.Live(tok) != x.live {
 				t.Errorf("%s, live %v", a.raw, w.idp.Live(tok))
+			}
+			if n := w.idp.Count("/revoke") - before; n != x.revokes {
+				t.Errorf("%d revocations", n)
+			}
+			if x.unsent {
+				if r := w.idp.Last(); r.Form.Get("token_type_hint") != "access_token" || r.Form.Get("token") != tok {
+					t.Errorf("%+v", r.Form.Get("token_type_hint"))
+				}
+				if a.body["reason"] != "unreachable" {
+					t.Errorf("%s", a.raw)
+				}
 			}
 			w.noSecrets("the answer", a.raw, false)
 			w.wantEvent("sync.connection_revoked", "Alice", map[string]any{"itemName": mailItem}, map[string]any{"connection": "oauth", "atProvider": x.there, "account": "alice@example.com"})
@@ -1535,6 +1556,32 @@ func TestDisconnect(t *testing.T) {
 			w.connect()
 			w.token1("connected again, the single use not spent", w.exerciseMail("broker", c, nil))
 		})
+	}
+}
+
+// An expired environment's connection is neither changed nor connected, as
+// no value of it is written; the authorization that was begun is kept.
+func TestExpiredEnvironment(t *testing.T) {
+	w := connected(t, nil)
+	_, back := w.begin("web", nil)
+	w.exec("UPDATE environments SET expires_at = 5 WHERE id = ?", w.env("development"))
+	n := len(w.idp.Requests)
+	w.want("change", w.call("PATCH", mailPath, "alice", map[string]any{"paused": true}), 410, "ENVIRONMENT_EXPIRED")
+	w.want("start", w.call("POST", mailPath+"/authorizations", "web", nil), 410, "ENVIRONMENT_EXPIRED")
+	w.want("complete", w.complete("web", answerOf(back)), 410, "ENVIRONMENT_EXPIRED")
+	if len(w.idp.Requests) != n {
+		t.Error("the code was exchanged")
+	}
+	w.wantStatus("connected", nil)
+	w.exec("UPDATE environments SET expires_at = NULL WHERE id = ?", w.env("development"))
+	if a := w.want("complete once it does not expire", w.complete("web", answerOf(back)), 200, ""); a.body["outcome"] != "connected" {
+		t.Errorf("%s", a.raw)
+	}
+	w.want("change", w.call("PATCH", mailPath, "alice", map[string]any{"paused": true}), 200, "")
+	// Disconnecting still works.
+	w.exec("UPDATE environments SET expires_at = 5 WHERE id = ?", w.env("development"))
+	if a := w.want("disconnect", w.call("POST", mailPath+"/disconnect", "alice", nil), 200, ""); a.body["atProvider"] != "revoked" {
+		t.Errorf("%s", a.raw)
 	}
 }
 

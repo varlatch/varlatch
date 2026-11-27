@@ -45,8 +45,11 @@ const (
 
 // Bounds.
 const (
-	maxText   = 512
-	maxURL    = 2000
+	maxText = 512
+	maxURL  = 2000
+	// maxHost is a DNS name's length: six of them, with their ports, are a
+	// redirect URI's last segment (RedirectName), well within maxURL.
+	maxHost   = 253
 	maxScopes = 100
 	maxHosts  = 50
 	maxExtra  = 10
@@ -168,12 +171,12 @@ func CheckEndpoint(raw string) error {
 }
 
 // plainHost is whether h is a host name of letters, digits, hyphens,
-// underscores and dots, or an IP address.
+// underscores and dots, no longer than a DNS name, or an IP address.
 func plainHost(h string) bool {
 	if whatwg.IsIP(h) != 0 {
 		return true
 	}
-	return h != "" && !strings.ContainsFunc(h, func(r rune) bool {
+	return h != "" && len(h) <= maxHost && !strings.ContainsFunc(h, func(r rune) bool {
 		return (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '-' && r != '_' && r != '.'
 	})
 }
