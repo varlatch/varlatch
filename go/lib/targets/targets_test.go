@@ -120,12 +120,15 @@ func TestParseAny(t *testing.T) {
 		"pipe:/token": "pipe:/token", "pipe:/a~0b/~1/0": "pipe:/a~0b/~1/0", "field:Password": "field:Password", "field:form:pw": "field:form:pw",
 		"header:X-Api-Key": "header:x-api-key", "json:/a": "json:/a", "field:user[password] *": "field:user[password] *", "field:Mot de passe": "field:Mot de passe", "field:パスワード": "field:パスワード",
 		"json:/a;b": "json:/a;b",
+		// At the bounds: 256 characters, 512 bytes, each.
+		"field:" + strings.Repeat("a", 256): "field:" + strings.Repeat("a", 256), "field:" + strings.Repeat("パ", 170): "field:" + strings.Repeat("パ", 170),
+		"field:" + strings.Repeat("😀", 128): "field:" + strings.Repeat("😀", 128),
 	} {
 		if got, err := ParseAny(raw); err != nil || got != want {
 			t.Errorf("ParseAny(%q) = %q, %v", raw, got, err)
 		}
 	}
-	for _, raw := range []string{"pipe:", "pipe:token", "pipe:/a~2", "pipe:/a~", "pipe:/a\nb", "pipe:/" + strings.Repeat("a", 512), "field:", "field:a\x00", "field:" + strings.Repeat("a", 257),
+	for _, raw := range []string{"pipe:", "pipe:token", "pipe:/a~2", "pipe:/a~", "pipe:/a\nb", "pipe:/" + strings.Repeat("a", 512), "field:", "field:a\x00", "field:" + strings.Repeat("a", 257), "field:" + strings.Repeat("パ", 171), "field:" + strings.Repeat("😀", 128) + "a",
 		"PIPE:/a", "Field:a", "keyboard:a", "field", "", "header:host",
 		"field:x;SECRET_B=header:authorization", "field:a;b", "field:a=b", "field: a", "field:a ", "field:a\u00a0b", "field:Pass\u202ednrow\u200b", "field:a\u2066b", "field:a\u00adb",
 		"field:a\ufe0f", "field:a\u115f", "field:a\xff", "field:a\xed\xa0\x80", "field:a\u0085", "field:a\u2028b",

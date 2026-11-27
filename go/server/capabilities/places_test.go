@@ -433,5 +433,14 @@ func TestPlacementsAreRecordedAsTheyAre(t *testing.T) {
 		w.wantEvent("capability.issued", "broker", nil, map[string]any{"targets": want})
 		w.want("exercise", w.exercise("broker", c, with{"placements": []any{map[string]any{"item": "SECRET_A", "target": target}}}), 200, "")
 		w.wantEvent("capability.exercised", "broker", nil, map[string]any{"placements": want})
+		// Refused for a page (a row changed by hand): recorded alike, and,
+		// as in every denial, with no selector.
+		w.exec(`UPDATE capabilities SET destinations = json_insert(destinations, '$[#]', ?) WHERE id = ?`, loginPage, c.id)
+		w.wantReason("to a page", w.exercise("broker", c, with{"destination": map[string]any{"url": "https://portal.example.com/login"},
+			"placements": []any{map[string]any{"item": "SECRET_A", "target": target}}}), 403, "PERMISSION_DENIED", "placement-not-for-destination")
+		w.wantEvent("capability.denied", "broker", nil, map[string]any{"target": strings.TrimPrefix(want, "SECRET_A="), "destinationKind": "web"})
+		if md := fmt.Sprint(w.event("capability.denied")["metadata"]); strings.Contains(md, "selector") || strings.Contains(md, "\\u202e") || strings.Contains(md, "\u202e") {
+			t.Errorf("%s", md)
+		}
 	}
 }

@@ -505,7 +505,9 @@ func (s *Service) exercise(ctx context.Context, req Request, capabilityID string
 			return nil, nil, deny("placement-not-targeted", jsvalue.Member{Key: "item", Value: p.Item}, jsvalue.Member{Key: "target", Value: p.Target})
 		}
 		if !authz.Takes(reading.Kind, targets.Kind(p.Target)) {
-			return nil, nil, deny("placement-not-for-destination", jsvalue.Member{Key: "item", Value: p.Item}, jsvalue.Member{Key: "target", Value: p.Target})
+			// Recorded as an allowed one's placements are: a request's target
+			// may hold what does not show as it is.
+			return nil, nil, deny("placement-not-for-destination", jsvalue.Member{Key: "item", Value: p.Item}, jsvalue.Member{Key: "target", Value: targets.Recorded(p.Target)})
 		}
 	}
 	var placed []string
@@ -623,8 +625,11 @@ func (s *Service) exercise(ctx context.Context, req Request, capabilityID string
 			versions = append(versions, it.RetiringVersionID)
 		}
 	}
+	// The selector that named it is in what was exercised, and in no
+	// denial: one has the same members whatever refused it.
+	exercisedWhere := where
 	if reading.Kind != authz.PlaceHost {
-		where = append(where, jsvalue.Member{Key: "selector", Value: matched.String()})
+		exercisedWhere = slices.Concat(where, jsvalue.Object{{Key: "selector", Value: matched.String()}})
 	}
 	// exercised is capability.exercised of these items, with the placements
 	// and the withheld names that are theirs.
@@ -645,7 +650,7 @@ func (s *Service) exercise(ctx context.Context, req Request, capabilityID string
 		return audit.Event{
 			Type: "capability.exercised", Decision: audit.Allow, ActorIdentityID: ptr(broker), OrganizationID: ptr(st.Org.ID),
 			Action: ptr("secret.use"), Resource: resource(), Authz: authz.AuditAuthz(use), RequestID: ptr(req.RequestID),
-			Metadata: slices.Concat(where, jsvalue.Object{
+			Metadata: slices.Concat(exercisedWhere, jsvalue.Object{
 				{Key: "items", Value: strings.Join(entries, ",")},
 				{Key: "placements", Value: strings.Join(placements, ";")}, {Key: "withheld", Value: withheld}, {Key: "runId", Value: runID},
 			}, issuer()),

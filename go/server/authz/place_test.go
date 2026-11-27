@@ -164,7 +164,9 @@ func TestPagesMatch(t *testing.T) {
 		{"https://notexample.com/", sub, false},
 		{"https://a.example.com.evil.com/", sub, false},
 		{"https://[::ffff:10.0.0.1]/", "web:https://10.0.0.1/", false},
-		{"https://portal.example.com/login?" + strings.Repeat("x", MaxReported), login, false},
+		// What is bounded is what is kept (TestPageBounds).
+		{"https://portal.example.com/login?" + strings.Repeat("x", MaxReported), login, true},
+		{"https://portal.example.com/login/" + strings.Repeat("x", MaxReported), login, false},
 		{"https://portal.example.com/login\xff", login, false},
 		// A host and an application are no page.
 		{"https://portal.example.com/login", "portal.example.com", false},
@@ -402,4 +404,21 @@ func FuzzPlace(f *testing.F) {
 			t.Fatalf("%q: %q", raw, s)
 		}
 	})
+}
+
+// What is bounded of a reported page is what is kept of it: a long query or
+// fragment goes, unread, and a long path is refused.
+func TestPageBounds(t *testing.T) {
+	const page = "https://portal.example.com/login"
+	for _, tail := range []string{"?" + strings.Repeat("x", MaxReported), "#" + strings.Repeat("x", MaxReported), "?a=\xff"} {
+		if g, ok := ParsePage(page + tail); !ok || g.Path != "/login" {
+			t.Errorf("%.40q: %+v, %v", page+tail, g, ok)
+		}
+	}
+	if _, ok := ParsePage(page + "/" + strings.Repeat("x", MaxReported)); ok {
+		t.Error("a long path is read")
+	}
+	if _, ok := ParsePage(page + "/\xff"); ok {
+		t.Error("a path that is not UTF-8 is read")
+	}
 }

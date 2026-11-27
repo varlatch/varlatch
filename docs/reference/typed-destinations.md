@@ -155,7 +155,8 @@ for one of them alone.
 or `app:CRM Client@idn_…`), `destinationKind` (`web` or `app`), the `selector`
 that named it, `topDestination` when reported, and `placements`. A refused one is
 `capability.denied` with what was reported and its reason (`destination-mismatch`,
-`placement-not-targeted`, `placement-not-for-destination`). Webhooks and exports
+`placement-not-targeted`, `placement-not-for-destination`), and no `selector`,
+whatever refused it. Webhooks and exports
 carry the same events. A host's are as they were.
 
 **A page's path is recorded**, of a refused page too, shortened to 200

@@ -255,13 +255,14 @@ type Page struct {
 	Path         string
 }
 
-// ParsePage reads the address a Broker reports, as a browser shows it.
+// ParsePage reads the address a Broker reports, as a browser shows it. The
+// query and the fragment go first, unread: what is bounded is what is kept.
 func ParsePage(raw string) (Page, bool) {
-	if len(raw) > MaxReported || !utf8.ValidString(raw) {
-		return Page{}, false
-	}
 	if i := strings.IndexAny(raw, "?#"); i >= 0 {
 		raw = raw[:i]
+	}
+	if len(raw) > MaxReported || !utf8.ValidString(raw) {
+		return Page{}, false
 	}
 	scheme, rest, ok := strings.Cut(raw, "://")
 	scheme = asciiLower(scheme)

@@ -125,8 +125,8 @@ func ParseAny(raw string) (string, error) {
 		}
 		return raw, nil
 	case KindField:
-		if n := utf16Len(location); n == 0 || n > 256 {
-			return "", fail("a field target needs a name of 1 to 256 characters")
+		if n := utf16Len(location); n == 0 || n > 256 || len(location) > 512 {
+			return "", fail("a field target needs a name of 1 to 256 characters, at most 512 bytes")
 		}
 		if !name(location) || strings.TrimSpace(location) != location {
 			return "", fail("a field target name cannot contain ; or =, nor characters that show as nothing, nor begin or end with a blank")
