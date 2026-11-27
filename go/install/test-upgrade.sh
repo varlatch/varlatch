@@ -70,6 +70,7 @@ case "$FROM" in
   0.50.0-rc.3) FROM_INSTALL=d232caa78826a42f7b90a6ef1127fe008eff5f89412a8662d4cd50c7124927fe FROM_JOURNAL=0 FROM_ROLLBACK=0 FROM_HELD=0 ;;
   0.50.0-rc.4) FROM_INSTALL=520401ca796edc0677f1fd636064861df39e67a52f86780de325dfdcbe7d471d FROM_JOURNAL=1 FROM_ROLLBACK=1 FROM_HELD=1 ;;
   0.50.0) FROM_INSTALL=c85d78e5fbb908a1aa525d0389defc8280a5b9bdfddb771a8a7b2f58f7c98784 FROM_JOURNAL=1 FROM_ROLLBACK=1 FROM_HELD=1 ;;
+  0.50.2) FROM_INSTALL=25d19d4703c75dadd46bfda792c5b918edf8cc424b17a84958a4f4ca646fbc55 FROM_JOURNAL=1 FROM_ROLLBACK=1 FROM_HELD=1 ;;
   *) echo "refusing: this script has no hash of $FROM's install.sh" >&2; exit 2 ;;
 esac
 # The same for an upgrade from $FROM with the candidate's varlatch, run from
