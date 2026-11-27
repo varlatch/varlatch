@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -166,10 +168,11 @@ func TestASeedIsListedAndNotDelivered(t *testing.T) {
 }
 
 // printEnv is a command that prints its environment: env, which Windows
-// does not have, or cmd's set there.
+// does not have, or cmd's set there, by its full path (the CLI runs here
+// without PATH).
 func printEnv() []string {
 	if runtime.GOOS == "windows" {
-		return []string{"cmd", "/c", "set"}
+		return []string{filepath.Join(os.Getenv("SystemRoot"), "System32", "cmd.exe"), "/c", "set"}
 	}
 	return []string{"env"}
 }
