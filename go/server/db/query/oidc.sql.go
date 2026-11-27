@@ -207,15 +207,18 @@ func (q *Queries) LiveOidcBinding(ctx context.Context, arg LiveOidcBindingParams
 	return i, err
 }
 
-const pruneOidcTokenUses = `-- name: PruneOidcTokenUses :exec
+const pruneOidcTokenUses = `-- name: PruneOidcTokenUses :execrows
 DELETE FROM oidc_token_uses WHERE token_key IN (
   SELECT t.token_key FROM oidc_token_uses t WHERE t.expires_at < ?1 ORDER BY t.expires_at LIMIT 500)
 `
 
 // Uses of tokens no longer accepted, oldest first, a bounded number at once.
-func (q *Queries) PruneOidcTokenUses(ctx context.Context, before int64) error {
-	_, err := q.db.ExecContext(ctx, pruneOidcTokenUses, before)
-	return err
+func (q *Queries) PruneOidcTokenUses(ctx context.Context, before int64) (int64, error) {
+	result, err := q.db.ExecContext(ctx, pruneOidcTokenUses, before)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const revokeOidcBinding = `-- name: RevokeOidcBinding :one

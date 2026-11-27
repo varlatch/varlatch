@@ -571,10 +571,15 @@ func Retire(ctx context.Context, w *write.Writer, p *auth.Principal, organizatio
 			}
 		}
 		useAction := "secret.use"
-		for _, id := range caps {
+		for _, c := range caps {
+			resource := jsvalue.Object{{Key: "capabilityId", Value: c.ID}}
+			if c.CreatedBy != c.BrokerIdentityID {
+				resource = append(resource, jsvalue.Member{Key: "brokerIdentityId", Value: c.BrokerIdentityID},
+					jsvalue.Member{Key: "issuedByIdentityId", Value: c.CreatedBy})
+			}
 			if _, err := audit.Record(ctx, tx, audit.Event{
 				Type: "capability.revoked", Decision: audit.Info, ActorIdentityID: &actor, OrganizationID: &organizationID,
-				Action: &useAction, Resource: jsvalue.Object{{Key: "capabilityId", Value: id}},
+				Action: &useAction, Resource: resource,
 				Metadata: jsvalue.Object{{Key: "reason", Value: "identity-retired"}, {Key: "identityId", Value: identityID}},
 			}); err != nil {
 				return err

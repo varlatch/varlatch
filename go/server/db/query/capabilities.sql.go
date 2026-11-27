@@ -295,7 +295,7 @@ func (q *Queries) ListCapabilities(ctx context.Context, arg ListCapabilitiesPara
 }
 
 const liveCapabilitiesForRepair = `-- name: LiveCapabilitiesForRepair :many
-SELECT id, organization_id, agent_identity_id, broker_identity_id FROM capabilities
+SELECT id, organization_id, agent_identity_id, broker_identity_id, created_by FROM capabilities
 WHERE revoked_at IS NULL AND expires_at > ?1
   AND (organization_id, id) > (?2, ?3)
 ORDER BY organization_id, id
@@ -314,11 +314,14 @@ type LiveCapabilitiesForRepairRow struct {
 	OrganizationID   string
 	AgentIdentityID  string
 	BrokerIdentityID string
+	CreatedBy        string
 }
 
 // capabilities.RevokeOfRetired: the next at most batch unexpired, unrevoked
 // Capabilities after (after_org, after_id), by Organization and id: a range
 // of capabilities_live_idx from the cursor on, with no sort of the rest.
+// created_by is its issuer: one that issued it for another Broker
+// (ADR-0060) ends it by a retirement too.
 func (q *Queries) LiveCapabilitiesForRepair(ctx context.Context, arg LiveCapabilitiesForRepairParams) ([]LiveCapabilitiesForRepairRow, error) {
 	rows, err := q.db.QueryContext(ctx, liveCapabilitiesForRepair,
 		arg.Now,
@@ -338,6 +341,7 @@ func (q *Queries) LiveCapabilitiesForRepair(ctx context.Context, arg LiveCapabil
 			&i.OrganizationID,
 			&i.AgentIdentityID,
 			&i.BrokerIdentityID,
+			&i.CreatedBy,
 		); err != nil {
 			return nil, err
 		}
@@ -353,27 +357,33 @@ func (q *Queries) LiveCapabilitiesForRepair(ctx context.Context, arg LiveCapabil
 }
 
 const liveCapabilitiesOfIdentity = `-- name: LiveCapabilitiesOfIdentity :many
-SELECT id FROM capabilities
+SELECT id, broker_identity_id, created_by FROM capabilities
 WHERE (agent_identity_id = ?1 OR broker_identity_id = ?1 OR created_by = ?1) AND revoked_at IS NULL
 ORDER BY id
 `
 
+type LiveCapabilitiesOfIdentityRow struct {
+	ID               string
+	BrokerIdentityID string
+	CreatedBy        string
+}
+
 // retireIdentity: the unrevoked Capabilities issued for the identity as
 // Agent, for it as Broker, or by it for another Broker (ADR-0060), in id
-// order.
-func (q *Queries) LiveCapabilitiesOfIdentity(ctx context.Context, identityID string) ([]string, error) {
+// order, with its Broker and its issuer for the audit event.
+func (q *Queries) LiveCapabilitiesOfIdentity(ctx context.Context, identityID string) ([]LiveCapabilitiesOfIdentityRow, error) {
 	rows, err := q.db.QueryContext(ctx, liveCapabilitiesOfIdentity, identityID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []string
+	var items []LiveCapabilitiesOfIdentityRow
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var i LiveCapabilitiesOfIdentityRow
+		if err := rows.Scan(&i.ID, &i.BrokerIdentityID, &i.CreatedBy); err != nil {
 			return nil, err
 		}
-		items = append(items, id)
+		items = append(items, i)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err

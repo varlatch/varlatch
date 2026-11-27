@@ -37,7 +37,7 @@ ORDER BY b.rowid;
 INSERT INTO oidc_token_uses (token_key, used_at, expires_at) VALUES (?, ?, ?)
 ON CONFLICT (token_key) DO NOTHING;
 
--- name: PruneOidcTokenUses :exec
+-- name: PruneOidcTokenUses :execrows
 -- Uses of tokens no longer accepted, oldest first, a bounded number at once.
 DELETE FROM oidc_token_uses WHERE token_key IN (
   SELECT t.token_key FROM oidc_token_uses t WHERE t.expires_at < sqlc.arg(before) ORDER BY t.expires_at LIMIT 500);

@@ -31,6 +31,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/api/openapicheck"
 	"github.com/varlatch/varlatch/go/server/auth"
 	"github.com/varlatch/varlatch/go/server/authz"
+	"github.com/varlatch/varlatch/go/server/capabilities"
 	"github.com/varlatch/varlatch/go/server/daemon"
 	"github.com/varlatch/varlatch/go/server/httpserver"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
@@ -60,6 +61,7 @@ type world struct {
 	store   *storage.DB
 	handler http.Handler
 	values  *values.Service
+	wr      *write.Writer
 	key     *ecdsa.PrivateKey
 	// ahead is how far the clock is ahead of the wall's, in nanoseconds.
 	ahead atomic.Int64
@@ -113,7 +115,7 @@ func (w *world) start() {
 	if err != nil {
 		w.t.Fatal(err)
 	}
-	w.store, w.handler, w.values = store, h, vs
+	w.store, w.handler, w.values, w.wr = store, h, vs, wr
 }
 
 func (w *world) stop() {
@@ -549,7 +551,9 @@ func TestTheIssuersRightIsEvaluatedAtExercise(t *testing.T) {
 		t.Errorf("the retired issuer's Capability is not revoked")
 	}
 	if got := w.text(`SELECT count(*) FROM audit_events WHERE event_type = 'capability.revoked' AND json_extract(resource, '$.capabilityId') = ?
-		AND json_extract(metadata, '$.reason') = 'identity-retired' AND json_extract(metadata, '$.identityId') = ?`, c.id, w.idn("svc")); got != "1" {
+		AND json_extract(resource, '$.brokerIdentityId') = ? AND json_extract(resource, '$.issuedByIdentityId') = ?
+		AND json_extract(metadata, '$.reason') = 'identity-retired' AND json_extract(metadata, '$.identityId') = ?`,
+		c.id, w.idn("broker"), w.idn("svc"), w.idn("svc")); got != "1" {
 		t.Errorf("%s capability.revoked events for the retired issuer's Capability, want 1", got)
 	}
 	w.want("reactivate", w.call("POST", "/v1/organizations/cap/identities/"+w.idn("svc")+"/reactivate", "alice", nil), 200, "")
@@ -559,6 +563,47 @@ func TestTheIssuersRightIsEvaluatedAtExercise(t *testing.T) {
 	}
 	// A Capability a Broker issued for itself depends on no one's Grant.
 	w.wantValue("a Broker's own", w.exercise("broker", w.issue("broker", nil), nil))
+}
+
+// The upgrade's repair revokes a Capability issued for another Broker whose
+// issuer an older release retired without revoking it (0.50.2 revoked only
+// an Agent's and a Broker's): audited with no actor, its Broker and its
+// issuer, so a reactivation brings nothing back. One the issuer issued
+// after its reactivation, and one a Broker issued for itself, are kept.
+func TestRevokeOfRetiredEndsAnIssuersCapability(t *testing.T) {
+	w := newWorld(t)
+	w.grant("svc", "development")
+	c := w.issue("svc", with{"brokerIdentityId": w.idn("broker")})
+	own := w.issue("broker", nil)
+	// Retired as 0.50.2 retires, and reactivated: what svc issued for the
+	// Broker stayed live.
+	w.want("retire", w.call("POST", "/v1/organizations/cap/identities/"+w.idn("svc")+"/retire", "alice", nil), 200, "")
+	w.exec("UPDATE capabilities SET revoked_at = NULL WHERE id = ?", c.id)
+	w.want("reactivate", w.call("POST", "/v1/organizations/cap/identities/"+w.idn("svc")+"/reactivate", "alice", nil), 200, "")
+	w.wantValue("before the repair", w.exercise("broker", c, nil))
+	// Its credential back, as one issued after the reactivation would be.
+	w.exec("UPDATE credentials SET revoked_at = NULL WHERE identity_id = ?", w.idn("svc"))
+	after := w.issue("svc", with{"brokerIdentityId": w.idn("broker")})
+
+	n, err := capabilities.RevokeOfRetired(context.Background(), w.wr, w.now)
+	if err != nil || n != 1 {
+		t.Fatalf("revoked %d (%v), want 1", n, err)
+	}
+	a := w.want("after the repair", w.exercise("broker", c, nil), 403, "PERMISSION_DENIED")
+	if !strings.Contains(a.raw, `"reason":"revoked"`) {
+		t.Errorf("after the repair: %s", a.raw)
+	}
+	if got := w.text(`SELECT count(*) FROM audit_events WHERE event_type = 'capability.revoked' AND actor_identity_id IS NULL
+		AND json_extract(resource, '$.capabilityId') = ? AND json_extract(resource, '$.brokerIdentityId') = ?
+		AND json_extract(resource, '$.issuedByIdentityId') = ? AND json_extract(metadata, '$.reason') = 'identity-retired'
+		AND json_extract(metadata, '$.identityId') = ?`, c.id, w.idn("broker"), w.idn("svc"), w.idn("svc")); got != "1" {
+		t.Errorf("%s capability.revoked events of the repair for the issuer's Capability, want 1", got)
+	}
+	w.wantValue("issued after the reactivation", w.exercise("broker", after, nil))
+	w.wantValue("a Broker's own", w.exercise("broker", own, nil))
+	if n, err := capabilities.RevokeOfRetired(context.Background(), w.wr, w.now); err != nil || n != 0 {
+		t.Fatalf("a second run revoked %d (%v), want 0", n, err)
+	}
 }
 
 func TestListAndRevokeWhatWasIssued(t *testing.T) {
@@ -974,6 +1019,36 @@ func TestTokenUsesArePruned(t *testing.T) {
 	w.ahead.Store(int64(27 * time.Hour))
 	w.exchanged(w.token(nil))
 	if count() != "2" {
+		t.Errorf("%s uses kept after 27 hours", count())
+	}
+}
+
+// The uses of tokens no longer accepted are pruned also when no further
+// limited exchange comes: by the daemon's loop, a pass at once.
+func TestTokenUsesArePrunedWithoutAnExchange(t *testing.T) {
+	w := newWorld(t)
+	w.want("bind", w.bind("svc", with{"singleExchange": true}), 201, "")
+	for range 3 {
+		w.exchanged(w.token(nil))
+	}
+	count := func() string { return w.text("SELECT count(*) FROM oidc_token_uses") }
+	uses := &oidc.Service{Writer: w.wr, Now: w.now}
+	if n, err := uses.PruneTokenUses(context.Background()); err != nil || n != 0 || count() != "3" {
+		t.Fatalf("pruned %d (%v) of uses still needed, %s left", n, err, count())
+	}
+	w.ahead.Store(int64(27 * time.Hour))
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		uses.RunPruneLoop(ctx, time.Hour, nil)
+	}()
+	for deadline := time.Now().Add(10 * time.Second); count() != "0" && time.Now().Before(deadline); {
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	<-done
+	if count() != "0" {
 		t.Errorf("%s uses kept after 27 hours", count())
 	}
 }

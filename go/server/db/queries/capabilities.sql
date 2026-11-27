@@ -47,8 +47,8 @@ SELECT * FROM capabilities WHERE id = ? AND organization_id = ? AND environment_
 -- name: LiveCapabilitiesOfIdentity :many
 -- retireIdentity: the unrevoked Capabilities issued for the identity as
 -- Agent, for it as Broker, or by it for another Broker (ADR-0060), in id
--- order.
-SELECT id FROM capabilities
+-- order, with its Broker and its issuer for the audit event.
+SELECT id, broker_identity_id, created_by FROM capabilities
 WHERE (agent_identity_id = sqlc.arg(identity_id) OR broker_identity_id = sqlc.arg(identity_id) OR created_by = sqlc.arg(identity_id)) AND revoked_at IS NULL
 ORDER BY id;
 
@@ -60,7 +60,9 @@ WHERE (agent_identity_id = sqlc.arg(identity_id) OR broker_identity_id = sqlc.ar
 -- capabilities.RevokeOfRetired: the next at most batch unexpired, unrevoked
 -- Capabilities after (after_org, after_id), by Organization and id: a range
 -- of capabilities_live_idx from the cursor on, with no sort of the rest.
-SELECT id, organization_id, agent_identity_id, broker_identity_id FROM capabilities
+-- created_by is its issuer: one that issued it for another Broker
+-- (ADR-0060) ends it by a retirement too.
+SELECT id, organization_id, agent_identity_id, broker_identity_id, created_by FROM capabilities
 WHERE revoked_at IS NULL AND expires_at > sqlc.arg(now)
   AND (organization_id, id) > (sqlc.arg(after_org), sqlc.arg(after_id))
 ORDER BY organization_id, id

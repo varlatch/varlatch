@@ -22,7 +22,8 @@ fixes.
     broker can exercise it; the issuer can list and revoke it, never
     exercise it. Removing the issuer's grant refuses the next exercise;
     retiring the issuer revokes what it issued, as retiring a broker or an
-    agent does.
+    agent does, also when an earlier release retired it after a rollback:
+    the start after it revokes what that retirement left live.
   - `singleUse` at issuing: exercised once.
   - An OIDC binding takes `exerciseOnly` (the exchanged credential exercises
     the broker's Capabilities and is refused everything else, reads

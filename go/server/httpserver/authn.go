@@ -192,18 +192,17 @@ func (s *Server) authenticate(w http.ResponseWriter, r *http.Request, pattern st
 		writeError(w, r, http.StatusUnauthorized, "INVALID_CREDENTIAL", "Credential is invalid, revoked, or expired")
 		return nil, false
 	}
-	resolve := s.opts.Auth.Authenticate
-	if pattern == exerciseCapabilityPattern {
-		resolve = s.opts.Auth.AuthenticateExercise
-	}
+	// Resolved once, as AuthenticateExercise does, and an exercise-only
+	// credential refused here as Authenticate refuses it everywhere but
+	// the exercise: a second resolution would spend another of its uses.
 	token := strings.TrimSpace(strings.TrimPrefix(header, "Bearer "))
-	p, reason, err := resolve(r.Context(), token)
+	p, reason, err := s.opts.Auth.AuthenticateExercise(r.Context(), token)
 	if err != nil {
 		s.answerError(w, r, err)
 		return nil, false
 	}
-	if reason == auth.ReasonExerciseOnly {
-		if err := s.recordExerciseOnlyRefusal(r, token, pattern); err != nil {
+	if p != nil && p.Credential.ExerciseOnly != nil && pattern != exerciseCapabilityPattern {
+		if err := s.recordExerciseOnlyRefusal(r, p, pattern); err != nil {
 			s.answerError(w, r, err)
 			return nil, false
 		}
@@ -230,12 +229,8 @@ func (s *Server) authenticate(w http.ResponseWriter, r *http.Request, pattern st
 
 // recordExerciseOnlyRefusal records the refusal of an operation an
 // exercise-only credential may not call: a Broker asking for one is worth
-// seeing in its Organization's log.
-func (s *Server) recordExerciseOnlyRefusal(r *http.Request, token, pattern string) error {
-	p, _, err := s.opts.Auth.AuthenticateExercise(r.Context(), token)
-	if err != nil || p == nil {
-		return err // ended since: nothing to attribute the refusal to
-	}
+// seeing in its Organization's log. p is the credential's principal.
+func (s *Server) recordExerciseOnlyRefusal(r *http.Request, p *auth.Principal, pattern string) error {
 	id, reqID := p.Identity.ID, requestIDOf(r)
 	var route any
 	if pattern != "" {

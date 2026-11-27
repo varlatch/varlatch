@@ -46,6 +46,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/ids"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
 	"github.com/varlatch/varlatch/go/server/maintenance"
+	"github.com/varlatch/varlatch/go/server/oidc"
 	"github.com/varlatch/varlatch/go/server/orgdeletion"
 	"github.com/varlatch/varlatch/go/server/outbound"
 	"github.com/varlatch/varlatch/go/server/publictls"
@@ -578,6 +579,17 @@ func serve(opts Options, h *hooks) int {
 		apps.RunSweepLoop(ctx, githubapps.SweepInterval, admission.EnterWork)
 	}()
 	defer func() { cancel(); <-sweepDone }()
+	// The uses of OIDC tokens exchanged once (ADR-0060), pruned once no
+	// longer needed: a pass at once, then every hour, inside the
+	// maintenance admission, so the table does not grow when no further
+	// limited exchange prunes it.
+	pruneDone := make(chan struct{})
+	go func() {
+		defer close(pruneDone)
+		uses := &oidc.Service{Writer: writer, Log: log}
+		uses.RunPruneLoop(ctx, oidc.PruneInterval, admission.EnterWork)
+	}()
+	defer func() { cancel(); <-pruneDone }()
 	// A passkey's relying party is the public URL's host, and browsers
 	// refuse an IP address as one: the dashboard cannot sign in there.
 	if u := cfg.PublicURL; u != nil && net.ParseIP(u.Hostname()) != nil {

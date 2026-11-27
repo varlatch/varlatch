@@ -422,7 +422,7 @@ func (s *Service) Exchange(ctx context.Context, token, organization string, ttl 
 			}
 		}
 		if use != nil {
-			if err := q.PruneOidcTokenUses(ctx, s.now().UnixMicro()); err != nil {
+			if _, err := q.PruneOidcTokenUses(ctx, s.now().UnixMicro()); err != nil {
 				return err
 			}
 			n, err := q.InsertOidcTokenUse(ctx, *use)
