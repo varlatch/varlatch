@@ -11,15 +11,20 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
+
+	"github.com/tailscale/hujson"
 )
 
 // TailscaleAPI is Tailscale's public API.
 const TailscaleAPI = "https://api.tailscale.com"
 
-// TailscaleScope is the one scope the OAuth client may have (O4): devices:core
-// lists, renames and deletes devices, and nothing else.
+// TailscaleScope is the one scope the OAuth client must have (O4):
+// devices:core lists, renames and deletes devices, and nothing else. The
+// only other scope it may have is PolicyScope (policy_file:read), which
+// reads the tailnet policy file and changes nothing.
 const TailscaleScope = "devices:core"
 
 // TailscaleConfig is what NewTailscale takes. It holds the OAuth client's
@@ -111,8 +116,16 @@ func (t *Tailscale) err(op, device string, err error) error {
 }
 
 // token exchanges the OAuth client's credentials for a token, and checks
-// that the client has devices:core and no other scope (O4).
+// that the client has devices:core and no other scope but, optionally,
+// policy_file:read (O4).
 func (t *Tailscale) token(ctx context.Context, op, device string) (string, error) {
+	tok, _, err := t.tokenScopes(ctx, op, device)
+	return tok, err
+}
+
+// tokenScopes is token, also reporting whether the token may read the
+// tailnet policy file (PolicyScope).
+func (t *Tailscale) tokenScopes(ctx context.Context, op, device string) (tok string, policy bool, err error) {
 	form := url.Values{"grant_type": {"client_credentials"}, "client_id": {t.clientID}, "client_secret": {t.secret()}}
 	var got struct {
 		AccessToken string `json:"access_token"`
@@ -120,20 +133,79 @@ func (t *Tailscale) token(ctx context.Context, op, device string) (string, error
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, t.base+"/api/v2/oauth/token", strings.NewReader(form.Encode()))
 	if err != nil {
-		return "", t.err(op, device, err)
+		return "", false, t.err(op, device, err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	if err := do(t.http, req, &got, t.secret()); err != nil {
-		return "", t.err(op, device, fmt.Errorf("exchanging the OAuth client for a token: %w", err))
+		return "", false, t.err(op, device, fmt.Errorf("exchanging the OAuth client for a token: %w", err))
 	}
 	if got.AccessToken == "" {
-		return "", t.err(op, device, errors.New("the token exchange answered no token"))
+		return "", false, t.err(op, device, errors.New("the token exchange answered no token"))
 	}
-	scopes := strings.Fields(got.Scope)
-	if len(scopes) != 1 || scopes[0] != TailscaleScope {
-		return "", t.err(op, device, fmt.Errorf("the OAuth client must have the %s scope and no other (it has %q): create one with only that scope", TailscaleScope, truncate(scrub(got.Scope, t.secret(), got.AccessToken), 200)))
+	core, ok := false, true
+	for _, s := range strings.Fields(got.Scope) {
+		switch s {
+		case TailscaleScope:
+			core = true
+		case PolicyScope:
+			policy = true
+		default:
+			ok = false
+		}
 	}
-	return got.AccessToken, nil
+	if !core || !ok {
+		return "", false, t.err(op, device, fmt.Errorf("the OAuth client must have the %s scope and no other but, optionally, %s (it has %q): create one with only those", TailscaleScope, PolicyScope, truncate(scrub(got.Scope, t.secret(), got.AccessToken), 200)))
+	}
+	return got.AccessToken, policy, nil
+}
+
+var _ PolicyReader = (*Tailscale)(nil)
+
+// PolicyHosts reads the tailnet policy file and answers the names of its
+// hosts aliases. It needs the OAuth client's optional PolicyScope: without
+// it, or when the API refuses the read (401, 403), it answers an error
+// wrapping ErrPolicyUnreadable, and sends no request for the file when the
+// token's scopes already say so. The file is HuJSON (comments, trailing
+// commas), read as such.
+func (t *Tailscale) PolicyHosts(ctx context.Context) ([]string, error) {
+	const op = "read policy file"
+	tok, policy, err := t.tokenScopes(ctx, op, "")
+	if err != nil {
+		return nil, err
+	}
+	if !policy {
+		return nil, t.err(op, "", ErrPolicyUnreadable)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, t.base+"/api/v2/tailnet/"+url.PathEscape(t.tailnet)+"/acl", nil)
+	if err != nil {
+		return nil, t.err(op, "", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+tok)
+	req.Header.Set("Accept", "application/json")
+	var body []byte
+	if err := do(t.http, req, &body, t.secret(), tok); err != nil {
+		var status *StatusError
+		if errors.As(err, &status) && (status.Code == http.StatusUnauthorized || status.Code == http.StatusForbidden) {
+			err = fmt.Errorf("%w: %v", ErrPolicyUnreadable, err)
+		}
+		return nil, t.err(op, "", err)
+	}
+	std, err := hujson.Standardize(body)
+	if err != nil {
+		return nil, t.err(op, "", fmt.Errorf("the policy file is not HuJSON: %s", scrub(err.Error(), t.secret(), tok)))
+	}
+	var got struct {
+		Hosts map[string]json.RawMessage `json:"hosts"`
+	}
+	if err := json.Unmarshal(std, &got); err != nil {
+		return nil, t.err(op, "", fmt.Errorf("the policy file is not the JSON expected: %s", scrub(err.Error(), t.secret(), tok)))
+	}
+	hosts := make([]string, 0, len(got.Hosts))
+	for h := range got.Hosts {
+		hosts = append(hosts, h)
+	}
+	sort.Strings(hosts)
+	return hosts, nil
 }
 
 // tailscaleDevice is a device as the API lists it (fields=all).
@@ -315,6 +387,11 @@ func answer(res *http.Response, out any, secrets ...string) error {
 		return &StatusError{Code: res.StatusCode, Message: truncate(scrub(msg, secrets...), 200)}
 	}
 	if out == nil {
+		return nil
+	}
+	if raw, ok := out.(*[]byte); ok {
+		// The body as it came: a HuJSON policy file, say.
+		*raw = body
 		return nil
 	}
 	if err := json.Unmarshal(body, out); err != nil {

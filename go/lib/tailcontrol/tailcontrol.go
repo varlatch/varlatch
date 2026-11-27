@@ -6,8 +6,10 @@
 // back. One interface, two backends:
 //
 //   - Tailscale's API, with an OAuth client the operator created with the
-//     devices:core scope only (O4). A token is exchanged for each
-//     operation and dropped after it; nothing keeps one.
+//     devices:core scope only (O4), or with policy_file:read too, which
+//     reads the tailnet policy file's hosts aliases (PolicyReader). A
+//     token is exchanged for each operation and dropped after it; nothing
+//     keeps one.
 //   - Headscale, through its CLI on the control server or its API with a
 //     key that expires within the hour, expired when the work ends (Close).
 //
@@ -357,7 +359,7 @@ func RenameReleasedSeen(ctx context.Context, cp ControlPlane, deviceID, name str
 	rctx, cancel := context.WithTimeout(ctx, ReleaseBudget)
 	defer cancel()
 	expired := func() error {
-		return fmt.Errorf("%w (the tailnet did not release %q within %s: %v)", err, name, time.Since(start).Round(time.Millisecond), rctx.Err())
+		return &UnreleasedError{Name: name, After: time.Since(start).Round(time.Millisecond), Cause: rctx.Err(), Unlisted: unlisted, Err: err}
 	}
 	for i := 0; ; i++ {
 		wait, listed := unreleased(rctx, cp, deviceID, name, err)
@@ -394,6 +396,62 @@ func RenameReleasedSeen(ctx context.Context, cp ControlPlane, deviceID, name str
 		}
 		d, err = nd, nerr
 	}
+}
+
+// UnreleasedError is a rename to a name that Tailscale's control plane did
+// not give out within the release phase (RenameReleased): the last name
+// failure (a read-back with a dedup suffix, or a refusal as taken), which
+// it unwraps to. Unlisted is whether the wait's last listing that answered
+// showed no other device under the name: a name the tailnet policy file
+// defines (a hosts alias of the same name) is never assigned to a device,
+// however long the wait (2026-11-27), and that is the likely cause then.
+type UnreleasedError struct {
+	Name     string
+	After    time.Duration
+	Cause    error // the phase's end: its deadline, or the caller's
+	Unlisted bool
+	Err      error
+}
+
+func (e *UnreleasedError) Error() string {
+	msg := fmt.Sprintf("%v (the tailnet did not release %q within %s: %v", e.Err, e.Name, e.After, e.Cause)
+	if e.Unlisted {
+		msg += fmt.Sprintf("; no device is listed under %s, so the likely cause is the tailnet policy file: Tailscale does not give a device a name the policy file also defines, such as a hosts alias %q, so rename that alias in the policy file", e.Name, e.Name)
+	}
+	return msg + ")"
+}
+
+func (e *UnreleasedError) Unwrap() error { return e.Err }
+
+// PolicyScope is the OAuth client's one optional scope: with it, a
+// handoff's preflight reads the tailnet policy file's hosts aliases
+// (PolicyReader), and refuses a name one of them uses.
+const PolicyScope = "policy_file:read"
+
+// ErrPolicyUnreadable is a tailnet policy file the authority given may not
+// read: an OAuth client without PolicyScope, or one the API refused.
+var ErrPolicyUnreadable = errors.New("the tailnet policy file is not readable with this authority (the OAuth client has no " + PolicyScope + " scope)")
+
+// PolicyReader is a control plane that can read the names its tailnet
+// policy file defines: Tailscale's, with PolicyScope. Headscale's does not
+// implement it: a node name equal to one of its policy's hosts is assigned
+// as asked.
+type PolicyReader interface {
+	// PolicyHosts is the names of the policy file's hosts aliases; an
+	// error wrapping ErrPolicyUnreadable when the authority may not read
+	// it.
+	PolicyHosts(ctx context.Context) ([]string, error)
+}
+
+// PolicyAlias is the alias among hosts equal to name, compared
+// case-insensitively, and whether there is one.
+func PolicyAlias(hosts []string, name string) (string, bool) {
+	for _, h := range hosts {
+		if strings.EqualFold(h, name) {
+			return h, true
+		}
+	}
+	return "", false
 }
 
 // nameFailure reports whether err is a rename's failure for the name

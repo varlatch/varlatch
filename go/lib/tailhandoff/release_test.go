@@ -277,3 +277,40 @@ func TestARefusalUnlistedInTheWaitIsSaidWhenListingsFail(t *testing.T) {
 		}
 	})
 }
+
+// A name the tailnet policy file defines (a hosts alias) is given to no
+// device (2026-11-27): the incoming node's rename reads back suffixed
+// through the whole wait, and so does the undo's, for the serving node.
+// The pending undo says the likely cause and the fix, and Resume finishes
+// the undo once the alias is renamed.
+func TestAPolicyAliasBlockingTheNameIsSaid(t *testing.T) {
+	r := newRig(t)
+	if _, err := r.engine.Prepare(ctx, r.forward(t)); err != nil {
+		t.Fatal(err)
+	}
+	r.f.SetBlocked("vault")
+	s, err := r.engine.Switch(ctx, op)
+	var he *tailhandoff.HandoffError
+	if !errors.As(err, &he) || he.Phase != tailhandoff.UndoPending || s.Phase != tailhandoff.UndoPending {
+		t.Fatalf("%+v, %v", s, err)
+	}
+	var un *tailcontrol.UnreleasedError
+	if !errors.As(err, &un) || !un.Unlisted || un.Name != "vault" {
+		t.Fatalf("not an unreleased, unlisted name: %v", err)
+	}
+	msg := err.Error()
+	for _, want := range []string{"tailnet policy file", "hosts alias vault", "Rename that alias", "varlatch migrate --resume"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the message lacks %q: %s", want, msg)
+		}
+	}
+	if strings.Contains(msg, "Rename or delete that device") || strings.Contains(msg, "once the control plane answers") {
+		t.Errorf("the message sends the operator elsewhere: %s", msg)
+	}
+	if serving, incoming := r.ep.state(); serving || incoming {
+		t.Fatalf("an installation opened: serving %v, incoming %v", serving, incoming)
+	}
+	r.f.SetBlocked()
+	s, err = r.engine.Resume(ctx, op)
+	assertUndone(t, r, s, err)
+}

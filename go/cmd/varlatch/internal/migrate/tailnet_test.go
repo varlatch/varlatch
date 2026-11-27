@@ -1225,3 +1225,85 @@ func TestTheTailnetNameIsWaitedForUntilReleased(t *testing.T) {
 		t.Errorf("no waiting line: %q", lines)
 	}
 }
+
+// A hosts alias in the tailnet policy file equal to the name keeps
+// Tailscale from giving the name to any device (2026-11-27). With the
+// OAuth client's optional policy_file:read scope, the preflight reads the
+// policy file and refuses before anything is done; without it, or when the
+// read fails, it says to check by hand and goes on; a policy file without
+// such an alias is passed silently.
+func TestTheTailnetPolicyFileIsChecked(t *testing.T) {
+	const policy = `{
+		// HuJSON, as written in the admin console.
+		"hosts": {"vault": "100.64.0.10", "build": "100.64.0.11",},
+	}`
+	warned := func(w *tnWorld) bool {
+		return slices.ContainsFunc(w.said, func(s string) bool { return strings.Contains(s, "the tailnet policy file was not checked") })
+	}
+
+	// The alias equal to the name, readable: refused, nothing done.
+	w := newTailnetWorld(t)
+	w.cp.Scope, w.cp.Policy = "devices:core policy_file:read", policy
+	j, err := w.eng.Run(context.Background(), true)
+	if err == nil || !strings.Contains(err.Error(), "hosts alias vault") || !strings.Contains(err.Error(), "rename that alias in the policy file") || !strings.Contains(err.Error(), "nothing was done") {
+		t.Fatalf("an alias equal to the name: %v", err)
+	}
+	if j.Tailnet != nil || w.tgt.info.Tailnet.Enrolled || w.names()["old"] != "vault" || w.cp.PolicyReads != 1 {
+		t.Fatalf("the refusal did something: %+v, enrolled %v, names %v, reads %d", j.Tailnet, w.tgt.info.Tailnet.Enrolled, w.names(), w.cp.PolicyReads)
+	}
+	if strings.Contains(err.Error(), "100.64.0.10") {
+		t.Errorf("the refusal quotes the policy file's address: %v", err)
+	}
+	// Renamed, the run goes on, silently.
+	w.cp.Policy = `{"hosts": {"vault-alias": "100.64.0.10"}}`
+	if j, err = w.eng.Run(context.Background(), true); err != nil || j.Tailnet == nil || j.Tailnet.Handoff.Phase != tailhandoff.Prepared {
+		t.Fatalf("no alias: %v %+v", err, j)
+	}
+	if warned(w) {
+		t.Errorf("a readable policy file without the alias warned: %q", w.said)
+	}
+
+	// The documented client (devices:core only): a warning, and the run
+	// goes on; the policy file is never requested.
+	w = newTailnetWorld(t)
+	w.cp.Policy = policy
+	if j, err = w.eng.Run(context.Background(), true); err != nil || j.Tailnet.Handoff.Phase != tailhandoff.Prepared {
+		t.Fatalf("unreadable: %v %+v", err, j)
+	}
+	said := strings.Join(w.said, "\n")
+	if !warned(w) || !strings.Contains(said, "adding the policy_file:read scope") || !strings.Contains(said, "no alias vault") || w.cp.PolicyReads != 0 {
+		t.Fatalf("the warning: %q, reads %d", said, w.cp.PolicyReads)
+	}
+
+	// A read that fails otherwise: a warning with the reason, and on.
+	w = newTailnetWorld(t)
+	w.cp.Scope, w.cp.Policy = "devices:core policy_file:read", `{"hosts": [`
+	if j, err = w.eng.Run(context.Background(), true); err != nil || j.Tailnet.Handoff.Phase != tailhandoff.Prepared {
+		t.Fatalf("a broken policy file: %v %+v", err, j)
+	}
+	if said := strings.Join(w.said, "\n"); !warned(w) || !strings.Contains(said, "could not be read") {
+		t.Fatalf("the warning: %q", said)
+	}
+}
+
+// The rollback moves the name back to the old node, and an alias added
+// since would block it the same way: refused before the name moves.
+func TestTheRollbackChecksTheTailnetPolicyFile(t *testing.T) {
+	w := newTailnetWorld(t)
+	w.cp.Scope = "devices:core policy_file:read"
+	j, err := w.eng.Run(context.Background(), false)
+	if err != nil || j.Phase != Open {
+		t.Fatalf("%v %+v", err, j)
+	}
+	j.Phase = RollbackTransfer
+	w.tgt.journal = &JournalHead{ID: j.ID, Phase: RollbackTransfer}
+	w.tgt.running = false
+	w.cp.Policy = `{"hosts": {"Vault": "100.64.0.10"}}`
+	err = w.eng.rollbackTailnet(context.Background(), j)
+	if err == nil || !strings.Contains(err.Error(), "hosts alias Vault") {
+		t.Fatalf("an alias added since: %v", err)
+	}
+	if n := w.names(); n["new"] != "vault" {
+		t.Fatalf("the name moved: %v", n)
+	}
+}

@@ -552,7 +552,11 @@ tailnet name over to a new node, by rename, in the same transfer:
   `varlatch migrate --resume` runs the undo again. When Tailscale keeps
   refusing the name and lists no device holding it, the message says so:
   look the name up in the tailnet's admin console, correct it there if a
-  device does hold it, then run `varlatch migrate --resume`.
+  device does hold it, then run `varlatch migrate --resume`. When the name
+  keeps reading back with a number through the whole wait and no device
+  holds it, the likely cause is a `hosts` alias of the same name in the
+  tailnet policy file (see below), and the message says so: rename the
+  alias, then run `varlatch migrate --resume`.
 
 With both a public (or Coolify) address and the tailnet address, the order
 is fixed: the domain first, checked through the public URL; then the
@@ -568,9 +572,12 @@ are given in files, never on the command line:
 - **The OAuth client** (`--tailscale-oauth-client-file <file>`): a
   Tailscale OAuth client with the **`devices:core`** scope and no other,
   generated in the Tailscale admin console, in a file holding
-  `{"clientId": "...", "clientSecret": "..."}`. The migration refuses a
-  client with any other scope. Each operation exchanges the client for a
-  token of its own, and no token is kept.
+  `{"clientId": "...", "clientSecret": "..."}`. The client may also have
+  the **`policy_file:read`** scope, which is optional and changes nothing:
+  with it, the migration reads the tailnet policy file and refuses, before
+  anything is done, a `hosts` alias equal to the name (below). The
+  migration refuses a client with any other scope. Each operation
+  exchanges the client for a token of its own, and no token is kept.
 - **The new node's auth key** (`--tailnet-auth-key-file <file>`): an auth
   key with the node's tags, which the migration gives to the 0.50
   server.
@@ -585,7 +592,23 @@ rollback window, the migration stops before the barrier.
 `--accept-rollback-certificate` goes on: a rollback after that
 certificate ends then needs a new one, about 40 s of downtime.
 
-Two things on the tailnet itself:
+Three things on the tailnet itself:
+
+- **No `hosts` alias in the tailnet policy file may equal the name.**
+  Tailscale does not give a device a machine name that the policy file
+  also defines, such as `"hosts": {"varlatch": "100.64.0.10"}` beside a
+  node named `varlatch`. An old node can still hold such a name, because
+  it had the name before the alias existed, so nothing shows the problem
+  until the name moves: once the old node lets go of it, Tailscale gives
+  it to no device (the new node, and the old one on the undo, read back
+  as `varlatch-1`), the handoff fails, and its undo stays pending. Rename
+  the alias before the migration (and in the rules that use it). With the
+  OAuth client's optional `policy_file:read` scope, the migration checks
+  this itself, in the dry run too, and refuses before anything is done.
+  Without that scope it cannot read the policy file, so it prints a
+  warning saying to check the `hosts` section by hand, and goes on. The
+  rollback checks again before the name goes back. Headscale has no such
+  rule, so nothing is checked there.
 
 - **The auth key must be reusable.** The new node joins with it, and the
   final check joins a short-lived probe node with it too, so a single-use
@@ -641,6 +664,17 @@ self-hosted server, or Headscale's authority on Tailscale's, is refused
 before anything is done, naming the one to give. A run that resumes a
 handoff must give the authority it was planned with: its node ids are
 that server's.
+
+#### After the handoff
+
+On 0.50, the tailnet listeners serve the API only, never the dashboard:
+the tailnet browser endpoint (`tailnet_https_port`, such as 8688) answers
+`/` with 404, where the TypeScript server served the dashboard. That 404
+is expected and is not a failed migration. People open the dashboard at
+`public_url`. To check the tailnet path from the dashboard, open an
+environment with a Tailnet Requirement on an approved device and use
+**Connect to tailnet**: its values show once the device is checked (see
+[the tailnet browser endpoint](../self-hosting/configuration.md#tailnet-browser-endpoint)).
 
 ## The image target
 

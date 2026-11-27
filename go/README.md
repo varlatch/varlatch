@@ -3373,9 +3373,17 @@ slice 7.5b.
 - **One interface, two backends.** Each lists the devices, offline and
   expired ones included, and renames one.
   - `Tailscale` uses the API with an OAuth client that has the
-    `devices:core` scope and no other (O4); any other scope is refused
-    before a token is used. Each operation exchanges the client for a
-    token of its own, and nothing keeps one.
+    `devices:core` scope and no other (O4) but, optionally,
+    `policy_file:read`; any other scope is refused before a token is
+    used. Each operation exchanges the client for a token of its own, and
+    nothing keeps one. With `policy_file:read`, `PolicyHosts`
+    (`PolicyReader`) reads the tailnet policy file (HuJSON) and answers
+    its `hosts` aliases' names; without it, it sends nothing and answers
+    `ErrPolicyUnreadable`. `varlatch migrate` refuses a handoff whose name
+    is such an alias (Tailscale assigns that name to no device), and
+    warns when it cannot read the file. A release wait that ends with no
+    device listed under the name says so (`UnreleasedError`, `Unlisted`),
+    naming the policy file as the likely cause.
   - `HeadscaleAPI` uses a key that `Open` checks expires within the hour
     (every Headscale key is a full administrator); `Close` expires it.
   - `HeadscaleCLI` runs `headscale` on the control server (an absolute
