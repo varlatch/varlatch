@@ -33,7 +33,7 @@ func TestAConnectionIsListedAndNotDelivered(t *testing.T) {
 	if code != 0 || !strings.Contains(stdout, `"preset": "google"`) {
 		t.Errorf("list --json: %d %q %q", code, stdout, stderr)
 	}
-	code, stdout, stderr = runIn(t, s, "", nil, nil, "run", "--", "env")
+	code, stdout, stderr = runIn(t, s, "", nil, nil, append([]string{"run", "--"}, printEnv()...)...)
 	if code != 0 || !strings.Contains(stderr, "1 OAuth connection(s) not delivered") || strings.Contains(stderr, "withheld by policy") || strings.Contains(stdout, "MAIL_TOKEN") {
 		t.Errorf("run: %d %q %q", code, stdout, stderr)
 	}

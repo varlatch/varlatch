@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -152,7 +153,7 @@ func TestASeedIsListedAndNotDelivered(t *testing.T) {
 	if code != 0 || !strings.Contains(stdout, `"periodSeconds": 30`) {
 		t.Errorf("list --json: %d %q %q", code, stdout, stderr)
 	}
-	code, stdout, stderr = runIn(t, s, "", nil, nil, "run", "--", "env")
+	code, stdout, stderr = runIn(t, s, "", nil, nil, append([]string{"run", "--"}, printEnv()...)...)
 	if code != 0 || !strings.Contains(stderr, "1 one-time code(s) not delivered") || strings.Contains(stderr, "withheld by policy") ||
 		strings.Contains(stdout, "PORTAL_OTP") {
 		t.Errorf("run: %d %q %q", code, stdout, stderr)
@@ -162,4 +163,13 @@ func TestASeedIsListedAndNotDelivered(t *testing.T) {
 			t.Errorf("asked for a seed: %s", body)
 		}
 	}
+}
+
+// printEnv is a command that prints its environment: env, which Windows
+// does not have, or cmd's set there.
+func printEnv() []string {
+	if runtime.GOOS == "windows" {
+		return []string{"cmd", "/c", "set"}
+	}
+	return []string{"env"}
 }
