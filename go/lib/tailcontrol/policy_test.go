@@ -38,7 +38,7 @@ func TestTailscalePolicyHosts(t *testing.T) {
 
 	// devices:core only (the documented client): unreadable, no read sent.
 	hosts, err := ts.PolicyHosts(ctx)
-	if !errors.Is(err, tailcontrol.ErrPolicyUnreadable) || hosts != nil || f.PolicyReads != 0 {
+	if !errors.Is(err, tailcontrol.ErrPolicyNoScope) || !errors.Is(err, tailcontrol.ErrPolicyUnreadable) || hosts != nil || f.PolicyReads != 0 {
 		t.Fatalf("without the scope: %v, %v, %d reads", hosts, err, f.PolicyReads)
 	}
 	if !strings.Contains(err.Error(), "policy_file:read") {
@@ -69,7 +69,7 @@ func TestTailscalePolicyHosts(t *testing.T) {
 
 	// The API refuses the read although the token has the scope: unreadable.
 	f.PolicyForbidden = true
-	if _, err := ts.PolicyHosts(ctx); !errors.Is(err, tailcontrol.ErrPolicyUnreadable) {
+	if _, err := ts.PolicyHosts(ctx); !errors.Is(err, tailcontrol.ErrPolicyUnreadable) || errors.Is(err, tailcontrol.ErrPolicyNoScope) || !strings.Contains(err.Error(), "although the OAuth client has the policy_file:read scope") {
 		t.Errorf("a 403: %v", err)
 	}
 	f.PolicyForbidden = false
@@ -82,7 +82,7 @@ func TestTailscalePolicyHosts(t *testing.T) {
 
 	// policy_file:read is the one extra scope allowed: write access, or the
 	// read scope alone, is refused before any use.
-	for _, scope := range []string{"devices:core policy_file", "policy_file:read", "devices:core policy_file:read auth_keys"} {
+	for _, scope := range []string{"devices:core policy_file", "policy_file:read", "devices:core policy_file:read auth_keys", "devices:core devices:core", "devices:core policy_file:read policy_file:read"} {
 		f.Scope = scope
 		before := len(f.Used)
 		if _, err := ts.Devices(ctx); err == nil || !strings.Contains(err.Error(), "devices:core scope and no other") {
@@ -116,7 +116,7 @@ func TestRenameReleasedNamesThePolicyFile(t *testing.T) {
 		t.Fatalf("not an unreleased, unlisted name: %v", err)
 	}
 	msg := err.Error()
-	for _, want := range []string{"did not release", "no device is listed under vault", "policy file", `hosts alias "vault"`, "rename that alias"} {
+	for _, want := range []string{"did not release", `no device is listed under "vault"`, "policy file", `hosts alias "vault"`, "rename that alias"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("the message lacks %q: %s", want, msg)
 		}

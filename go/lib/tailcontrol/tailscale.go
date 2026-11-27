@@ -143,7 +143,12 @@ func (t *Tailscale) tokenScopes(ctx context.Context, op, device string) (tok str
 		return "", false, t.err(op, device, errors.New("the token exchange answered no token"))
 	}
 	core, ok := false, true
+	seen := map[string]bool{}
 	for _, s := range strings.Fields(got.Scope) {
+		if seen[s] {
+			ok = false
+		}
+		seen[s] = true
 		switch s {
 		case TailscaleScope:
 			core = true
@@ -174,7 +179,7 @@ func (t *Tailscale) PolicyHosts(ctx context.Context) ([]string, error) {
 		return nil, err
 	}
 	if !policy {
-		return nil, t.err(op, "", ErrPolicyUnreadable)
+		return nil, t.err(op, "", ErrPolicyNoScope)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, t.base+"/api/v2/tailnet/"+url.PathEscape(t.tailnet)+"/acl", nil)
 	if err != nil {
@@ -186,7 +191,7 @@ func (t *Tailscale) PolicyHosts(ctx context.Context) ([]string, error) {
 	if err := do(t.http, req, &body, t.secret(), tok); err != nil {
 		var status *StatusError
 		if errors.As(err, &status) && (status.Code == http.StatusUnauthorized || status.Code == http.StatusForbidden) {
-			err = fmt.Errorf("%w: %v", ErrPolicyUnreadable, err)
+			err = fmt.Errorf("%w: the API refused the read although the OAuth client has the %s scope (check the client's tailnet and scopes): %v", ErrPolicyUnreadable, PolicyScope, err)
 		}
 		return nil, t.err(op, "", err)
 	}

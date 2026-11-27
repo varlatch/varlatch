@@ -1245,7 +1245,7 @@ func TestTheTailnetPolicyFileIsChecked(t *testing.T) {
 	w := newTailnetWorld(t)
 	w.cp.Scope, w.cp.Policy = "devices:core policy_file:read", policy
 	j, err := w.eng.Run(context.Background(), true)
-	if err == nil || !strings.Contains(err.Error(), "hosts alias vault") || !strings.Contains(err.Error(), "rename that alias in the policy file") || !strings.Contains(err.Error(), "nothing was done") {
+	if err == nil || !strings.Contains(err.Error(), `hosts alias "vault"`) || !strings.Contains(err.Error(), "rename that alias in the policy file") || !strings.Contains(err.Error(), "nothing was done") {
 		t.Fatalf("an alias equal to the name: %v", err)
 	}
 	if j.Tailnet != nil || w.tgt.info.Tailnet.Enrolled || w.names()["old"] != "vault" || w.cp.PolicyReads != 1 {
@@ -1271,7 +1271,7 @@ func TestTheTailnetPolicyFileIsChecked(t *testing.T) {
 		t.Fatalf("unreadable: %v %+v", err, j)
 	}
 	said := strings.Join(w.said, "\n")
-	if !warned(w) || !strings.Contains(said, "adding the policy_file:read scope") || !strings.Contains(said, "no alias vault") || w.cp.PolicyReads != 0 {
+	if !warned(w) || !strings.Contains(said, "adding the policy_file:read scope") || !strings.Contains(said, `no alias "vault"`) || w.cp.PolicyReads != 0 {
 		t.Fatalf("the warning: %q, reads %d", said, w.cp.PolicyReads)
 	}
 
@@ -1300,7 +1300,7 @@ func TestTheRollbackChecksTheTailnetPolicyFile(t *testing.T) {
 	w.tgt.running = false
 	w.cp.Policy = `{"hosts": {"Vault": "100.64.0.10"}}`
 	err = w.eng.rollbackTailnet(context.Background(), j)
-	if err == nil || !strings.Contains(err.Error(), "hosts alias Vault") {
+	if err == nil || !strings.Contains(err.Error(), `hosts alias "Vault"`) {
 		t.Fatalf("an alias added since: %v", err)
 	}
 	if n := w.names(); n["new"] != "vault" {

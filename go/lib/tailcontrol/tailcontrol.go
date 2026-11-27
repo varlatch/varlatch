@@ -416,7 +416,7 @@ type UnreleasedError struct {
 func (e *UnreleasedError) Error() string {
 	msg := fmt.Sprintf("%v (the tailnet did not release %q within %s: %v", e.Err, e.Name, e.After, e.Cause)
 	if e.Unlisted {
-		msg += fmt.Sprintf("; no device is listed under %s, so the likely cause is the tailnet policy file: Tailscale does not give a device a name the policy file also defines, such as a hosts alias %q, so rename that alias in the policy file", e.Name, e.Name)
+		msg += fmt.Sprintf("; no device is listed under %q, so the likely cause is the tailnet policy file: Tailscale does not give a device a name the policy file also defines, such as a hosts alias %q, so rename that alias in the policy file", e.Name, e.Name)
 	}
 	return msg + ")"
 }
@@ -430,7 +430,12 @@ const PolicyScope = "policy_file:read"
 
 // ErrPolicyUnreadable is a tailnet policy file the authority given may not
 // read: an OAuth client without PolicyScope, or one the API refused.
-var ErrPolicyUnreadable = errors.New("the tailnet policy file is not readable with this authority (the OAuth client has no " + PolicyScope + " scope)")
+var ErrPolicyUnreadable = errors.New("the tailnet policy file is not readable with this authority")
+
+// ErrPolicyNoScope is ErrPolicyUnreadable because the OAuth client lacks
+// the optional PolicyScope (no request for the file is sent); a refusal by
+// the API although the client has it wraps ErrPolicyUnreadable alone.
+var ErrPolicyNoScope = fmt.Errorf("%w (the OAuth client has no %s scope)", ErrPolicyUnreadable, PolicyScope)
 
 // PolicyReader is a control plane that can read the names its tailnet
 // policy file defines: Tailscale's, with PolicyScope. Headscale's does not

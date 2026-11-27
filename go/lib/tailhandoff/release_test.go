@@ -299,7 +299,7 @@ func TestAPolicyAliasBlockingTheNameIsSaid(t *testing.T) {
 		t.Fatalf("not an unreleased, unlisted name: %v", err)
 	}
 	msg := err.Error()
-	for _, want := range []string{"tailnet policy file", "hosts alias vault", "Rename that alias", "varlatch migrate --resume"} {
+	for _, want := range []string{"tailnet policy file", `hosts alias "vault"`, "Rename that alias", "varlatch migrate --resume"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("the message lacks %q: %s", want, msg)
 		}
