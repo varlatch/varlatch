@@ -823,7 +823,7 @@ func exerciseRefusal(reason string, detail jsvalue.Object, tailnet bool) error {
 		case "secret-not-bound":
 			which = "is a Secret this Capability does not name \u2014 bind it in the Capability's items"
 		case "one-time-code":
-			which = "is a one-time code \u2014 a reference gives neither the code nor its seed"
+			which = "is a one-time code: a reference gives neither the code nor its seed"
 		case "plain-read-denied":
 			which = "the Agent's Grants do not allow reading here (config.value.read)"
 		default:

@@ -65,7 +65,8 @@ func seedParams(payload string) (p totp.Params, ok bool) {
 		return totp.Params{}, true
 	}
 	if v.TOTP == nil {
-		return totp.Params{}, false
+		// "totp": null is a member totp too: a seed, never a value.
+		return totp.Params{}, true
 	}
 	return *v.TOTP, true
 }
