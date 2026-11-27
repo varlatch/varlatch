@@ -65,7 +65,9 @@ schema upgrade` in a one-off container, after a backup. Outside the image
 (`VARLATCH_IMAGE` unset), serve refuses an older schema, and `varlatch
 upgrade` upgrades a systemd installation with its snapshot. In the image,
 `VARLATCH_IMAGE` also makes `varlatchd admin` and the CLI refuse a key in
-their environment (above); do not unset it.
+their environment (above); do not unset it. Never set it on a host install:
+there it would move the schema at start without `varlatch upgrade`'s
+snapshot.
 
 The container runs with a read-only root filesystem (`docker run
 --read-only`) and needs no tmpfs: it writes only to the data volume.
