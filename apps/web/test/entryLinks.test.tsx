@@ -292,6 +292,56 @@ describe("another link opened in the tab", () => {
   });
 });
 
+describe("a session that ended", () => {
+  it("is dropped for a link open to anyone, which is looked up again and asks no sign-in", async () => {
+    const SECOND = `vlt_entry_${"b".repeat(43)}`;
+    const header = (init: RequestInit) => (init.headers as Record<string, string>).Authorization;
+    session.authPost.mockResolvedValue({ ok: true, json: async () => ({ token: "vlt_web_made_up" }) });
+    answers["/v1/entry-links/lookup"] = (body, init) =>
+      body.token === SECOND
+        ? [200, { ...view, item: "OPEN_KEY" }]
+        : header(init)
+          ? [200, { ...view, restrictedTo: "member" }]
+          : [200, { restrictedTo: "member", signInRequired: true }];
+    answers["/v1/entry-links/submit"] = (_, init) => (header(init) ? refusal(401, "INVALID_CREDENTIAL", "The bearer has ended") : [200, { status: "entered" }]);
+    await render(<EntryApp />);
+    session.browserSession.mockResolvedValue({ csrfToken: "c", identityId: "idn_1" });
+    await act(async () => one("entry-sign-in-button").props.onClick());
+    await flush();
+    expect(text()).toContain("PROVIDER_KEY");
+    page.location.hash = `#${SECOND}`;
+    await act(async () => page.listeners.hashchange!.forEach((f) => f()));
+    await flush();
+    expect(text()).toContain("OPEN_KEY");
+    expect(header(asked.at(-1)!.init)).toBe("Bearer vlt_web_made_up");
+    await type("made-up");
+    await send();
+    expect(all("entry-sign-in")).toEqual([]);
+    expect(asked.at(-1)!).toMatchObject({ path: "/v1/entry-links/lookup", body: { token: SECOND } });
+    expect(header(asked.at(-1)!.init)).toBeUndefined();
+    expect(text()).toContain("OPEN_KEY");
+    expect(text()).not.toContain("made-up");
+    await type("made-up");
+    await send();
+    expect(asked.at(-1)!.path).toBe("/v1/entry-links/submit");
+    expect(header(asked.at(-1)!.init)).toBeUndefined();
+    expect(one("entry-done")).toBeDefined();
+  });
+  it("asks for the sign-in again for a link for a member", async () => {
+    session.authPost.mockResolvedValue({ ok: true, json: async () => ({ token: "vlt_web_made_up" }) });
+    answers["/v1/entry-links/lookup"] = (_, init) =>
+      (init.headers as Record<string, string>).Authorization ? [200, { ...view, restrictedTo: "member" }] : [200, { restrictedTo: "member", signInRequired: true }];
+    answers["/v1/entry-links/submit"] = () => refusal(401, "INVALID_CREDENTIAL", "The bearer has ended");
+    await render(<EntryApp />);
+    session.browserSession.mockResolvedValue({ csrfToken: "c", identityId: "idn_1" });
+    await act(async () => one("entry-sign-in-button").props.onClick());
+    await flush();
+    await type("made-up");
+    await send();
+    expect(one("entry-sign-in")).toBeDefined();
+  });
+});
+
 describe("a link for a person", () => {
   const forMember = (body: Record<string, unknown>, init: RequestInit): [number, unknown] =>
     (init.headers as Record<string, string>).Authorization ? [200, { ...view, restrictedTo: "member" }] : [200, { restrictedTo: "member", signInRequired: true }];

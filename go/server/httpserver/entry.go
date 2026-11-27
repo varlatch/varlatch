@@ -85,13 +85,26 @@ func (o *operations) entryTarget(ctx context.Context, route, exception string) (
 		Target: values.Target{OrganizationID: p.org.ID, Project: p.project, Env: env}}, env, nil
 }
 
-// entryOwner is whose links the caller sees: a machine its own, a person,
-// with config.value.write, everybody's ("").
+// entryOwner is whose links the caller sees: a machine its own, a person
+// with config.value.write everybody's (""), and a person without it their
+// own, as a machine that lost its right still sees and cancels its own.
+// Nothing is denied, so nothing is recorded: the answer only narrows.
 func (p *projectRequest) entryOwner(ctx context.Context, env environments.Environment) (string, error) {
 	if p.p.Identity.Kind != "human" {
 		return p.p.Identity.ID, nil
 	}
-	return "", p.authorizeOn(ctx, "config.value.write", p.envResource(env))
+	d, err := authz.Decide(ctx, p.o.s.opts.Auth.Store().Reader(), authzPrincipal(p.p), "config.value.write", p.envResource(env),
+		authz.Options{HideExistence: true, RequestID: requestIDOf(p.r)})
+	if err != nil {
+		return "", err
+	}
+	if !d.Allowed {
+		return p.p.Identity.ID, nil
+	}
+	if p.orgRequest.action == "" {
+		p.orgRequest.action, p.orgRequest.resource = "config.value.write", p.envResource(env)
+	}
+	return "", nil
 }
 
 // mayMakeEntryLinks refuses, before anything of the request is judged, a

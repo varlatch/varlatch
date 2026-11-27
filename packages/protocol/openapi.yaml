@@ -1410,9 +1410,9 @@ paths:
       summary: >
         The environment's entry links (capability values.entry-links,
         ADR-0063), newest first, at most 200, kept until a day after they
-        expire. A machine identity sees what it asked for; a person needs
-        config.value.write and sees all of them. Never a link's address, and
-        nothing of a value.
+        expire. A person holding config.value.write sees all of them; a
+        machine identity, and a person without it, see what they asked for.
+        Never a link's address, and nothing of a value.
       parameters:
         - $ref: "#/components/parameters/org"
         - $ref: "#/components/parameters/project"

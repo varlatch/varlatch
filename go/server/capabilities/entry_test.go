@@ -573,8 +573,30 @@ func TestListAndGetEntryLinks(t *testing.T) {
 	}
 	// In its own environment only.
 	w.want("another environment", w.call("GET", prodEntry+"/"+mine.id, "svc", nil), 404, "RESOURCE_NOT_FOUND")
-	// A person without config.value.write.
-	w.want("bob in production", w.call("GET", prodEntry, "bob", nil), 403, "PERMISSION_DENIED")
+	// A person without config.value.write sees, and cancels, their own
+	// (ADR-0063 Decision 12), as a machine without its Grant does.
+	if a := w.want("bob in production", w.call("GET", prodEntry, "bob", nil), 200, ""); len(a.body["items"].([]any)) != 0 {
+		t.Errorf("%s", a.raw)
+	}
+	bobs, alices := w.link("bob", with{"item": "BOBS"}), w.link("alice", with{"item": "ALICES"})
+	w.exec("UPDATE entry_links SET environment_id = ? WHERE id IN (?, ?)", w.env("production"), bobs.id, alices.id)
+	denials := w.events("authorization.denied")
+	if a := w.want("bob's own", w.call("GET", prodEntry, "bob", nil), 200, ""); len(a.body["items"].([]any)) != 1 || a.body["items"].([]any)[0].(map[string]any)["id"] != bobs.id {
+		t.Errorf("%s", a.raw)
+	}
+	w.want("bob's", w.call("GET", prodEntry+"/"+bobs.id, "bob", nil), 200, "")
+	w.want("alice's", w.call("GET", prodEntry+"/"+alices.id, "bob", nil), 404, "RESOURCE_NOT_FOUND")
+	w.want("cancel alice's", w.call("DELETE", prodEntry+"/"+alices.id, "bob", nil), 404, "RESOURCE_NOT_FOUND")
+	w.want("cancel bob's", w.call("DELETE", prodEntry+"/"+bobs.id, "bob", nil), 204, "")
+	if got := w.text("SELECT status FROM entry_links WHERE id = ?", bobs.id); got != "cancelled" {
+		t.Error(got)
+	}
+	if n := w.events("authorization.denied"); n != denials {
+		t.Errorf("%s denials, then %s", denials, n)
+	}
+	if a := w.want("alice sees all", w.call("GET", prodEntry, "alice", nil), 200, ""); len(a.body["items"].([]any)) != 2 {
+		t.Errorf("%s", a.raw)
+	}
 	// An Agent sees its own: none.
 	w.agentCredential()
 	if a := w.want("agent", w.call("GET", entryPath, "agent-cred", nil), 200, ""); len(a.body["items"].([]any)) != 0 {

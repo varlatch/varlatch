@@ -121,8 +121,8 @@ follows the `#`. Give it to the person as it is.
 | Call | What it does |
 | --- | --- |
 | `GET …/entry-links/{id}` | the link: `status` is `pending`, `entered`, `expired` or `cancelled` (with `reason` `cancelled`, `value-changed` or `credential-ended`) |
-| `GET …/entry-links` | the environment's, newest first: a machine sees its own, a person with `config.value.write` all |
-| `DELETE …/entry-links/{id}` | cancels it, also while the organization is frozen |
+| `GET …/entry-links` | the environment's, newest first: a person with `config.value.write` sees all; a machine, and a person without it, their own |
+| `DELETE …/entry-links/{id}` | cancels it, also while the organization is frozen: whoever asked for it, with or without the right to ask still, or a person with `config.value.write` |
 
 Nothing of the value is in any of them. Instead of asking, an application can
 listen: the `value.written` event of a webhook has

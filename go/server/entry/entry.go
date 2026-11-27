@@ -25,6 +25,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/url"
 	"strings"
@@ -163,6 +164,10 @@ func (s *Service) Create(ctx context.Context, req Request, in Input, base *url.U
 	}
 	if in.TTLSeconds == 0 {
 		in.TTLSeconds = DefaultTTLSeconds
+	}
+	// The request's schema bounds it too; this is for every other caller.
+	if in.TTLSeconds < MinTTLSeconds || in.TTLSeconds > MaxTTLSeconds {
+		return nil, nil, domainerr.New("VALIDATION_FAILED", fmt.Sprintf("ttlSeconds: from %d to %d", MinTTLSeconds, MaxTTLSeconds))
 	}
 	if (in.RestrictedTo == Identity) != (in.IdentityID != "") {
 		return nil, nil, domainerr.New("VALIDATION_FAILED", "identityId: the person the link is for, with restrictedTo identity and with nothing else")

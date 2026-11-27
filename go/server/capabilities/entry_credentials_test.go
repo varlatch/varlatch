@@ -335,11 +335,11 @@ func TestAPersonsLinkEndsWithAWithdrawal(t *testing.T) {
 			w.exec("UPDATE credentials SET expires_at = 5 WHERE id = 'crd_t_a'")
 			revoke("crd_t_a", "b")(w)
 		}},
-		"another browser session, from a third":      {"a", func(w *world) { w.browser("c", "Alice", "ses_c"); revoke("crd_t_b", "c")(w) }},
-		"the CLI's, from a browser":                  {"cli", revoke("crd_t_cli", "a")},
-		"the CLI's, from another CLI":                {"cli", revoke("crd_t_cli", "cli2")},
-		"the move to another address":                {"a", func(w *world) { w.moved() }},
-		"revoked from elsewhere, and then signs out": {"a", func(w *world) { revoke("crd_t_a", "b")(w); w.exec("DELETE FROM auth_sessions WHERE id = 'ses_a'") }},
+		"another browser session, from a third":               {"a", func(w *world) { w.browser("c", "Alice", "ses_c"); revoke("crd_t_b", "c")(w) }},
+		"the CLI's, from a browser":                           {"cli", revoke("crd_t_cli", "a")},
+		"the CLI's, from another CLI":                         {"cli", revoke("crd_t_cli", "cli2")},
+		"the move to another address":                         {"a", func(w *world) { w.moved() }},
+		"revoked from elsewhere, and then signs out":          {"a", func(w *world) { revoke("crd_t_a", "b")(w); w.exec("DELETE FROM auth_sessions WHERE id = 'ses_a'") }},
 		"the other browsers signed out, from another session": {"a", signOutOthers("b")},
 		"the other browsers signed out, the CLI's":            {"cli", signOutOthers("b")},
 	} {
@@ -352,6 +352,10 @@ func TestAPersonsLinkEndsWithAWithdrawal(t *testing.T) {
 			c.end(w)
 			if what != "the move to another address" {
 				w.wantEvent("capability.revoked", "Alice", map[string]any{"entryLinkId": l.id}, map[string]any{"reason": "credential-ended", "entryLink": "member"})
+				// The action it was made under, as when it is cancelled.
+				if e := w.event("capability.revoked"); e["action"] != "config.value.write" {
+					t.Errorf("action %v", e["action"])
+				}
 			}
 			w.wantEnded("alice", l, "")
 			w.wantCancelledAlike(l)
@@ -399,6 +403,9 @@ func TestAPersonsLinkEndsWithAWithdrawal(t *testing.T) {
 	w.want("remove", w.call("DELETE", "/v1/organizations/cap/members/"+w.idn("bob"), "alice", nil), 200, "")
 	w.exec("UPDATE org_memberships SET removed_at = NULL WHERE identity_id = ?", w.idn("bob"))
 	w.wantEvent("capability.revoked", "Alice", map[string]any{"entryLinkId": l.id, "issuedByIdentityId": w.idn("bob")}, map[string]any{"reason": "credential-ended"})
+	if e := w.event("capability.revoked"); e["action"] != "config.value.write" {
+		t.Errorf("action %v", e["action"])
+	}
 	w.want("added again", w.submit("alice", l, nil), 410, "EXPIRED")
 	// The person, disabled.
 	w = entryWorld(t)

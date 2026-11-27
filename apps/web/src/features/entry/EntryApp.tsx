@@ -46,6 +46,9 @@ export function EntryApp() {
   const bearer = useRef<string | null>(null);
   // Which link is open, so that what was asked about another one is dropped.
   const turn = useRef(0);
+  // Whether the link shown is open to anyone, and how to look it up again.
+  const anyone = useRef(false);
+  const again = useRef<() => void>(() => undefined);
   const [step, setStep] = useState<Step>({ kind: "loading" });
 
   const refused = useCallback((err: unknown) => {
@@ -53,6 +56,14 @@ export function EntryApp() {
       if (err.reason === "not-for-you") return setStep({ kind: "sign-in", wrong: err.message });
       if (err.code === "AUTHENTICATION_REQUIRED" || err.code === "INVALID_CREDENTIAL") {
         bearer.current = null;
+        // A link open to anyone needs no sign-in: a session that ended
+        // meanwhile (one kept from a link opened before) is dropped, and the
+        // link looked up again without it.
+        if (anyone.current && err.code === "INVALID_CREDENTIAL") {
+          anyone.current = false;
+          setStep({ kind: "loading" });
+          return again.current();
+        }
         return setStep({ kind: "sign-in" });
       }
       if (err.code === "PASSKEY_VERIFICATION_REQUIRED") return setStep({ kind: "sign-in", wrong: err.message });
@@ -76,11 +87,15 @@ export function EntryApp() {
         view = await lookup(link, somebody);
         if (turn.current !== mine) return;
       }
+      anyone.current = view.restrictedTo === "anyone";
       setStep({ kind: "form", view });
     } catch (err) {
       if (turn.current === mine) refused(err);
     }
   }, [refused]);
+  useEffect(() => {
+    again.current = () => void look();
+  }, [look]);
 
   useEffect(() => {
     showPreferredTheme();
@@ -89,6 +104,7 @@ export function EntryApp() {
       if (taken === "" && token.current !== "") return;
       token.current = taken;
       turn.current++;
+      anyone.current = false;
       if (!secureEnough(window.location)) {
         return setStep({ kind: "stopped", tone: "danger", title: "This page needs HTTPS", text: "A value entered here would be sent unencrypted. Open the link with https://." });
       }

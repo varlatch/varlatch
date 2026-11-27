@@ -6,6 +6,7 @@ import (
 	"context"
 
 	"github.com/varlatch/varlatch/go/server/audit"
+	"github.com/varlatch/varlatch/go/server/authz"
 	"github.com/varlatch/varlatch/go/server/db/query"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
 )
@@ -31,11 +32,14 @@ func EntryLinkResource(l query.EntryLink) jsvalue.Object {
 		{Key: "itemName", Value: l.ItemName}}
 }
 
-// recordEndedEntryLinks records the links a withdrawal ended.
-func recordEndedEntryLinks(ctx context.Context, tx query.DBTX, links []query.EntryLink, actor string) error {
+// recordEndedEntryLinks records the links a withdrawal ended, each with the
+// action it was made under (authz.EntryLinkAction of its maker's kind), as a
+// cancelled one is.
+func recordEndedEntryLinks(ctx context.Context, tx query.DBTX, links []query.EntryLink, actor, makerKind string) error {
 	for _, l := range links {
+		action := authz.EntryLinkAction(makerKind, l.RestrictedTo == "anyone")
 		_, err := audit.Record(ctx, tx, audit.Event{
-			Type: "capability.revoked", Decision: audit.Info, ActorIdentityID: &actor, OrganizationID: &l.OrganizationID,
+			Type: "capability.revoked", Decision: audit.Info, ActorIdentityID: &actor, OrganizationID: &l.OrganizationID, Action: &action,
 			Resource: append(EntryLinkResource(l), jsvalue.Member{Key: "issuedByIdentityId", Value: l.RequestedBy}),
 			Metadata: jsvalue.Object{{Key: "entryLink", Value: l.RestrictedTo}, {Key: "reason", Value: EntryLinkCredentialEnded}},
 		})
@@ -60,7 +64,7 @@ func endEntryLinksOfPerson(ctx context.Context, tx query.DBTX, now int64, p *Pri
 	if err != nil {
 		return err
 	}
-	return recordEndedEntryLinks(ctx, tx, links, p.Identity.ID)
+	return recordEndedEntryLinks(ctx, tx, links, p.Identity.ID, p.Identity.Kind)
 }
 
 // endEntryLinksOfOtherSessions ends, in the job that signs out a person's
@@ -74,15 +78,19 @@ func endEntryLinksOfOtherSessions(ctx context.Context, tx query.DBTX, now int64,
 	if err != nil {
 		return err
 	}
-	return recordEndedEntryLinks(ctx, tx, links, p.Identity.ID)
+	return recordEndedEntryLinks(ctx, tx, links, p.Identity.ID, p.Identity.Kind)
 }
 
 // EndEntryLinksOfMember ends, in the job that ends a membership, the links
 // the person made there: they stay ended if the person is added again.
 func EndEntryLinksOfMember(ctx context.Context, tx query.DBTX, now int64, organizationID, identityID, actorID string) error {
 	links, err := query.New(tx).EndEntryLinksOfMember(ctx, query.EndEntryLinksOfMemberParams{Now: now, RequestedBy: identityID, OrganizationID: organizationID})
+	if err != nil || len(links) == 0 {
+		return err
+	}
+	maker, err := query.New(tx).GetIdentity(ctx, identityID)
 	if err != nil {
 		return err
 	}
-	return recordEndedEntryLinks(ctx, tx, links, actorID)
+	return recordEndedEntryLinks(ctx, tx, links, actorID, maker.Kind)
 }

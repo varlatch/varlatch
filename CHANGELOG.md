@@ -116,7 +116,8 @@ fixes.
   - Two new actions, `entry-link.create` and `entry-link.create-open` (a link
     whoever has it can use), held by no built-in role and counting for
     service, workload, ci and broker identities. They read, reveal and replace
-    nothing. A person makes links with `config.value.write`. The `Action` enum
+    nothing. A person makes links with `config.value.write`, and sees and
+    cancels their own without it. The `Action` enum
     gains both: a client generated from the earlier document that rejects
     unknown values needs regenerating.
   - A link lives an hour at most, works once, and only while the item is what
