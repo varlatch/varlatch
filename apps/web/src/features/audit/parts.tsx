@@ -106,6 +106,7 @@ export function actorOf(
   const id = event.actorIdentityId;
   if (!id) {
     if (event.eventType.startsWith("authentication.")) return { name: "Unknown", known: false, kind: "unknown" };
+    if (byEntryLink(event)) return { name: "Whoever had the link", known: true, kind: "unknown" };
     return { name: "Varlatch", known: true, kind: "system" };
   }
   const described = event.credentialId ? credentials[event.credentialId] : undefined;
@@ -119,7 +120,13 @@ export function actorOf(
 
 /** True for Varlatch's own events, as `actor=varlatch` selects them on the server. */
 export function isVarlatchEvent(event: AuditEventLike): boolean {
-  return !event.actorIdentityId && !event.eventType.startsWith("authentication.");
+  return !event.actorIdentityId && !event.eventType.startsWith("authentication.") && !byEntryLink(event);
+}
+
+/** Done with an entry link (ADR-0063) that is open to anyone: by somebody, and nobody knows who. */
+function byEntryLink(event: AuditEventLike): boolean {
+  const of = (o: unknown) => typeof (o as Record<string, unknown> | null | undefined)?.entryLinkId === "string";
+  return of(event.resource) || of(event.metadata);
 }
 
 /** The kinds the actor filter groups identities by, in order. */

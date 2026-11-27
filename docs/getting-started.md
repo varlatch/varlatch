@@ -10,7 +10,7 @@ Run `varlatchd` on any Linux host in three commands: one binary with its own
 SQLite database, dashboard, HTTPS certificates, and encrypted backups:
 
 ```sh
-V=0.50.2  # latest release
+V=0.51.0  # latest release
 curl -fsSL -o install.sh https://github.com/varlatch/varlatch/releases/download/v$V/install.sh
 sudo sh install.sh --server
 ```
@@ -49,6 +49,10 @@ varlatch init
 - [Install the CLI](reference/install-the-cli.md): Linux, macOS, Windows, and signature verification.
 - [Members and access](reference/members.md): inviting people, default roles, and offboarding.
 - [Passkeys and sessions](reference/passkeys-and-sessions.md): trusted passkeys, headless login, and signing out.
+- [Pages, applications and pipes](reference/typed-destinations.md): where a broker that types a value, or hands it to a process, may put it.
+- [Entry links](reference/entry-links.md): a person enters a secret's value on Varlatch's own page, for an application that never sees it.
+- [OAuth connections](reference/oauth-connections.md): access tokens for automations, refreshed in one place, without handing out a refresh token.
+- [One-time codes](reference/one-time-codes.md): two-factor sign-in codes for automations, without handing out the seed.
 - [CI and other machines](reference/ci-and-machines.md): OIDC for CI and scoped machine credentials.
 - [Integrations](reference/integrations.md): pushing environments to GitHub Actions, Coolify, and Convex.
 - [Removing Varlatch](reference/uninstall.md): deleting a project, organization, CLI, or server.

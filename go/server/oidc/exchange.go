@@ -11,10 +11,15 @@ package oidc
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"slices"
+	"strings"
 	"time"
 	"unicode/utf16"
 	"unicode/utf8"
@@ -25,6 +30,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/db/query"
 	"github.com/varlatch/varlatch/go/server/domainerr"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
+	"github.com/varlatch/varlatch/go/server/oidc/limits"
 	"github.com/varlatch/varlatch/go/server/outbound"
 	"github.com/varlatch/varlatch/go/server/write"
 )
@@ -34,6 +40,16 @@ const (
 	DefaultTTL = 600
 	MaxTTL     = 3600
 )
+
+// MaxSingleExchangeLifetime bounds, in seconds, how long a token exchanged
+// once may still be valid: its use is kept until the token itself is no
+// longer accepted, so this bounds what is kept.
+const MaxSingleExchangeLifetime = 24 * 60 * 60
+
+// useKept is how much longer than the token's acceptance (its exp and
+// ClockSkew) its use is kept, in seconds: while the host's clock is ahead,
+// exchanges prune what is still needed once it is set back.
+const useKept = 26 * 60 * 60
 
 // PolicyFetcher is the verifier's fetch through the outbound policy's oidc
 // client (ADR-0057): every connection checked as it opens, no redirect
@@ -92,28 +108,50 @@ type Issued struct {
 	CredentialID, Token, IdentityID string
 	// ExpiresAt in microseconds (a millisecond time).
 	ExpiresAt int64
+	// ExerciseOnly is what limits the credential, nil for nothing.
+	ExerciseOnly *auth.ExerciseOnly
 }
 
 // JS is the answer as the API gives it.
 func (i Issued) JS() jsvalue.Object {
-	return jsvalue.Object{
+	o := jsvalue.Object{
 		{Key: "id", Value: i.CredentialID}, {Key: "token", Value: i.Token}, {Key: "expiresAt", Value: audit.ISOTime(i.ExpiresAt)},
 		{Key: "identityId", Value: i.IdentityID},
 	}
+	if x := i.ExerciseOnly; x != nil {
+		o = append(o, jsvalue.Member{Key: "exerciseOnly", Value: true})
+		if x.RunID != nil {
+			o = append(o, jsvalue.Member{Key: "runId", Value: *x.RunID})
+		}
+	}
+	return o
 }
 
 // reject is reject: every failure answers alike; the audit event has the
 // reason.
 func (s *Service) reject(ctx context.Context, reason, requestID string) error {
+	return s.rejectFor(ctx, nil, reason, requestID)
+}
+
+// rejectFor is reject of a verified token that matched binding b: the event
+// names b and its identity, in its Organization, so the people who read
+// that Organization's log see a token exchanged again.
+func (s *Service) rejectFor(ctx context.Context, b *query.OidcBinding, reason, requestID string) error {
 	var rid *string
 	if requestID != "" {
 		rid = &requestID
 	}
 	if err := s.Writer.Job(ctx, nil, func(ctx context.Context, tx *storage.Tx) error {
-		_, err := audit.Record(ctx, tx, audit.Event{
+		e := audit.Event{
 			Type: "authentication.failed", Decision: audit.Deny, RequestID: rid,
 			Metadata: jsvalue.Object{{Key: "method", Value: "oidc"}, {Key: "reason", Value: reason}},
-		})
+		}
+		if b != nil {
+			org := b.OrganizationID
+			e.OrganizationID = &org
+			e.Resource = jsvalue.Object{{Key: "identityId", Value: b.IdentityID}, {Key: "oidcBindingId", Value: b.ID}}
+		}
+		_, err := audit.Record(ctx, tx, e)
 		return err
 	}); err != nil {
 		return err
@@ -166,6 +204,40 @@ func Matches(claims jsvalue.Object, audience, subject string, extra jsvalue.Obje
 	return true
 }
 
+// errTokenUsed is a token exchanged before under a binding that takes each
+// once.
+var errTokenUsed = errors.New("oidc: the token was exchanged before")
+
+// errBindingGone is a binding the token matched, no longer live when the
+// credential is issued.
+var errBindingGone = errors.New("oidc: a matched binding is no longer live")
+
+// tokenKey names a verified token among the uses: its issuer and jti, or,
+// for one without a jti, its signed part (its signature can be written more
+// than one way; what it signs cannot).
+func tokenKey(token string, claims jsvalue.Object, issuer string) string {
+	h := sha256.New()
+	v, _ := claims.Get("jti")
+	if jti, ok := v.(string); ok && jti != "" {
+		_, _ = io.WriteString(h, "jti\x00"+issuer+"\x00"+jti)
+	} else {
+		_, _ = io.WriteString(h, "token\x00"+token[:strings.LastIndexByte(token, '.')])
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// runIDOf is the run a token is for: the named claim, a string a
+// Capability's runId can equal.
+func runIDOf(claims jsvalue.Object, name string) (string, bool) {
+	v, _ := claims.Get(name)
+	s, ok := v.(string)
+	if !ok || s == "" || utf16Prefix(s, limits.MaxRunID) != s {
+		return "", false
+	}
+	stored, err := write.Text(s)
+	return s, err == nil && stored == s
+}
+
 // utf16Prefix is s.slice(0, n): the first n UTF-16 code units of a string
 // held as WTF-8 (a surrogate the slice splits stays lone, and the stored
 // text makes it U+FFFD, as Node writes it).
@@ -200,6 +272,11 @@ func utf16Prefix(s string, n int) string {
 // Existence stays hidden: an unknown issuer, no binding and a failed
 // verification all answer INVALID_CREDENTIAL. ttl is in seconds, nil for
 // the default.
+//
+// The limits of the bindings matched, all together (ADR-0060): a token
+// taken once is recorded in the credential's own job, so an exchange that
+// was refused spends nothing and two at once issue one credential; an
+// exercise-only credential carries its run.
 func (s *Service) Exchange(ctx context.Context, token, organization string, ttl *int64, requestID string) (Issued, error) {
 	t := int64(DefaultTTL)
 	if ttl != nil {
@@ -251,6 +328,10 @@ func (s *Service) Exchange(ctx context.Context, token, organization string, ttl 
 		return Issued{}, s.reject(ctx, reason, requestID)
 	}
 	var matched []query.OidcBinding
+	var each []limits.Limits
+	// Whether an identity's bindings for the issuer, matching or not, limit
+	// (true) or not (false): one entry of each when they are mixed.
+	kinds := map[string]map[bool]bool{}
 	for _, b := range bindings {
 		var extra jsvalue.Object
 		if b.Claims.Valid {
@@ -260,8 +341,13 @@ func (s *Service) Exchange(ctx context.Context, token, organization string, ttl 
 			}
 			extra, _ = v.(jsvalue.Object)
 		}
-		if Matches(claims, b.Audience, b.Subject, extra) {
-			matched = append(matched, b)
+		if kinds[b.IdentityID] == nil {
+			kinds[b.IdentityID] = map[bool]bool{}
+		}
+		kinds[b.IdentityID][limits.IsLimited(extra)] = true
+		plain, l := limits.Split(extra)
+		if Matches(claims, b.Audience, b.Subject, plain) {
+			matched, each = append(matched, b), append(each, l)
 		}
 	}
 	if len(matched) == 0 {
@@ -272,7 +358,46 @@ func (s *Service) Exchange(ctx context.Context, token, organization string, ttl 
 			return Issued{}, s.reject(ctx, "ambiguous-binding", requestID)
 		}
 	}
-	b := matched[0]
+	b, limit := matched[0], each[0]
+	// All limited or all unlimited, as CreateOIDCBinding keeps them: an
+	// earlier server, which knows no limits, can add an unlimited binding
+	// beside a limited one. No token is exchanged then, instead of one
+	// without the limits of the other.
+	if len(kinds[b.IdentityID]) > 1 {
+		return Issued{}, s.rejectFor(ctx, &b, "mixed-bindings", requestID)
+	}
+	// Every matched binding's limits hold. The credential is the most
+	// limited binding's, so its event names the one that says why.
+	for i, l := range each[1:] {
+		if l.ExerciseOnly && !limit.ExerciseOnly {
+			b = matched[i+1]
+		}
+		combined, ok := limits.Combine(limit, l)
+		if !ok {
+			return Issued{}, s.rejectFor(ctx, &b, "ambiguous-binding", requestID)
+		}
+		limit = combined
+	}
+	var only *auth.ExerciseOnly
+	if limit.ExerciseOnly {
+		only = &auth.ExerciseOnly{OIDCBindingID: b.ID}
+		if limit.RunIDClaim != "" {
+			run, ok := runIDOf(claims, limit.RunIDClaim)
+			if !ok {
+				return Issued{}, s.rejectFor(ctx, &b, "run-id-claim", requestID)
+			}
+			only.RunID = &run
+		}
+	}
+	var use *query.InsertOidcTokenUseParams
+	if limit.SingleExchange {
+		exp, _ := numberClaim(claims, "exp")
+		at := s.now()
+		if exp > float64(at.Unix()+MaxSingleExchangeLifetime) {
+			return Issued{}, s.rejectFor(ctx, &b, "token-lifetime", requestID)
+		}
+		use = &query.InsertOidcTokenUseParams{TokenKey: tokenKey(token, claims, b.Issuer), UsedAt: at.UnixMicro(), ExpiresAt: (int64(exp) + ClockSkew + useKept) * 1_000_000}
+	}
 	sub, _ := claims.Get("sub")
 	subject := sub.(string)
 	expires := (s.now().UnixMilli() + t*1000) * 1000
@@ -284,6 +409,30 @@ func (s *Service) Exchange(ctx context.Context, token, organization string, ttl 
 		if err := write.CheckLive(ctx, tx, write.Scope{OrganizationID: b.OrganizationID}); err != nil {
 			return err
 		}
+		q := query.New(tx)
+		// The bindings as they are now: one revoked while the token was
+		// verified (to be replaced by one that limits, say) gives nothing.
+		live, err := q.ExchangeOidcBindings(ctx, query.ExchangeOidcBindingsParams{Organization: b.OrganizationID, Issuer: b.Issuer})
+		if err != nil {
+			return err
+		}
+		for _, m := range matched {
+			if !slices.ContainsFunc(live, func(l query.OidcBinding) bool { return l.ID == m.ID }) {
+				return errBindingGone
+			}
+		}
+		if use != nil {
+			if _, err := q.PruneOidcTokenUses(ctx, s.now().UnixMicro()); err != nil {
+				return err
+			}
+			n, err := q.InsertOidcTokenUse(ctx, *use)
+			if err != nil {
+				return err
+			}
+			if n == 0 {
+				return errTokenUsed
+			}
+		}
 		name, err := write.Text("oidc:" + utf16Prefix(subject, 180))
 		if err != nil {
 			return err
@@ -291,16 +440,22 @@ func (s *Service) Exchange(ctx context.Context, token, organization string, ttl 
 		org := b.OrganizationID
 		issued, err := auth.IssueCredential(ctx, tx, s.now().UnixMicro(), auth.Issue{
 			IdentityID: b.IdentityID, Kind: auth.KindOIDC, Name: &name, ExpiresAt: &expires, ActorIdentityID: &b.IdentityID,
-			OrganizationID: &org,
+			OrganizationID: &org, ExerciseOnly: only,
 			Metadata: jsvalue.Object{{Key: "method", Value: "oidc"}, {Key: "oidcBindingId", Value: b.ID}, {Key: "issuer", Value: b.Issuer},
 				{Key: "subject", Value: subject}},
 		})
 		if err != nil {
 			return err
 		}
-		out = Issued{CredentialID: issued.CredentialID, Token: issued.Token, IdentityID: b.IdentityID, ExpiresAt: expires}
+		out = Issued{CredentialID: issued.CredentialID, Token: issued.Token, IdentityID: b.IdentityID, ExpiresAt: expires, ExerciseOnly: only}
 		return nil
 	})
+	if errors.Is(err, errBindingGone) {
+		return Issued{}, s.rejectFor(ctx, &b, "no-binding", requestID)
+	}
+	if errors.Is(err, errTokenUsed) {
+		return Issued{}, s.rejectFor(ctx, &b, "token-already-exchanged", requestID)
+	}
 	return out, err
 }
 

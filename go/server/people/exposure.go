@@ -103,9 +103,11 @@ func MemberExposure(ctx context.Context, db query.DBTX, organizationID, identity
 		v := r.VersionID
 		if _, seen := received[v]; !seen {
 			known := r.OwnerEnv.Valid
+			// A seed of one-time codes (ADR-0061) has a deleted_at and is live.
+			deleted := r.ValueDeleted.Valid && r.Seed == 0
 			var servedAs any
 			switch {
-			case !known || r.ValueDeleted.Valid || r.EnvDeleted.Valid:
+			case !known || deleted || r.EnvDeleted.Valid:
 			case r.CurrentVersionID.Valid && r.CurrentVersionID.String == v:
 				servedAs = "current"
 			case r.RetiringVersionID.Valid && r.RetiringVersionID.String == v && r.RotationDeadline.Valid && r.RotationDeadline.Int64 > now:
@@ -129,7 +131,7 @@ func MemberExposure(ctx context.Context, db query.DBTX, organizationID, identity
 					because = "unknown"
 				case r.EnvDeleted.Valid:
 					because = "environment-deleted"
-				case r.ValueDeleted.Valid:
+				case deleted:
 					because = "value-deleted"
 				default:
 					because = "replaced"

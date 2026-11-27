@@ -53,6 +53,7 @@ const ProfilePage = lazy(() => import("./features/settings/ProfilePage").then((m
 const SecurityPage = lazy(() => import("./features/account/SecurityPage").then((m) => ({ default: m.SecurityPage })));
 const SessionsPage = lazy(() => import("./features/account/SessionsPage").then((m) => ({ default: m.SessionsPage })));
 const DevicePage = lazy(() => import("./features/device/DevicePage").then((m) => ({ default: m.DevicePage })));
+const OAuthCallbackPage = lazy(() => import("./features/oauth/OAuthCallbackPage").then((m) => ({ default: m.OAuthCallbackPage })));
 const ApprovalPage = lazy(() => import("./features/security-controls/ApprovalPage").then((m) => ({ default: m.ApprovalPage })));
 const InstallationPage = lazy(() =>
   import("./features/installation/InstallationPage").then((m) => ({ default: m.InstallationPage })),
@@ -163,6 +164,8 @@ export const routes: RouteObject[] = [
       { path: "/profile", element: <Navigate to="/account" replace /> },
       // Device sign-in's verification page: a CLI's code is approved here (outside the shell).
       { path: "/device", element: <Lazy />, children: [{ index: true, element: <DevicePage /> }] },
+      // Where an OAuth provider sends the browser back to (ADR-0062), outside the shell: one address per provider.
+      { path: "/oauth/callback/:server", element: <Lazy />, children: [{ index: true, element: <OAuthCallbackPage /> }] },
       // A step-up approval's page (ADR-0054 Decision 3): the CLI prints its address (outside the shell).
       { path: "/approve/:id", element: <Lazy />, children: [{ index: true, element: <ApprovalPage /> }] },
       {

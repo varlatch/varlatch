@@ -52,7 +52,7 @@ A linked mechanism by which an Identity proves who it is: a passkey, an external
 _Avoid_: login method, auth provider (the provider is the external system, not the link)
 
 **Credential**:
-A revocable bearer artifact by which an Identity exercises an Authentication Method for a bounded time: it has a kind (`browser`, `cli`, OIDC-exchanged, agent-metadata), an expiry, and an individual server-side record that can be listed and revoked. A Credential proves *who is calling right now*; it is never the Identity itself, never carries authority beyond the Identity's Grants, and expiry is a feature, not an inconvenience.
+A revocable bearer artifact by which an Identity exercises an Authentication Method for a bounded time: it has a kind (`browser`, `cli`, OIDC-exchanged, agent-metadata), an expiry, and an individual server-side record that can be listed and revoked. A Credential proves *who is calling right now*; it is never the Identity itself, never carries authority beyond the Identity's Grants, and expiry is a feature, not an inconvenience. An *exercise-only* Credential, from an OIDC binding that says so, carries less: it exercises its Broker's Capabilities (of one run, when tied to one) and nothing else.
 _Avoid_: token (overloaded: proxy tokens and Placeholders are not Credentials), API key (implies non-expiring)
 
 ### Configuration and secrets
@@ -79,6 +79,18 @@ The Environment-specific content of a Config Item. All Values, sensitive or not,
 **Secret**:
 A Config Item whose effective Contract metadata marks it sensitive. `secret.reveal`/`secret.use` policy language applies to Secrets; non-sensitive Config Items stay boring.
 _Avoid_: calling every configuration value a secret
+
+**One-time Code**:
+The short code (TOTP, RFC 6238) an item gives when its Value is a *Seed*: the secret an issuer shares once, as an `otpauth://` URI, from which codes are made. Such an item is always a Secret and is used like one, but use yields the code of the moment, never the Seed: exercising a Capability gives it, every path that delivers Values leaves the item out, and only a Reveal that asks for Seeds discloses one. The issuer and account in the URI are metadata. A code is a bearer secret until its period ends; a *fresh* one is one this Installation has not given before.
+_Avoid_: 2FA token (ambiguous with credentials), OTP secret (say Seed)
+
+**OAuth Connection**:
+An item whose use yields an access token for somebody else's API: the provider's endpoints (pinned when it is made), the client, its scopes, the account that consented, and the tokens. Always a Secret. Varlatch holds the client secret and the refresh token and delivers neither on any path, a Reveal included; exercising a Capability gives the access token, refreshed first when needed. A person *connects* it (consent in the browser), or the client has access of its own. It *needs reconnecting* when the provider refuses its refresh token; it is *disconnected* here (revoked at the provider where that is possible, and forgotten). Its *hosts* bound where its token may go, which a Capability can only narrow; its *endpoint hosts* are the provider's own, where its secrets go, and are in its redirect URI.
+_Avoid_: Platform Connection (the opposite direction: Varlatch delivering Secrets to a platform), integration, OAuth token (say access token or refresh token)
+
+**Entry Link**:
+A short-lived link with which a person *enters* one Secret's value on Varlatch's own page, once. Whoever *makes* it (a machine identity holding `entry-link.create`, or a person holding `config.value.write`) gets no value by it, only its status: pending, entered, expired or cancelled. It is bound to the item's value when it was made, and is for a member, for one person, or *open to anyone* who has it. It *ends with* the credential that made it: with its withdrawal, not its ordinary expiry. It is write-only: nothing is read through one.
+_Avoid_: Capability (the opposite: using a value), invitation, magic link, upload link
 
 **Value Reference**:
 A `${NAME}` token inside a Value that reuses another Config Item's Value from the same Effective Configuration. Expanded strictly server-side and never authority-expanding: read paths leave what the caller may not read literal, while capability exercise resolves every reference or denies. `$${NAME}` escapes to literal text.
@@ -258,7 +270,7 @@ _Avoid_: IP allowlisting, VPN-gating, tailnet-bound retrieval (the flagship *use
 An explicitly enrolled mapping from a Tailscale node or tag to a Varlatch Identity, establishing the principal before ordinary authorization. Tag enrollment is a documented, audited delegation to whoever can assign that tag in the tailnet.
 
 **Capability**:
-A short-lived, constrained authorization artifact issued *and verified* by the Secret Plane, binding one Broker, one Agent, one Environment, explicit Config Items, canonical Destination Selectors, and an expiry. Represented as a server-side record redeemed with a high-entropy capability secret (hash-at-rest); it *narrows* potential future use and never expands the Agent's Grants: every exercise re-evaluates the Agent's `secret.use` against current state.
+A short-lived, constrained authorization artifact issued *and verified* by the Secret Plane, binding one Broker, one Agent, one Environment, explicit Config Items, canonical Destination Selectors, and an expiry. Represented as a server-side record redeemed with a high-entropy capability secret (hash-at-rest); it *narrows* potential future use and never expands the Agent's Grants: every exercise re-evaluates the Agent's `secret.use` against current state. Issued by its Broker, or, with `capability.issue`, by another machine identity for the Broker it names; only its Broker exercises it, and a single-use one once.
 _Avoid_: scoped token, macaroon, biscuit (all presume a self-certifying representation this is not)
 
 **Broker**:
@@ -291,8 +303,8 @@ _Avoid_: agent token (ambiguous with the per-run proxy token)
 A per-run, cryptographically random opaque token (`vlch_ph_v1_<random>`) injected into an Agent Run's environment in place of a Secret's plaintext. Carries no Config Item name or other metadata; the Broker alone maps Placeholders to Config Items and substitutes by exact-token match only, and only at the Secret's Substitution Targets.
 
 **Substitution Target**:
-A declared location in an outbound request where the Broker may substitute a given Secret's Placeholder: a named header, query parameter, JSON pointer, or form field, never a transport-owned header. At most once per target per request. Every Secret an agent-safe run carries has at least one, with no default; the operator gives them on the command line (`--target`), varlatchd records them on the Capability, and the Broker enforces the recorded ones. A Placeholder is never substituted outside its targets.
+A declared location where the Broker may put a given Secret: in an outbound request a named header, query parameter, JSON pointer, or form field, never a transport-owned header; or, for a Broker that does not send requests, a JSON pointer in a document handed to a process over a *pipe*, or a *field* it types into. At most once per target per request. Every Secret an agent-safe run carries has at least one, with no default; the operator gives them on the command line (`--target`), varlatchd records them on the Capability, and the Broker enforces the recorded ones. A Placeholder is never substituted outside its targets.
 _Avoid_: injection point, slot
 
 **Destination Selector**:
-A Capability's constraint on where secret-bearing traffic may go: canonical lowercase host (exact, or `*.suffix` wildcard matching subdomains but never the apex) plus port. Every outbound hop, including each redirect, is independently checked against it.
+A Capability's constraint on where secret-bearing traffic may go: canonical lowercase host (exact, or `*.suffix` wildcard matching subdomains but never the apex) plus port. Every outbound hop, including each redirect, is independently checked against it. For a Broker that types, it is instead a page (scheme, host, port and a path prefix of whole segments) or a desktop application on the Broker's own machine: what the Broker *reports* is compared, so it is a rule for an honest Broker and a record, not containment. A Capability names hosts, or pages and applications, not both.

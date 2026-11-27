@@ -4,7 +4,7 @@ import { Dices, Eye, EyeOff, Lock, RefreshCw } from "lucide-react";
 import { Dialog } from "../../components/Dialog";
 import { Button, Callout, Field, Input, Segmented, Select, cn } from "../../components/ui";
 import { errorMessage } from "../../shell/Shell";
-import { generateSecret, listNames } from "./model";
+import { generateSecret, listNames, seedProblem } from "./model";
 
 /**
  * Begin a dual-phase rotation: the new value goes live now, the previous
@@ -30,6 +30,7 @@ export function RotateDialog({
   targets,
   defaultGraceSeconds,
   rotationHint,
+  seed = false,
   onClose,
   onRotate,
 }: {
@@ -42,6 +43,8 @@ export function RotateDialog({
   defaultGraceSeconds?: number | undefined;
   /** The Contract's note on how to rotate this credential, shown before rotating. */
   rotationHint?: string | undefined;
+  /** The item holds the seed of one-time codes: the new value is an otpauth:// URI. */
+  seed?: boolean;
   onClose: () => void;
   /** Throws to keep the dialog open with the error shown. */
   onRotate: (value: string, graceSeconds: number) => Promise<void>;
@@ -68,7 +71,8 @@ export function RotateDialog({
   const graceSeconds =
     preset === "custom" ? Math.round(amount * (customUnit === "days" ? 86_400 : 3600)) : PRESETS[preset];
   const graceValid = Number.isFinite(graceSeconds) && graceSeconds >= 60 && graceSeconds <= MAX_GRACE;
-  const ready = value !== "" && graceValid && !busy;
+  const problem = seed && value !== "" ? seedProblem(value) : null;
+  const ready = value !== "" && !problem && graceValid && !busy;
 
   const submit = async () => {
     if (!ready) return;
@@ -123,11 +127,18 @@ export function RotateDialog({
         }}
       >
         <ol className="grid grid-cols-3 gap-2" aria-label="How rotation works">
-          {[
-            ["New value goes live", "Now"],
-            ["Both values valid", "Grace window"],
-            ["Old value dropped", "When you finish"],
-          ].map(([title, sub], i) => (
+          {(seed
+            ? [
+                ["New seed goes live", "Now"],
+                ["Codes of both", "Grace window"],
+                ["Old seed dropped", "When you finish"],
+              ]
+            : [
+                ["New value goes live", "Now"],
+                ["Both values valid", "Grace window"],
+                ["Old value dropped", "When you finish"],
+              ]
+          ).map(([title, sub], i) => (
             <li
               key={title}
               className={cn(
@@ -152,7 +163,9 @@ export function RotateDialog({
           ))}
         </ol>
         <p className="text-[13px] text-muted">
-          Consumers switch over without an outage. Revoke the old credential upstream after finishing.
+          {seed
+            ? "Until you finish, a Broker gets the codes of both seeds, so the new one can be confirmed at the issuer first."
+            : "Consumers switch over without an outage. Revoke the old credential upstream after finishing."}
         </p>
         {rotationHint && (
           <Callout tone="info" icon={<RefreshCw size={15} />} data-testid="rotate-hint" title="How to rotate this credential">
@@ -160,7 +173,7 @@ export function RotateDialog({
           </Callout>
         )}
 
-        <Field label="New value" htmlFor="rotate-value">
+        <Field label={seed ? "New otpauth:// URI" : "New value"} htmlFor="rotate-value">
           <div className="flex gap-2">
             <div className="relative min-w-0 flex-1">
               <Input
@@ -173,6 +186,7 @@ export function RotateDialog({
                 spellCheck={false}
                 className="w-full pr-9"
                 value={value}
+                invalid={problem !== null}
                 onChange={(e) => setValue(e.target.value)}
               />
               <button
@@ -185,17 +199,20 @@ export function RotateDialog({
                 {show ? <EyeOff size={15} /> : <Eye size={15} />}
               </button>
             </div>
-            <Button
-              icon={<Dices size={14} />}
-              data-testid="rotate-generate"
-              onClick={() => {
-                setValue(generateSecret());
-              }}
-              title="32 random bytes, base64url"
-            >
-              Generate
-            </Button>
+            {!seed && (
+              <Button
+                icon={<Dices size={14} />}
+                data-testid="rotate-generate"
+                onClick={() => {
+                  setValue(generateSecret());
+                }}
+                title="32 random bytes, base64url"
+              >
+                Generate
+              </Button>
+            )}
           </div>
+          {problem && <p className="mt-1.5 text-[13px] text-deny">{problem}</p>}
         </Field>
 
         <Field label="Grace window" hint="How long the previous value keeps working. Up to 30 days.">
@@ -239,7 +256,9 @@ export function RotateDialog({
 
         <div className="flex items-start gap-3 rounded-lg border border-bd bg-inset/50 px-4 py-3 text-[13px] text-muted">
           <RefreshCw size={15} className="mt-0.5 shrink-0" />
-          {targets.length > 0 ? (
+          {seed ? (
+            <p>No integration ever receives a seed.</p>
+          ) : targets.length > 0 ? (
             <p>
               <span className="text-fg">{listNames(targets)}</span> {targets.length === 1 ? "receives" : "receive"} the
               new value on {targets.length === 1 ? "its" : "their"} next sync.

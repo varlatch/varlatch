@@ -262,6 +262,29 @@ type DeviceSignInChallenge struct {
 	ConsumedAt     sql.NullInt64
 }
 
+type EntryLink struct {
+	ID             string
+	TokenHash      string
+	OrganizationID string
+	ProjectID      string
+	EnvironmentID  string
+	ItemName       string
+	Accepts        string
+	Replaces       int64
+	BoundVersionID sql.NullString
+	RestrictedTo   string
+	IdentityID     sql.NullString
+	Description    sql.NullString
+	RequestedBy    string
+	CredentialID   string
+	Status         string
+	Reason         sql.NullString
+	Refusals       int64
+	CreatedAt      int64
+	ExpiresAt      int64
+	EndedAt        sql.NullInt64
+}
+
 type EnvValue struct {
 	ID                string
 	EnvironmentID     string
@@ -285,6 +308,12 @@ type Environment struct {
 	ExpiresAt           sql.NullInt64
 	CreatedAt           int64
 	DeletedAt           sql.NullInt64
+}
+
+type ExerciseCredential struct {
+	CredentialID  string
+	OidcBindingID string
+	RunID         sql.NullString
 }
 
 type ExposureBackfill struct {
@@ -434,6 +463,47 @@ type MembershipRemoval struct {
 	RemovedAt       int64
 }
 
+type OauthAuthorization struct {
+	StateHash      string
+	OrganizationID string
+	ValueID        string
+	VersionID      string
+	IdentityID     string
+	AuthSessionID  string
+	NonceHash      string
+	Verifier       string
+	RedirectUri    string
+	AccountChange  int64
+	CreatedAt      int64
+	ExpiresAt      int64
+}
+
+type OauthConnection struct {
+	ValueID          string
+	VersionID        string
+	Status           string
+	Reason           sql.NullString
+	PausedAt         sql.NullInt64
+	Generation       int64
+	AccessToken      sql.NullString
+	AccessExpiresAt  sql.NullInt64
+	AccessLifetime   sql.NullInt64
+	RefreshToken     sql.NullString
+	RefreshExpiresAt sql.NullInt64
+	KeepaliveAt      sql.NullInt64
+	GrantedScopes    sql.NullString
+	Account          string
+	AccountLabel     string
+	ConnectedBy      sql.NullString
+	ConnectedAt      sql.NullInt64
+	RefreshedAt      sql.NullInt64
+	Failures         int64
+	RetryAt          sql.NullInt64
+	ClaimID          sql.NullString
+	ClaimUntil       sql.NullInt64
+	Unanswered       int64
+}
+
 type OidcBinding struct {
 	ID             string
 	IdentityID     string
@@ -445,6 +515,17 @@ type OidcBinding struct {
 	CreatedBy      sql.NullString
 	CreatedAt      int64
 	RevokedAt      sql.NullInt64
+}
+
+type OidcTokenUse struct {
+	TokenKey  string
+	UsedAt    int64
+	ExpiresAt int64
+}
+
+type OneTimeCodesGiven struct {
+	VersionID string
+	Step      int64
 }
 
 type OrgMembership struct {

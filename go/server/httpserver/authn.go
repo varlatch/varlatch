@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/server/audit"
 	"github.com/varlatch/varlatch/go/server/auth"
 	"github.com/varlatch/varlatch/go/server/domainerr"
@@ -174,10 +175,14 @@ func (s *Server) answerError(w http.ResponseWriter, r *http.Request, err error) 
 // AUTHENTICATION_REQUIRED without one; 401 INVALID_CREDENTIAL, with its
 // authentication.failed audit event, for one that is invalid, revoked,
 // expired, exhausted or of a disabled identity; 403 PERMISSION_DENIED for
-// an agent-run credential on anything but GET and HEAD (ADR-0023). A
+// an agent-run credential on anything but GET and HEAD (ADR-0023), and for
+// an exercise-only one on anything but exerciseCapabilityPattern
+// (ADR-0060), with its authorization.denied event. pattern is the
+// operation's route pattern, "" for a route that is none: an operation
+// added later refuses an exercise-only credential without saying so. A
 // machine credential in its last 7 days names its expiry on the response,
 // refusals included.
-func (s *Server) authenticate(w http.ResponseWriter, r *http.Request) (*auth.Principal, bool) {
+func (s *Server) authenticate(w http.ResponseWriter, r *http.Request, pattern string) (*auth.Principal, bool) {
 	header := headerValue(r, "Authorization")
 	if !strings.HasPrefix(header, "Bearer ") {
 		writeError(w, r, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "Provide a Varlatch bearer credential")
@@ -187,9 +192,21 @@ func (s *Server) authenticate(w http.ResponseWriter, r *http.Request) (*auth.Pri
 		writeError(w, r, http.StatusUnauthorized, "INVALID_CREDENTIAL", "Credential is invalid, revoked, or expired")
 		return nil, false
 	}
-	p, reason, err := s.opts.Auth.Authenticate(r.Context(), strings.TrimSpace(strings.TrimPrefix(header, "Bearer ")))
+	// Resolved once, as AuthenticateExercise does, and an exercise-only
+	// credential refused here as Authenticate refuses it everywhere but
+	// the exercise: a second resolution would spend another of its uses.
+	token := strings.TrimSpace(strings.TrimPrefix(header, "Bearer "))
+	p, reason, err := s.opts.Auth.AuthenticateExercise(r.Context(), token)
 	if err != nil {
 		s.answerError(w, r, err)
+		return nil, false
+	}
+	if p != nil && p.Credential.ExerciseOnly != nil && pattern != exerciseCapabilityPattern {
+		if err := s.recordExerciseOnlyRefusal(r, p, pattern); err != nil {
+			s.answerError(w, r, err)
+			return nil, false
+		}
+		writeError(w, r, http.StatusForbidden, "PERMISSION_DENIED", "Exercise-only credentials exercise Capabilities and nothing else")
 		return nil, false
 	}
 	if p == nil {
@@ -208,6 +225,27 @@ func (s *Server) authenticate(w http.ResponseWriter, r *http.Request) (*auth.Pri
 		return nil, false
 	}
 	return p, true
+}
+
+// recordExerciseOnlyRefusal records the refusal of an operation an
+// exercise-only credential may not call: a Broker asking for one is worth
+// seeing in its Organization's log. p is the credential's principal.
+func (s *Server) recordExerciseOnlyRefusal(r *http.Request, p *auth.Principal, pattern string) error {
+	id, reqID := p.Identity.ID, requestIDOf(r)
+	var route any
+	if pattern != "" {
+		_, path, _ := strings.Cut(pattern, " ")
+		route = path
+	}
+	ctx := withPrincipal(r, p).Context()
+	return s.opts.Auth.Store().Write(ctx, func(tx *storage.Tx) error {
+		_, err := audit.Record(ctx, tx, audit.Event{
+			Type: "authorization.denied", Decision: audit.Deny, ActorIdentityID: &id, CredentialID: audit.Value(p.Credential.ID),
+			OrganizationID: p.Identity.OrganizationID, RequestID: &reqID,
+			Metadata: jsvalue.Object{{Key: "reason", Value: "exercise_only_credential"}, {Key: "method", Value: r.Method}, {Key: "route", Value: route}},
+		})
+		return err
+	})
 }
 
 // withPrincipal runs the rest of the request as the principal: its
@@ -264,7 +302,8 @@ var boundQuery = map[string]string{
 }
 
 // builtOperation wraps a built /v1 operation's generated handler:
-// authentication first (unless the operation authenticates otherwise),
+// authentication first (unless the operation authenticates otherwise, or
+// needs no credential and was sent none),
 // then the operation, with the writer and request in its context.
 func (s *Server) builtOperation(pattern string, h http.HandlerFunc) http.HandlerFunc {
 	method, route, _ := strings.Cut(pattern, " ")
@@ -285,9 +324,9 @@ func (s *Server) builtOperation(pattern string, h http.HandlerFunc) http.Handler
 			r.URL = &u
 		}
 		stages.Admitted(r.Context())
-		if !open {
+		if !open || optionalBearer[pattern] && headerValue(r, "Authorization") != "" {
 			m := stages.Start()
-			p, ok := s.authenticate(w, r)
+			p, ok := s.authenticate(w, r, pattern)
 			stages.Since(r.Context(), "authentication", m)
 			if !ok {
 				return

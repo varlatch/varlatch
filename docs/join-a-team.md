@@ -23,7 +23,7 @@ On Linux and macOS, install the release your server runs (shown in the dashboard
 under **Settings → Server**):
 
 ```sh
-V=0.50.2  # the release your installation runs
+V=0.51.0  # the release your installation runs
 curl -fsSL -o install.sh https://github.com/varlatch/varlatch/releases/download/v$V/install.sh
 sh install.sh
 ```

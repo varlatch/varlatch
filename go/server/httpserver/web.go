@@ -41,12 +41,40 @@ func contentSecurityPolicy(endpoint string) string {
 	return strings.Replace(ContentSecurityPolicy, "connect-src 'self';", "connect-src 'self' "+endpoint+";", 1)
 }
 
+// oauthCallbackPath is where an OAuth provider sends the browser back to
+// (ADR-0062), with the authorization code in the address: no request the page
+// makes names that address, whatever it loads first, and no cache keeps it.
+const oauthCallbackPath = "/oauth/callback/"
+
+// entryPath is the entry page (ADR-0063), a page of the dashboard's build
+// that is none of the dashboard: people from outside open it from a link
+// somebody sent them, and it holds a secret value until it is sent.
+const entryPath = "/entry"
+
+// entryHeaders are its own: nothing from another origin, no form that sends
+// itself (a value would be in an address), no referrer, no frame, no opener,
+// nothing kept in a cache. The link's secret is after the #, so it is in no
+// request; the page takes it out of the address before it does anything.
+var entryHeaders = map[string]string{
+	"Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self' data:; " +
+		"connect-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'",
+	"Referrer-Policy":              "no-referrer",
+	"Cache-Control":                "no-store",
+	"X-Content-Type-Options":       "nosniff",
+	"X-Frame-Options":              "DENY",
+	"X-Robots-Tag":                 "noindex, nofollow, noarchive",
+	"Cross-Origin-Opener-Policy":   "same-origin",
+	"Cross-Origin-Resource-Policy": "same-origin",
+	"Permissions-Policy":           "camera=(), microphone=(), geolocation=(), clipboard-read=()",
+}
+
 // serveWeb serves the dashboard as nginx did (try_files $uri /index.html):
 // a file of the build when the path names one, the app's index.html for
 // every other path (single-page routing). /v1, /auth, /enroll and /convex
 // never get here (ServeHTTP). HTML answers Cache-Control: no-cache (except
-// /device, which is never cached: no-store) so browsers revalidate after a
-// migration or upgrade instead of serving a stale app from heuristic cache.
+// /device and /oauth/callback/, which are never cached: no-store) so browsers
+// revalidate after a migration or upgrade instead of serving a stale app from
+// heuristic cache.
 func (s *Server) serveWeb(w http.ResponseWriter, r *http.Request) {
 	if !isGet(r) {
 		w.Header().Set("Allow", "GET, HEAD")
@@ -58,6 +86,15 @@ func (s *Server) serveWeb(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Security-Policy", contentSecurityPolicy(s.opts.browserEndpoint()))
 	if r.URL.Path == "/device" {
 		w.Header().Set("Cache-Control", "no-store")
+	}
+	if strings.HasPrefix(path.Clean("/"+r.URL.Path)+"/", oauthCallbackPath) {
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Cache-Control", "no-store")
+	}
+	if r.URL.Path == entryPath {
+		for k, v := range entryHeaders {
+			w.Header().Set(k, v)
+		}
 	}
 	if !s.webExists {
 		w.Header().Set("Content-Type", "text/plain; charset=UTF-8")
@@ -80,7 +117,7 @@ func (s *Server) serveWeb(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if r.URL.Path != "/device" {
+	if w.Header().Get("Cache-Control") == "" {
 		w.Header().Set("Cache-Control", "no-cache")
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

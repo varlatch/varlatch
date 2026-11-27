@@ -672,6 +672,11 @@ CREATE TABLE environments (
 ) STRICT;
 CREATE UNIQUE INDEX environments_live_name_key ON environments (project_id, name) WHERE deleted_at IS NULL;
 
+-- A row with both current_version_id and deleted_at holds the seed of
+-- one-time codes (ADR-0061) or an OAuth connection (ADR-0062): the version's
+-- payload says so (its member totp or oauth). Nothing else leaves both set,
+-- and whoever does not know it reads the row as deleted, so it never takes
+-- the seed, or the client secret, for a value.
 CREATE TABLE env_values (
   id TEXT NOT NULL PRIMARY KEY,
   environment_id TEXT NOT NULL REFERENCES environments (id),
@@ -1458,3 +1463,126 @@ CREATE INDEX audit_events_identity_lifecycle_idx ON audit_events (organization_i
 CREATE INDEX audit_events_capability_issued_idx ON audit_events (organization_id, json_extract(resource, '$.capabilityId'), event_order)
   WHERE event_type = 'capability.issued';
 CREATE INDEX capabilities_live_idx ON capabilities (organization_id, id) WHERE revoked_at IS NULL;
+
+-- Exercise-only credentials and tokens exchanged once (ADR-0060): Go only,
+-- schema version 4.
+--
+-- exercise_credentials is what limits an exercise-only credential, beside
+-- its row in credentials: the binding its token was exchanged under and,
+-- with a runIdClaim, the run whose Capabilities it exercises. The limit
+-- itself is in credentials.token_hash ('exercise:' and the hash), which no
+-- server without it can match, so it fails closed on an older one.
+--
+-- oidc_token_uses is the tokens exchanged under a binding that takes each
+-- once: the SHA-256 of the issuer and the jti (or, without one, of the
+-- token's signed part), kept until the token itself is no longer accepted.
+CREATE TABLE exercise_credentials (
+  credential_id TEXT NOT NULL PRIMARY KEY REFERENCES credentials (id),
+  oidc_binding_id TEXT NOT NULL REFERENCES oidc_bindings (id),
+  run_id TEXT CONSTRAINT exercise_credentials_run_id_check CHECK (length(run_id) BETWEEN 1 AND 200)
+) STRICT;
+CREATE TABLE oidc_token_uses (
+  token_key TEXT NOT NULL PRIMARY KEY CONSTRAINT oidc_token_uses_token_key_check CHECK (length(token_key) = 64 AND token_key NOT GLOB '*[^0-9a-f]*'),
+  used_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL
+) STRICT;
+CREATE INDEX oidc_token_uses_expires ON oidc_token_uses (expires_at);
+
+-- One-time codes given (ADR-0061): Go only, schema version 5. The newest
+-- time step a seed's code was given for, so a code asked to be fresh is of a
+-- later one; one row per seed version, kept. A seed itself
+-- is a value version, in a row an older server reads as deleted (env_values,
+-- above).
+CREATE TABLE one_time_codes_given (
+  version_id TEXT NOT NULL PRIMARY KEY REFERENCES value_versions (id),
+  step INTEGER NOT NULL
+) STRICT;
+
+-- OAuth connections (ADR-0062): Go only, schema version 6. A connection's
+-- parameters and client secret are a value version, in a row an older server
+-- reads as deleted (env_values, above); what its tokens are now is here.
+-- access_token and refresh_token are envelopes under the Organization's KEK,
+-- bound to the version, its parameters, the account and the generation, which
+-- every change of the tokens raises. claim_id and claim_until are a refresh
+-- in progress, and unanswered counts the ones sent whose answer was not kept.
+-- The tokens are of version_id: a row whose value has another current version
+-- is not a connection's any more.
+CREATE TABLE oauth_connections (
+  value_id TEXT NOT NULL PRIMARY KEY REFERENCES env_values (id),
+  version_id TEXT NOT NULL REFERENCES value_versions (id),
+  status TEXT NOT NULL CONSTRAINT oauth_connections_status_check CHECK (status IN ('not_connected', 'connected', 'failing', 'needs_reconnect', 'revoked')),
+  reason TEXT,
+  paused_at INTEGER,
+  generation INTEGER NOT NULL DEFAULT 0,
+  access_token TEXT CHECK (json_valid(access_token)),
+  access_expires_at INTEGER,
+  access_lifetime INTEGER,
+  refresh_token TEXT CHECK (json_valid(refresh_token)),
+  refresh_expires_at INTEGER,
+  keepalive_at INTEGER,
+  granted_scopes TEXT,
+  account TEXT NOT NULL DEFAULT '',
+  account_label TEXT NOT NULL DEFAULT '',
+  connected_by TEXT REFERENCES identities (id),
+  connected_at INTEGER,
+  refreshed_at INTEGER,
+  failures INTEGER NOT NULL DEFAULT 0,
+  retry_at INTEGER,
+  claim_id TEXT,
+  claim_until INTEGER,
+  unanswered INTEGER NOT NULL DEFAULT 0
+) STRICT;
+CREATE INDEX oauth_connections_keepalive ON oauth_connections (keepalive_at) WHERE keepalive_at IS NOT NULL;
+-- An authorization in progress: its state (a hash), and what its answer is
+-- checked with. Deleted by the answer, or once expired.
+CREATE TABLE oauth_authorizations (
+  state_hash TEXT NOT NULL PRIMARY KEY CONSTRAINT oauth_authorizations_state_hash_check CHECK (length(state_hash) = 64 AND state_hash NOT GLOB '*[^0-9a-f]*'),
+  organization_id TEXT NOT NULL REFERENCES organizations (id),
+  value_id TEXT NOT NULL REFERENCES env_values (id),
+  version_id TEXT NOT NULL REFERENCES value_versions (id),
+  identity_id TEXT NOT NULL REFERENCES identities (id),
+  auth_session_id TEXT NOT NULL,
+  nonce_hash TEXT NOT NULL,
+  verifier TEXT NOT NULL CHECK (json_valid(verifier)),
+  redirect_uri TEXT NOT NULL,
+  account_change INTEGER NOT NULL CONSTRAINT oauth_authorizations_account_change_check CHECK (account_change IN (0, 1)),
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL
+) STRICT;
+CREATE INDEX oauth_authorizations_expires ON oauth_authorizations (expires_at);
+
+-- Entry links (ADR-0063): Go only, schema version 7. A link a person enters
+-- one item's value with, once. token_hash is the SHA-256 of the link's
+-- secret, which is kept nowhere. bound_version_id is the item's value when
+-- the link was made, its own or its parent's (NULL: it had none): entering
+-- needs the same one still. credential_id is what it was made with, which it
+-- ends with. Kept until a day after they expire. The value itself is a value
+-- version, as any write's.
+CREATE TABLE entry_links (
+  id TEXT NOT NULL PRIMARY KEY,
+  token_hash TEXT NOT NULL CONSTRAINT entry_links_token_hash_unique UNIQUE CONSTRAINT entry_links_token_hash_check CHECK (length(token_hash) = 64 AND token_hash NOT GLOB '*[^0-9a-f]*'),
+  organization_id TEXT NOT NULL REFERENCES organizations (id),
+  project_id TEXT NOT NULL REFERENCES projects (id),
+  environment_id TEXT NOT NULL REFERENCES environments (id),
+  item_name TEXT NOT NULL,
+  accepts TEXT NOT NULL CONSTRAINT entry_links_accepts_check CHECK (accepts IN ('value', 'otpauth')),
+  replaces INTEGER NOT NULL CONSTRAINT entry_links_replaces_check CHECK (replaces IN (0, 1)),
+  bound_version_id TEXT,
+  restricted_to TEXT NOT NULL CONSTRAINT entry_links_restricted_to_check CHECK (restricted_to IN ('anyone', 'member', 'identity')),
+  identity_id TEXT REFERENCES identities (id),
+  description TEXT,
+  requested_by TEXT NOT NULL REFERENCES identities (id),
+  credential_id TEXT NOT NULL REFERENCES credentials (id),
+  status TEXT NOT NULL DEFAULT 'pending' CONSTRAINT entry_links_status_check CHECK (status IN ('pending', 'entered', 'cancelled')),
+  reason TEXT,
+  refusals INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  ended_at INTEGER,
+  CONSTRAINT entry_links_identity_check CHECK ((restricted_to = 'identity') = (identity_id IS NOT NULL)),
+  CONSTRAINT entry_links_bound_check CHECK (replaces = 1 OR bound_version_id IS NULL),
+  CONSTRAINT entry_links_ended_check CHECK ((status = 'pending') = (ended_at IS NULL))
+) STRICT;
+CREATE INDEX entry_links_environment ON entry_links (environment_id, created_at);
+CREATE INDEX entry_links_requested_by ON entry_links (requested_by, created_at);
+CREATE INDEX entry_links_expires ON entry_links (expires_at);

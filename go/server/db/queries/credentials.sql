@@ -10,6 +10,13 @@ SELECT c.id, c.identity_id, c.kind, c.name, c.expires_at, c.revoked_at, c.token_
 FROM credentials c JOIN identities i ON i.id = c.identity_id
 WHERE c.token_hash = ?;
 
+-- name: ExerciseCredential :one
+-- What limits an exercise-only credential (ADR-0060).
+SELECT * FROM exercise_credentials WHERE credential_id = ?;
+
+-- name: InsertExerciseCredential :exec
+INSERT INTO exercise_credentials (credential_id, oidc_binding_id, run_id) VALUES (?, ?, ?);
+
 -- name: ConsumeCredentialUse :execrows
 UPDATE credentials SET use_count = use_count + 1
 WHERE id = ? AND revoked_at IS NULL AND use_count < max_uses;

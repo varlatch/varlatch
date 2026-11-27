@@ -82,8 +82,19 @@ var Capabilities = []string{
 // enrollment page to use /auth/session and the paths beside it instead of
 // Better Auth's; and realtime.sse, its live updates as server-sent events
 // (GET /auth/events, ADR-0059 Decision 4), which tells the dashboard to use
-// them instead of Convex. The TypeScript server lists neither.
-var GoCapabilities = []string{"auth.session", "realtime.sse"}
+// them instead of Convex. Before them ADR-0060's: capabilities.delegate
+// (capability.issue, brokerIdentityId), capabilities.single-use (singleUse)
+// and auth.oidc.limits (an OIDC binding's exerciseOnly, runIdClaim and
+// singleExchange), which a client looks for before it asks for a limit: a
+// server without them would ignore it. And values.totp, ADR-0061's one-time
+// codes: a seed in a value's place, an exercise's minValiditySeconds and
+// fresh, a disclosure's totpSeeds. And oauth.connections, ADR-0062's: OAuth
+// connections, whose access token an exercise gives. And values.entry-links,
+// ADR-0063's: links a person enters a value with. And ADR-0064's:
+// capabilities.destination-kinds (web: and app: destinations, a page or an
+// application in an exercise) and capabilities.target-kinds (pipe: and field:
+// targets). The TypeScript server lists none of them.
+var GoCapabilities = []string{"capabilities.delegate", "capabilities.single-use", "auth.oidc.limits", "values.totp", "oauth.connections", "values.entry-links", "capabilities.destination-kinds", "capabilities.target-kinds", "auth.session", "realtime.sse"}
 
 // SemanticsVersions are the Contract Semantics versions the server
 // evaluates (packages/contract/src/semantics.ts SEMANTICS_VERSIONS).
@@ -121,6 +132,7 @@ func (o *operations) GetMeta(ctx context.Context, _ api.GetMetaRequestObject) (a
 		hidden["auth.device"] = true
 	}
 	caps := slices.DeleteFunc(slices.Clone(Capabilities), func(c string) bool { return hidden[c] })
+	caps = append(caps, "capabilities.delegate", "capabilities.single-use", "auth.oidc.limits", "values.totp", "oauth.connections", "values.entry-links", "capabilities.destination-kinds", "capabilities.target-kinds")
 	if s.browser != nil {
 		caps = append(caps, "auth.session")
 		if s.opts.Realtime != nil {

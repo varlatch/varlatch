@@ -310,8 +310,15 @@ const InviteNotShown = "varlatch invite: the server's answer holds no invitation
 // VARLATCH_TOKEN, a stored credential, a value in flight). A server that
 // answers with anything else gets nothing printed (go/README.md, "`invite`
 // prints only an invitation token").
-func (r *Run) showableInvite(token string) bool {
-	if !inviteTokenFormat.MatchString(token) {
+func (r *Run) showableInvite(token string) bool { return r.showableToken(inviteTokenFormat, token) }
+
+// entryToken is an entry link's token, vlt_entry_ and 32 random bytes in
+// base64url (ADR-0063), which values ask prints as invite prints its own.
+var entryToken = regexp.MustCompile(`^vlt_entry_[A-Za-z0-9_-]{43}$`)
+
+// showableToken is showableInvite for a token of one format.
+func (r *Run) showableToken(format *regexp.Regexp, token string) bool {
+	if !format.MatchString(token) {
 		return false
 	}
 	if r.Secrets != nil {

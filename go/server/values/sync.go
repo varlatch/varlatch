@@ -63,11 +63,13 @@ func ReadForSync(ctx context.Context, db query.DBTX, projectID, environmentID st
 		}
 		st.contract = &c
 	}
-	items, err := resolveItems(ctx, q, &st, now)
+	// Seeds of one-time codes (ADR-0061) and OAuth connections (ADR-0062) are
+	// never synced.
+	r, err := resolve(ctx, q, &st, now)
 	if err != nil {
 		return SyncRead{}, err
 	}
-	return SyncRead{Items: items}, nil
+	return SyncRead{Items: r.items}, nil
 }
 
 // OpenForSync is decryptForSync: one version, read when it is opened (after
@@ -80,6 +82,9 @@ func OpenForSync(ctx context.Context, db query.DBTX, orgKEK []byte, organization
 	}
 	if len(rows) == 0 {
 		return "", domainerr.New("INTERNAL", "Missing value version")
+	}
+	if marked(rows[0].Payload.String) {
+		return "", errSeed
 	}
 	var v envelope.EncryptedValue
 	if err := json.Unmarshal([]byte(rows[0].Payload.String), &v.Payload); err != nil {

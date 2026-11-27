@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { EyeOff, Link2, RefreshCw, ShieldCheck } from "lucide-react";
+import { EyeOff, KeyRound, Link2, RefreshCw, ShieldCheck } from "lucide-react";
 import { Badge, Button, Kbd, cn } from "../../components/ui";
 import { modKey } from "../../lib/hotkeys";
 import { listNames, plural } from "./model";
@@ -19,6 +19,28 @@ export function SecretMask({ className }: { className?: string }) {
   return (
     <span aria-label="Masked secret" className={cn("select-none font-mono text-[13px] tracking-[0.18em] text-muted", className)}>
       ••••••••••
+    </span>
+  );
+}
+
+/** In place of an OAuth connection's value, which there is none of: whose it is, and its state. */
+export function ConnectionValue({ label, className }: { label: string; className?: string }) {
+  return (
+    <span data-testid="connection-value" title="An OAuth connection. Its access token is used through a Capability" className={cn("flex min-w-0 items-center gap-1.5 text-[13px] text-muted", className)}>
+      <Link2 size={13} className="shrink-0" />
+      <span className="shrink-0">OAuth connection</span>
+      {label !== "" && <span className="min-w-0 truncate text-fg/90">{label}</span>}
+    </span>
+  );
+}
+
+/** In place of a one-time code's value, which is never shown: whose it is. */
+export function CodeValue({ label, className }: { label: string; className?: string }) {
+  return (
+    <span data-testid="code-value" title="The seed of one-time codes. Its code is used through a Capability" className={cn("flex min-w-0 items-center gap-1.5 text-[13px] text-muted", className)}>
+      <KeyRound size={13} className="shrink-0" />
+      <span className="shrink-0">one-time code</span>
+      {label !== "" && <span className="min-w-0 truncate text-fg/90">{label}</span>}
     </span>
   );
 }

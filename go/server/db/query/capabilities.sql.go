@@ -35,6 +35,24 @@ func (q *Queries) CapabilityAgent(ctx context.Context, arg CapabilityAgentParams
 	return i, err
 }
 
+const capabilityBroker = `-- name: CapabilityBroker :one
+SELECT id FROM identities WHERE id = ? AND organization_id = ? AND kind = 'broker' AND disabled = 0
+`
+
+type CapabilityBrokerParams struct {
+	ID             string
+	OrganizationID sql.NullString
+}
+
+// The Broker a Capability is issued for: one of this Organization's, not
+// disabled.
+func (q *Queries) CapabilityBroker(ctx context.Context, arg CapabilityBrokerParams) (string, error) {
+	row := q.db.QueryRowContext(ctx, capabilityBroker, arg.ID, arg.OrganizationID)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
 const capabilityIssuedOrder = `-- name: CapabilityIssuedOrder :one
 SELECT event_order FROM audit_events
 WHERE organization_id = ?1 AND event_type = 'capability.issued'
@@ -110,7 +128,7 @@ INSERT INTO capabilities
    items, destinations, targets, secret_hash, run_id, expires_at, created_by, created_at)
 VALUES (?1, ?2, ?3, ?4,
         ?5, ?6, ?7, ?8, ?9,
-        ?10, ?11, ?12, ?3, ?13)
+        ?10, ?11, ?12, ?13, ?14)
 `
 
 type InsertCapabilityParams struct {
@@ -126,6 +144,7 @@ type InsertCapabilityParams struct {
 	SecretHash       string
 	RunID            sql.NullString
 	ExpiresAt        int64
+	CreatedBy        string
 	CreatedAt        int64
 }
 
@@ -143,9 +162,28 @@ func (q *Queries) InsertCapability(ctx context.Context, arg InsertCapabilityPara
 		arg.SecretHash,
 		arg.RunID,
 		arg.ExpiresAt,
+		arg.CreatedBy,
 		arg.CreatedAt,
 	)
 	return err
+}
+
+const issuedCapability = `-- name: IssuedCapability :one
+SELECT id FROM capabilities WHERE id = ? AND organization_id = ? AND created_by = ?
+`
+
+type IssuedCapabilityParams struct {
+	ID             string
+	OrganizationID string
+	CreatedBy      string
+}
+
+// Whether the identity issued the Capability, in the Organization.
+func (q *Queries) IssuedCapability(ctx context.Context, arg IssuedCapabilityParams) (string, error) {
+	row := q.db.QueryRowContext(ctx, issuedCapability, arg.ID, arg.OrganizationID, arg.CreatedBy)
+	var id string
+	err := row.Scan(&id)
+	return id, err
 }
 
 const latestIdentityLifecycleAt = `-- name: LatestIdentityLifecycleAt :one
@@ -204,20 +242,21 @@ func (q *Queries) LatestIdentityRetirement(ctx context.Context, arg LatestIdenti
 const listCapabilities = `-- name: ListCapabilities :many
 SELECT id, organization_id, broker_identity_id, agent_identity_id, project_id, environment_id, items, destinations, secret_hash, run_id, expires_at, revoked_at, created_by, created_at, targets FROM capabilities
 WHERE organization_id = ?1 AND environment_id = ?2
-  AND (?3 IS NULL OR broker_identity_id = ?3)
+  AND (?3 IS NULL OR broker_identity_id = ?3 OR created_by = ?3)
 ORDER BY created_at DESC, id
 `
 
 type ListCapabilitiesParams struct {
 	OrganizationID string
 	EnvironmentID  string
-	Broker         interface{}
+	Owner          interface{}
 }
 
-// listCapabilities: an environment's Capabilities, newest first; a
-// Broker's own only when broker is set.
+// listCapabilities: an environment's Capabilities, newest first; only the
+// ones issued for or by owner when it is set (a Broker's own, an issuer's
+// own).
 func (q *Queries) ListCapabilities(ctx context.Context, arg ListCapabilitiesParams) ([]Capability, error) {
-	rows, err := q.db.QueryContext(ctx, listCapabilities, arg.OrganizationID, arg.EnvironmentID, arg.Broker)
+	rows, err := q.db.QueryContext(ctx, listCapabilities, arg.OrganizationID, arg.EnvironmentID, arg.Owner)
 	if err != nil {
 		return nil, err
 	}
@@ -256,7 +295,7 @@ func (q *Queries) ListCapabilities(ctx context.Context, arg ListCapabilitiesPara
 }
 
 const liveCapabilitiesForRepair = `-- name: LiveCapabilitiesForRepair :many
-SELECT id, organization_id, agent_identity_id, broker_identity_id FROM capabilities
+SELECT id, organization_id, agent_identity_id, broker_identity_id, created_by FROM capabilities
 WHERE revoked_at IS NULL AND expires_at > ?1
   AND (organization_id, id) > (?2, ?3)
 ORDER BY organization_id, id
@@ -275,11 +314,14 @@ type LiveCapabilitiesForRepairRow struct {
 	OrganizationID   string
 	AgentIdentityID  string
 	BrokerIdentityID string
+	CreatedBy        string
 }
 
 // capabilities.RevokeOfRetired: the next at most batch unexpired, unrevoked
 // Capabilities after (after_org, after_id), by Organization and id: a range
 // of capabilities_live_idx from the cursor on, with no sort of the rest.
+// created_by is its issuer: one that issued it for another Broker
+// (ADR-0060) ends it by a retirement too.
 func (q *Queries) LiveCapabilitiesForRepair(ctx context.Context, arg LiveCapabilitiesForRepairParams) ([]LiveCapabilitiesForRepairRow, error) {
 	rows, err := q.db.QueryContext(ctx, liveCapabilitiesForRepair,
 		arg.Now,
@@ -299,6 +341,7 @@ func (q *Queries) LiveCapabilitiesForRepair(ctx context.Context, arg LiveCapabil
 			&i.OrganizationID,
 			&i.AgentIdentityID,
 			&i.BrokerIdentityID,
+			&i.CreatedBy,
 		); err != nil {
 			return nil, err
 		}
@@ -314,26 +357,33 @@ func (q *Queries) LiveCapabilitiesForRepair(ctx context.Context, arg LiveCapabil
 }
 
 const liveCapabilitiesOfIdentity = `-- name: LiveCapabilitiesOfIdentity :many
-SELECT id FROM capabilities
-WHERE (agent_identity_id = ?1 OR broker_identity_id = ?1) AND revoked_at IS NULL
+SELECT id, broker_identity_id, created_by FROM capabilities
+WHERE (agent_identity_id = ?1 OR broker_identity_id = ?1 OR created_by = ?1) AND revoked_at IS NULL
 ORDER BY id
 `
 
+type LiveCapabilitiesOfIdentityRow struct {
+	ID               string
+	BrokerIdentityID string
+	CreatedBy        string
+}
+
 // retireIdentity: the unrevoked Capabilities issued for the identity as
-// Agent or by it as Broker, in id order.
-func (q *Queries) LiveCapabilitiesOfIdentity(ctx context.Context, identityID string) ([]string, error) {
+// Agent, for it as Broker, or by it for another Broker (ADR-0060), in id
+// order, with its Broker and its issuer for the audit event.
+func (q *Queries) LiveCapabilitiesOfIdentity(ctx context.Context, identityID string) ([]LiveCapabilitiesOfIdentityRow, error) {
 	rows, err := q.db.QueryContext(ctx, liveCapabilitiesOfIdentity, identityID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []string
+	var items []LiveCapabilitiesOfIdentityRow
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var i LiveCapabilitiesOfIdentityRow
+		if err := rows.Scan(&i.ID, &i.BrokerIdentityID, &i.CreatedBy); err != nil {
 			return nil, err
 		}
-		items = append(items, id)
+		items = append(items, i)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -345,29 +395,53 @@ func (q *Queries) LiveCapabilitiesOfIdentity(ctx context.Context, identityID str
 }
 
 const liveCapability = `-- name: LiveCapability :one
-SELECT id FROM capabilities
+SELECT id, broker_identity_id, created_by FROM capabilities
 WHERE id = ?1 AND organization_id = ?2 AND revoked_at IS NULL
-  AND (?3 IS NULL OR broker_identity_id = ?3)
+  AND (?3 IS NULL OR broker_identity_id = ?3 OR created_by = ?3)
 `
 
 type LiveCapabilityParams struct {
 	ID             string
 	OrganizationID string
-	Broker         interface{}
+	Owner          interface{}
 }
 
-// revokeCapability's existence check: unrevoked, in the Organization, the
-// Broker's own when broker is set (any environment).
-func (q *Queries) LiveCapability(ctx context.Context, arg LiveCapabilityParams) (string, error) {
-	row := q.db.QueryRowContext(ctx, liveCapability, arg.ID, arg.OrganizationID, arg.Broker)
-	var id string
-	err := row.Scan(&id)
-	return id, err
+type LiveCapabilityRow struct {
+	ID               string
+	BrokerIdentityID string
+	CreatedBy        string
+}
+
+// revokeCapability's existence check: unrevoked, in the Organization, one
+// of owner's when it is set (any environment).
+func (q *Queries) LiveCapability(ctx context.Context, arg LiveCapabilityParams) (LiveCapabilityRow, error) {
+	row := q.db.QueryRowContext(ctx, liveCapability, arg.ID, arg.OrganizationID, arg.Owner)
+	var i LiveCapabilityRow
+	err := row.Scan(&i.ID, &i.BrokerIdentityID, &i.CreatedBy)
+	return i, err
+}
+
+const releaseCapability = `-- name: ReleaseCapability :exec
+UPDATE capabilities SET secret_hash = ?1
+WHERE id = ?2 AND secret_hash = ?3
+`
+
+type ReleaseCapabilityParams struct {
+	Unused string
+	ID     string
+	Used   string
+}
+
+// The use taken back: the exercise was refused after all. revoked_at is
+// left as it is, so a revocation meanwhile holds.
+func (q *Queries) ReleaseCapability(ctx context.Context, arg ReleaseCapabilityParams) error {
+	_, err := q.db.ExecContext(ctx, releaseCapability, arg.Unused, arg.ID, arg.Used)
+	return err
 }
 
 const revokeCapabilitiesOfIdentity = `-- name: RevokeCapabilitiesOfIdentity :exec
 UPDATE capabilities SET revoked_at = ?1
-WHERE (agent_identity_id = ?2 OR broker_identity_id = ?2) AND revoked_at IS NULL
+WHERE (agent_identity_id = ?2 OR broker_identity_id = ?2 OR created_by = ?2) AND revoked_at IS NULL
 `
 
 type RevokeCapabilitiesOfIdentityParams struct {
@@ -383,14 +457,14 @@ func (q *Queries) RevokeCapabilitiesOfIdentity(ctx context.Context, arg RevokeCa
 const revokeCapability = `-- name: RevokeCapability :execrows
 UPDATE capabilities SET revoked_at = ?1
 WHERE id = ?2 AND organization_id = ?3 AND revoked_at IS NULL
-  AND (?4 IS NULL OR broker_identity_id = ?4)
+  AND (?4 IS NULL OR broker_identity_id = ?4 OR created_by = ?4)
 `
 
 type RevokeCapabilityParams struct {
 	Now            sql.NullInt64
 	ID             string
 	OrganizationID string
-	Broker         interface{}
+	Owner          interface{}
 }
 
 func (q *Queries) RevokeCapability(ctx context.Context, arg RevokeCapabilityParams) (int64, error) {
@@ -398,8 +472,29 @@ func (q *Queries) RevokeCapability(ctx context.Context, arg RevokeCapabilityPara
 		arg.Now,
 		arg.ID,
 		arg.OrganizationID,
-		arg.Broker,
+		arg.Owner,
 	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const useCapability = `-- name: UseCapability :execrows
+UPDATE capabilities SET secret_hash = ?1
+WHERE id = ?2 AND secret_hash = ?3 AND revoked_at IS NULL
+`
+
+type UseCapabilityParams struct {
+	Used   string
+	ID     string
+	Unused string
+}
+
+// A single-use Capability's use, recorded in its secret_hash (values
+// StoredSecret), unless it was used or revoked meanwhile.
+func (q *Queries) UseCapability(ctx context.Context, arg UseCapabilityParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, useCapability, arg.Used, arg.ID, arg.Unused)
 	if err != nil {
 		return 0, err
 	}

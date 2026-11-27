@@ -44,19 +44,23 @@ func (q *Queries) CredentialOfKinds(ctx context.Context, arg CredentialOfKindsPa
 }
 
 const credentialsOfIdentityNewestFirst = `-- name: CredentialsOfIdentityNewestFirst :many
-SELECT id, kind, name, created_at, expires_at, revoked_at, last_used_at, client
-FROM credentials WHERE identity_id = ? ORDER BY created_at DESC, id
+SELECT c.id, c.kind, c.name, c.created_at, c.expires_at, c.revoked_at, c.last_used_at, c.client,
+       x.credential_id AS exercise_only, x.run_id
+FROM credentials c LEFT JOIN exercise_credentials x ON x.credential_id = c.id
+WHERE c.identity_id = ? ORDER BY c.created_at DESC, c.id
 `
 
 type CredentialsOfIdentityNewestFirstRow struct {
-	ID         string
-	Kind       string
-	Name       sql.NullString
-	CreatedAt  int64
-	ExpiresAt  sql.NullInt64
-	RevokedAt  sql.NullInt64
-	LastUsedAt sql.NullInt64
-	Client     sql.NullString
+	ID           string
+	Kind         string
+	Name         sql.NullString
+	CreatedAt    int64
+	ExpiresAt    sql.NullInt64
+	RevokedAt    sql.NullInt64
+	LastUsedAt   sql.NullInt64
+	Client       sql.NullString
+	ExerciseOnly sql.NullString
+	RunID        sql.NullString
 }
 
 // listIdentityCredentials: metadata only, never token material.
@@ -78,6 +82,8 @@ func (q *Queries) CredentialsOfIdentityNewestFirst(ctx context.Context, identity
 			&i.RevokedAt,
 			&i.LastUsedAt,
 			&i.Client,
+			&i.ExerciseOnly,
+			&i.RunID,
 		); err != nil {
 			return nil, err
 		}

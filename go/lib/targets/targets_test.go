@@ -82,3 +82,71 @@ func TestCanonical(t *testing.T) {
 		}
 	}
 }
+
+// A list of targets has as many entries as there are, whatever the names.
+func TestRecorded(t *testing.T) {
+	for in, want := range map[string]string{
+		"header:x-a": "header:x-a", "query:a=b": "query:a=b", "query:100%": "query:100%", "form:Mot de passe": "form:Mot de passe",
+		"json:/a;SECRET_B=header:authorization": "json:/a%3BSECRET_B=header:authorization", "query:a;b": "query:a%3Bb", "json:/a\nb": "json:/a%0Ab",
+		"form:Pass\u202ednrow": "form:Pass%E2%80%AEdnrow", "query:a\xff": "query:a%FF", "query:\ufffd": "query:\ufffd", "query:a\xed\xa0\x80": "query:a%ED%A0%80",
+	} {
+		if got := Recorded(in); got != want {
+			t.Errorf("Recorded(%q) = %q, want %q", in, got, want)
+		}
+	}
+	list := []Item{{"B", []string{"json:/a;A=header:authorization", "query:x"}}, {"A", []string{"header:x-a"}}}
+	if got := Describe(list); got != "A=header:x-a;B=json:/a%3BA=header:authorization;B=query:x" || len(strings.Split(got, ";")) != 3 {
+		t.Error(got)
+	}
+}
+
+func FuzzRecorded(f *testing.F) {
+	for _, s := range []string{"json:/a;b", "query:\xed\xa0\x80", "form:\u202e;", "header:a"} {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, s string) {
+		got := Recorded(s)
+		if strings.Contains(got, ";") || !Plain(got) || Recorded(got) != got {
+			t.Errorf("%q: %q", s, got)
+		}
+	})
+}
+
+// Parse is the CLI's Broker's, which sends requests alone: it refuses the
+// kinds of a Broker that types or pipes (ADR-0064), and ParseAny takes them
+// beside its own.
+func TestParseAny(t *testing.T) {
+	for raw, want := range map[string]string{
+		"pipe:/token": "pipe:/token", "pipe:/a~0b/~1/0": "pipe:/a~0b/~1/0", "field:Password": "field:Password", "field:form:pw": "field:form:pw",
+		"header:X-Api-Key": "header:x-api-key", "json:/a": "json:/a", "field:user[password] *": "field:user[password] *", "field:Mot de passe": "field:Mot de passe", "field:パスワード": "field:パスワード",
+		"json:/a;b": "json:/a;b",
+		// At the bounds: 256 characters, 512 bytes, each.
+		"field:" + strings.Repeat("a", 256): "field:" + strings.Repeat("a", 256), "field:" + strings.Repeat("パ", 170): "field:" + strings.Repeat("パ", 170),
+		"field:" + strings.Repeat("😀", 128): "field:" + strings.Repeat("😀", 128),
+	} {
+		if got, err := ParseAny(raw); err != nil || got != want {
+			t.Errorf("ParseAny(%q) = %q, %v", raw, got, err)
+		}
+	}
+	for _, raw := range []string{"pipe:", "pipe:token", "pipe:/a~2", "pipe:/a~", "pipe:/a\nb", "pipe:/" + strings.Repeat("a", 512), "field:", "field:a\x00", "field:" + strings.Repeat("a", 257), "field:" + strings.Repeat("パ", 171), "field:" + strings.Repeat("😀", 128) + "a",
+		"PIPE:/a", "Field:a", "keyboard:a", "field", "", "header:host",
+		"field:x;SECRET_B=header:authorization", "field:a;b", "field:a=b", "field: a", "field:a ", "field:a\u00a0b", "field:Pass\u202ednrow\u200b", "field:a\u2066b", "field:a\u00adb",
+		"field:a\ufe0f", "field:a\u115f", "field:a\xff", "field:a\xed\xa0\x80", "field:a\u0085", "field:a\u2028b",
+		"pipe:/x;SECRET_B=header:authorization", "pipe:/a=b", "pipe:/a\u202eb", "pipe:/a\u200b", "pipe:/a\xff", "pipe:/a\tb"} {
+		if got, err := ParseAny(raw); err == nil {
+			t.Errorf("ParseAny(%q) = %q", raw, got)
+		}
+	}
+	for _, raw := range []string{"pipe:/token", "field:Password"} {
+		var e *Error
+		if _, err := Parse(raw); !errors.As(err, &e) || !strings.Contains(e.Message, "is not a target kind") {
+			t.Errorf("Parse(%q): %v", raw, err)
+		}
+		if _, err := Canonical([]string{"A"}, []Item{{"A", []string{raw}}}); err == nil {
+			t.Errorf("Canonical takes %q", raw)
+		}
+		if out, err := CanonicalAny([]string{"A"}, []Item{{"A", []string{raw}}}); err != nil || len(out) != 1 || Kind(out[0].Targets[0]) != Kind(raw) {
+			t.Errorf("CanonicalAny(%q): %v, %v", raw, out, err)
+		}
+	}
+}

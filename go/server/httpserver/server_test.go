@@ -389,9 +389,10 @@ func TestHealthReadyMeta(t *testing.T) {
 		!slices.Equal(m.SyncAdapters, []string{"github-actions", "coolify", "convex"}) || m.InstallationID != "inst_test" {
 		t.Errorf("meta: %+v", m)
 	}
-	// The TypeScript server's, then varlatchd's own browser session
-	// (auth.session); server-sent events (realtime.sse) come with step 3.5.
-	want := append(slices.DeleteFunc(slices.Clone(Capabilities), func(c string) bool { return c == "tailnet.browser-reads" || c == "cli.download" }), "auth.session")
+	// The TypeScript server's, then varlatchd's own: ADR-0060's limits and
+	// the browser session (auth.session); server-sent events (realtime.sse) come with step 3.5.
+	want := append(slices.DeleteFunc(slices.Clone(Capabilities), func(c string) bool { return c == "tailnet.browser-reads" || c == "cli.download" }),
+		"capabilities.delegate", "capabilities.single-use", "auth.oidc.limits", "values.totp", "oauth.connections", "values.entry-links", "capabilities.destination-kinds", "capabilities.target-kinds", "auth.session")
 	if !slices.Equal(m.Capabilities, want) || !slices.Contains(m.Capabilities, "auth.device") {
 		t.Errorf("capabilities: %q", m.Capabilities)
 	}
@@ -513,6 +514,50 @@ func TestCLIDownloadNotOnTheTailnetListener(t *testing.T) {
 	for _, p := range []string{"/install.sh", "/install.ps1", "/cli/v0.50.0/varlatch-0.50.0-linux-amd64", "/cli/v0.50.0/SHA256SUMS"} {
 		if w := do(s, "GET", p, "", nil); w.Code != 404 || strings.Contains(w.Body.String(), "served") {
 			t.Errorf("%s on the tailnet listener: %d %q", p, w.Code, w.Body.String())
+		}
+	}
+}
+
+// Where an OAuth provider sends the browser back to, the address holds the
+// code (ADR-0062): nothing loaded from there names it, and nothing keeps it.
+func TestTheOAuthCallbacksHeaders(t *testing.T) {
+	s, _, _, _ := newTestServer(t, nil)
+	for p, want := range map[string]bool{"/oauth/callback/idp.example?code=x&state=y": true, "/oauth/callback/idp.example~api.example": true, "/oauth/callback/idp.example/": true,
+		"//oauth/callback/idp.example?code=x": true, "/oauth/../oauth/callback/x": true, "/": false, "/oauth/callback2/x": false, "/o/acme/projects": false} {
+		w := do(s, "GET", p, "", nil)
+		h := w.Header()
+		if got := h.Get("Referrer-Policy") == "no-referrer" && h.Get("Cache-Control") == "no-store"; got != want || want && w.Code != 200 {
+			t.Errorf("%s: %d %v", p, w.Code, h)
+		}
+	}
+}
+
+// The entry page (ADR-0063) has headers of its own, whatever the browser
+// endpoint, and no other page has them.
+func TestTheEntryPagesHeaders(t *testing.T) {
+	s, _, _, _ := newTestServer(t, func(o *Options) { o.BrowserEndpoint = func() string { return "https://varlatch.corp.ts.net:8443" } })
+	for _, method := range []string{"GET", "HEAD"} {
+		w := do(s, method, "/entry", "", nil)
+		h := w.Header()
+		csp := h.Get("Content-Security-Policy")
+		if w.Code != 200 || h.Get("Referrer-Policy") != "no-referrer" || h.Get("Cache-Control") != "no-store" || h.Get("X-Frame-Options") != "DENY" ||
+			h.Get("X-Content-Type-Options") != "nosniff" || h.Get("Cross-Origin-Opener-Policy") != "same-origin" || !strings.Contains(h.Get("X-Robots-Tag"), "noindex") {
+			t.Errorf("%s: %d %v", method, w.Code, h)
+		}
+		for _, want := range []string{"default-src 'none'", "script-src 'self'", "connect-src 'self';", "form-action 'none'", "frame-ancestors 'none'", "base-uri 'none'"} {
+			if !strings.Contains(csp, want) {
+				t.Errorf("%s: %q lacks %s", method, csp, want)
+			}
+		}
+		for _, never := range []string{"https:", "unsafe", "*", "ts.net"} {
+			if strings.Contains(csp, never) {
+				t.Errorf("%s: %q holds %s", method, csp, never)
+			}
+		}
+	}
+	for _, p := range []string{"/", "/entry/x", "/entry2", "/o/acme/projects"} {
+		if h := do(s, "GET", p, "", nil).Header(); h.Get("Referrer-Policy") != "" {
+			t.Errorf("%s has the entry page's headers", p)
 		}
 	}
 }

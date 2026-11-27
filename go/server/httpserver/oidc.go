@@ -14,6 +14,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/authz"
 	"github.com/varlatch/varlatch/go/server/identities"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
+	"github.com/varlatch/varlatch/go/server/oidc/limits"
 	"github.com/varlatch/varlatch/go/server/security"
 )
 
@@ -50,6 +51,10 @@ var (
 		{name: "audience", schema: zString{min: 1, max: 2000}},
 		{name: "subject", schema: zString{min: 1, max: 2000}},
 		{name: "claims", schema: zRecord{value: zString{max: 2000}}, optional: true},
+		// What its exchanges are limited to (ADR-0060).
+		{name: "exerciseOnly", schema: zBool{}, optional: true},
+		{name: "runIdClaim", schema: zString{min: 1, max: 200}, optional: true},
+		{name: "singleExchange", schema: zBool{}, optional: true},
 	}
 	exchangeOidcTokenSchema = zObject{
 		{name: "token", schema: zString{min: 1, max: 100_000}},
@@ -114,6 +119,26 @@ func (o *operations) CreateOidcBinding(ctx context.Context, _ api.CreateOidcBind
 	in := identities.OIDCBindingInput{Issuer: stringMember(body, "issuer"), Audience: stringMember(body, "audience"), Subject: stringMember(body, "subject")}
 	if c, ok := body.Get("claims"); ok {
 		in.Claims = c.(jsvalue.Object)
+		if err := limits.CheckClaims(in.Claims); err != nil {
+			return nil, err
+		}
+	}
+	var exerciseOnly bool
+	var runIDClaim *string
+	var singleExchange *bool
+	if v, ok := body.Get("exerciseOnly"); ok {
+		exerciseOnly = v.(bool)
+	}
+	if _, ok := body.Get("runIdClaim"); ok {
+		s := stringMember(body, "runIdClaim")
+		runIDClaim = &s
+	}
+	if v, ok := body.Get("singleExchange"); ok {
+		b := v.(bool)
+		singleExchange = &b
+	}
+	if in.Limits, err = limits.New(exerciseOnly, runIDClaim, singleExchange); err != nil {
+		return nil, err
 	}
 	type result struct {
 		out     jsvalue.Object

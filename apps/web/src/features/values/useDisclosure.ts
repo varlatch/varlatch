@@ -25,6 +25,9 @@ import { useTailnetConnection } from "../../lib/tailnetConnection";
  * endpoint while the tab is connected, never to the dashboard's origin, and
  * are never sent again on failure. `onTailnetOnly` hears of a Requirement
  * the page did not know about, from a denial on the dashboard's origin.
+ *
+ * The seed of one-time codes (ADR-0061) is disclosed only when a reveal asks
+ * for seeds: revealing every secret, or several, never does.
  */
 
 const REMASK_MS = 5 * 60 * 1000;
@@ -83,7 +86,7 @@ export function useDisclosure(
   }, [restrictedKey, maskEnv]);
 
   const reveal = useCallback(
-    async (env: string, request: string[] | "all") => {
+    async (env: string, request: string[] | "all", seeds = false) => {
       if (restrictedNow.current.has(env)) throw new TailnetOnlyError();
       const viaTailnet = routes.current.protectedEnvs.has(env);
       const client = viaTailnet ? routes.current.tailnetClient : api;
@@ -95,7 +98,7 @@ export function useDisclosure(
           org,
           project,
           env,
-          request === "all" ? { scope: "all-authorized-secrets" } : { items: request },
+          request === "all" ? { scope: "all-authorized-secrets" } : { items: request, ...(seeds ? { totpSeeds: true } : {}) },
         );
       } catch (err) {
         if (isTailnetDenial(err)) {

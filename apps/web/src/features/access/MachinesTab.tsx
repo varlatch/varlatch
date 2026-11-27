@@ -355,6 +355,15 @@ function MachineDetails({ org, identity, lifecycle }: { org: string; identity: O
   );
 }
 
+/** What a binding's exchanges are limited to (ADR-0060), "" for nothing. */
+export function bindingLimits(b: OidcBinding): string {
+  const parts: string[] = [];
+  if (b.exerciseOnly) parts.push(b.runIdClaim ? `Uses capabilities of the run in its ${b.runIdClaim} claim, and nothing else` : "Uses capabilities, and nothing else");
+  if (b.singleExchange) parts.push("each token exchanges once");
+  const text = parts.join("; ");
+  return text && `${text[0]!.toUpperCase()}${text.slice(1)}.`;
+}
+
 function OidcBindings({ org, identity }: { org: string; identity: OrgIdentity }) {
   const { api } = useSession();
   const qc = useQueryClient();
@@ -406,6 +415,7 @@ function OidcBindings({ org, identity }: { org: string; identity: OrgIdentity })
                 <MonoRow label="Issuer" value={b.issuer} />
                 <MonoRow label="Audience" value={b.audience} />
                 <MonoRow label="Subject" value={b.subject} />
+                {bindingLimits(b) && <p className="text-xs text-muted" data-testid={`oidc-limits-${b.id}`}>{bindingLimits(b)}</p>}
               </div>
               <Button
                 size="sm"
@@ -540,6 +550,9 @@ function CredentialsList({ org, identity }: { org: string; identity: OrgIdentity
               <Badge className="font-mono">{c.kind}</Badge>
               <span className="min-w-0 flex-1">
                 <span className="block truncate">{c.name ?? c.client ?? "Unnamed"}</span>
+                {c.exerciseOnly && (
+                  <span className="block text-xs text-muted">Uses capabilities{c.runId ? ` of run ${c.runId}` : ""}, and nothing else</span>
+                )}
                 <span className="block text-xs text-muted">
                   issued {timeAgo(c.createdAt, now)} · used {timeAgo(c.lastUsedAt, now)}
                   {c.expiresAt && ` · expires ${timeUntil(c.expiresAt, now)}`}

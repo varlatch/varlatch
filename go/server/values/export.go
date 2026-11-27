@@ -155,12 +155,12 @@ func (s *Service) freshnessOf(ctx context.Context, tx *storage.Tx, st *State, se
 			return "the environment expired", nil
 		}
 	}
-	items, err := resolveItems(ctx, q, st, now)
+	r, err := resolve(ctx, q, st, now)
 	if err != nil {
 		return "", err
 	}
 	resolved := map[string]Item{}
-	for _, it := range items {
+	for _, it := range r.items {
 		resolved[it.Name] = it
 	}
 	for _, c := range selected {

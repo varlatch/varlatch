@@ -143,11 +143,18 @@ func Credentials(ctx context.Context, db query.DBTX, identityID string) ([]any, 
 	}
 	out := make([]any, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, jsvalue.Object{
+		o := jsvalue.Object{
 			{Key: "id", Value: r.ID}, {Key: "kind", Value: r.Kind}, {Key: "name", Value: str(r.Name)},
 			{Key: "createdAt", Value: audit.ISOTime(r.CreatedAt)}, {Key: "expiresAt", Value: iso(r.ExpiresAt)},
 			{Key: "revokedAt", Value: iso(r.RevokedAt)}, {Key: "lastUsedAt", Value: iso(r.LastUsedAt)}, {Key: "client", Value: str(r.Client)},
-		})
+		}
+		if r.ExerciseOnly.Valid {
+			o = append(o, jsvalue.Member{Key: "exerciseOnly", Value: true})
+			if r.RunID.Valid {
+				o = append(o, jsvalue.Member{Key: "runId", Value: r.RunID.String})
+			}
+		}
+		out = append(out, o)
 	}
 	return out, nil
 }
@@ -548,9 +555,10 @@ func Retire(ctx context.Context, w *write.Writer, p *auth.Principal, organizatio
 				return err
 			}
 		}
-		// The Capabilities issued for it as Agent, or by it as Broker, are
-		// revoked too: they would otherwise keep working until they expire
-		// (up to a day), and again after a reactivation.
+		// The Capabilities issued for it as Agent, for it as Broker, or by
+		// it for another Broker (ADR-0060), are revoked too: they would
+		// otherwise keep working until they expire (up to a day), and again
+		// after a reactivation.
 		caps, err := q.LiveCapabilitiesOfIdentity(ctx, identityID)
 		if err != nil {
 			return err
@@ -563,10 +571,15 @@ func Retire(ctx context.Context, w *write.Writer, p *auth.Principal, organizatio
 			}
 		}
 		useAction := "secret.use"
-		for _, id := range caps {
+		for _, c := range caps {
+			resource := jsvalue.Object{{Key: "capabilityId", Value: c.ID}}
+			if c.CreatedBy != c.BrokerIdentityID {
+				resource = append(resource, jsvalue.Member{Key: "brokerIdentityId", Value: c.BrokerIdentityID},
+					jsvalue.Member{Key: "issuedByIdentityId", Value: c.CreatedBy})
+			}
 			if _, err := audit.Record(ctx, tx, audit.Event{
 				Type: "capability.revoked", Decision: audit.Info, ActorIdentityID: &actor, OrganizationID: &organizationID,
-				Action: &useAction, Resource: jsvalue.Object{{Key: "capabilityId", Value: id}},
+				Action: &useAction, Resource: resource,
 				Metadata: jsvalue.Object{{Key: "reason", Value: "identity-retired"}, {Key: "identityId", Value: identityID}},
 			}); err != nil {
 				return err

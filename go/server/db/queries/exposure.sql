@@ -9,6 +9,7 @@ WHERE m.organization_id = ? AND m.identity_id = ?;
 SELECT x.version_id, x.item_name, x.environment_id, x.way, x.first_at, x.last_at,
        ev.environment_id AS owner_env, ev.current_version_id, ev.retiring_version_id, ev.rotation_deadline,
        ev.deleted_at AS value_deleted, e.deleted_at AS env_deleted, e.project_id,
+       CAST(coalesce((SELECT json_type(s.payload, '$.totp') = 'object' OR json_type(s.payload, '$.oauth') = 'object' FROM value_versions s WHERE s.id = ev.current_version_id AND ev.deleted_at IS NOT NULL), 0) AS INTEGER) AS seed,
        c.confirmed_at, c.actor_identity_id AS confirmed_by
 FROM member_exposure x
 LEFT JOIN value_versions v ON v.id = x.version_id
@@ -44,7 +45,8 @@ SELECT requirement_id, requirement_version, target, selector FROM removal_requir
 -- rows of one version differ only in their environment and way, which are
 -- not selected, so any row gives the same answer.
 SELECT x.item_name, ev.environment_id, e.project_id,
-       (ev.deleted_at IS NULL AND e.deleted_at IS NULL AND p.id IS NOT NULL AND p.deleted_at IS NULL) AS live,
+       ((ev.deleted_at IS NULL OR EXISTS (SELECT 1 FROM value_versions s WHERE s.id = ev.current_version_id AND (json_type(s.payload, '$.totp') = 'object' OR json_type(s.payload, '$.oauth') = 'object')))
+         AND e.deleted_at IS NULL AND p.id IS NOT NULL AND p.deleted_at IS NULL) AS live,
        ev.id AS value_id
 FROM member_exposure x
 LEFT JOIN value_versions v ON v.id = x.version_id

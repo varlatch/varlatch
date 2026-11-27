@@ -268,7 +268,7 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Create a new immutable Value version for a Config Item in this environment */
+        /** Create a new immutable Value version for a Config Item in this environment: a value, or the seed of one-time codes (otpauth, capability values.totp, ADR-0061), never both. A seed's use is its code: no retrieval delivers it. A value is refused where a seed is (delete it first), and a seed for an item the Contract marks not sensitive, both with VALIDATION_FAILED. */
         put: operations["setValue"];
         post?: never;
         /** Remove the Config Item's value from this environment (versions retained per audit rules) */
@@ -287,7 +287,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Begin a dual-phase rotation (capability values.rotation, ADR-0027): write a new primary version and keep the prior value retrievable alongside it for a bounded grace window, so running consumers migrate without an outage. Reads resolve the primary; the retiring value is exposed only through explicit disclosure and capability exercise. Rejected with ROTATION_IN_PROGRESS if one is already active. */
+        /** Begin a dual-phase rotation (capability values.rotation, ADR-0027): write a new primary version and keep the prior value retrievable alongside it for a bounded grace window, so running consumers migrate without an outage. Reads resolve the primary; the retiring value is exposed only through explicit disclosure and capability exercise. Rejected with ROTATION_IN_PROGRESS if one is already active. A seed of one-time codes rotates to another seed (otpauth, capability values.totp): until the rotation ends an exercise gives the codes of both. A value never rotates to a seed, nor a seed to a value. */
         post: operations["beginRotation"];
         delete?: never;
         options?: never;
@@ -355,7 +355,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Explicit Secret disclosure (capability secrets.requested-disclosure). The request declares its items or an intentional all-authorized scope; one audit event enumerates exactly what was returned. Responses are never cacheable. ${NAME} references inside disclosed Secrets are expanded server-side (capability values.references) from other Secrets disclosed in the same call and — only when the caller also holds config.value.read — from the environment's non-sensitive values, each such expansion audited; unauthorized or unknown references stay literal. An optional purpose (capability secrets.disclosure-purpose) is recorded in the disclosure's audit events and changes nothing else. */
+        /** Explicit Secret disclosure (capability secrets.requested-disclosure). The request declares its items or an intentional all-authorized scope; one audit event enumerates exactly what was returned. Responses are never cacheable. ${NAME} references inside disclosed Secrets are expanded server-side (capability values.references) from other Secrets disclosed in the same call and — only when the caller also holds config.value.read — from the environment's non-sensitive values, each such expansion audited; unauthorized or unknown references stay literal. An optional purpose (capability secrets.disclosure-purpose) is recorded in the disclosure's audit events and changes nothing else. A seed of one-time codes is disclosed only to a request that names its item and says totpSeeds (capability values.totp): otherwise it is withheld, and the all-authorized scope leaves it out. */
         post: operations["discloseSecrets"];
         delete?: never;
         options?: never;
@@ -370,10 +370,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Capabilities for this environment. Brokers see their own; callers with policy.read see all. */
+        /** List Capabilities for this environment. Brokers see their own (issued for them or by them); callers with policy.read see all; an identity holding capability.issue here sees what it issued. */
         get: operations["listCapabilities"];
         put?: never;
-        /** Issue a Capability (capability capabilities.broker, ADR-0022). Broker identities only. Issuance narrows potential future use and never expands the Agent's Grants; the capability secret is returned exactly once. Responses are never cacheable. */
+        /** Issue a Capability (capability capabilities.broker, ADR-0022). A Broker identity issues one for itself. With capability.issue on the Environment (capability capabilities.delegate, ADR-0060), a service, workload, ci, or broker identity issues one for the Broker it names in brokerIdentityId: only that Broker can exercise it, the issuer cannot. Anyone else gets RESOURCE_NOT_FOUND. Issuance narrows potential future use and never expands the Agent's Grants; the capability secret is returned exactly once. Responses are never cacheable. */
         post: operations["issueCapability"];
         delete?: never;
         options?: never;
@@ -391,7 +391,7 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** Revoke a Capability. The issuing Broker may revoke its own; callers with policy.manage may revoke any. Takes effect on the next exercise. */
+        /** Revoke a Capability. Its Broker and the identity that issued it may revoke it; callers with policy.manage may revoke any. Takes effect on the next exercise. */
         delete: operations["revokeCapability"];
         options?: never;
         head?: never;
@@ -407,8 +407,202 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Exercise a Capability (ADR-0022). Requires the issuing Broker's bearer plus the capability secret; the Agent's secret.use is evaluated against current state (including Tailnet Requirements on this request), current Value versions are resolved, and the exercise is audited before decryption. ${NAME} references inside exercised material are expanded strictly (ADR-0026): referenced Secrets must be named in the Capability, non-sensitive references require the Agent's config.value.read (audited), and any unresolvable reference denies the exercise (reason unresolved-reference) rather than injecting literal ${NAME} upstream — $${NAME} escapes. Responses are never cacheable and go to the Broker only. */
+        /**
+         * Exercise a Capability (ADR-0022). Requires the bearer of the Broker it was issued for (an exercise-only credential too, ADR-0060) plus the capability secret; the Agent's secret.use is evaluated against current state (including Tailnet Requirements on this request), current Value versions are resolved, and the exercise is audited before decryption. ${NAME} references inside exercised material are expanded strictly (ADR-0026): referenced Secrets must be named in the Capability, non-sensitive references require the Agent's config.value.read (audited), and any unresolvable reference denies the exercise (reason unresolved-reference) rather than injecting literal ${NAME} upstream — $${NAME} escapes. Responses are never cacheable and go to the Broker only.
+         *     An OAuth connection (capability oauth.connections, ADR-0062) gives its access token, refreshed first when it has ended, ends within a minute, or ends before minValiditySeconds. When there is none now the exercise is refused with RATE_LIMITED (429, Retry-After), reason connection-unavailable and retryAfterSeconds; when a person has to act, with PERMISSION_DENIED, reason connection-needs-reconnect, connection-not-connected, connection-revoked or connection-paused; when the connection's own hosts do not name the destination, with PERMISSION_DENIED, reason destination-mismatch. Neither uses up anything.
+         */
         post: operations["exerciseCapability"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organizations/{org}/projects/{project}/environments/{environment}/oauth-connections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The environment's own OAuth connections (capability oauth.connections, ADR-0062), without the ones it inherits. Needs config.metadata.read. No secret and no token, nor anything derived from one. */
+        get: operations["listOAuthConnections"];
+        put?: never;
+        /** Make an OAuth connection, not connected yet. Needs config.value.write; one to a person's account (authorization_code) is made by a person (PERMISSION_DENIED, reason person-required). Its endpoints are pinned: the provider's metadata is read now and never again, and nothing but these endpoints is ever sent the client secret or a token. They are all on the host that was given, or on hosts the request names (VALIDATION_FAILED, reason endpoint-hosts, with the others in details.endpointHosts). The item has no value in this environment (VERSION_CONFLICT otherwise) and is sensitive. */
+        post: operations["createOAuthConnection"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/discovery": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** What a connection to this provider would pin, the hosts its endpoints are on (named or not), and the redirect URI to register there, without making one. Needs config.value.write. */
+        post: operations["discoverOAuthProvider"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One of the environment's own OAuth connections. Needs config.metadata.read. An item is deleted as any item is (deleteValue), which forgets its tokens without revoking them: disconnect it first for that. One a person has connected is deleted by a person (PERMISSION_DENIED, reason person-required). */
+        get: operations["getOAuthConnection"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Change an OAuth connection. Needs config.value.write; its provider, client ID, scopes and hosts are changed by a person (PERMISSION_DENIED, reason person-required). Its provider and client ID can change only while it holds no tokens (VALIDATION_FAILED, reason connected: disconnect it first), and need the client secret again. A new client secret or new hosts leave it connected; new scopes are asked for at the next connection. Paused, it is neither used nor refreshed, and its tokens stay. */
+        patch: operations["updateOAuthConnection"];
+        trace?: never;
+    };
+    "/organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}/authorizations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Begin connecting an OAuth connection: the authorization endpoint's URL to send the browser to, with a state, a nonce and a PKCE challenge (S256) bound to this person and this session, good for ten minutes and once. A person in their dashboard session only (PERMISSION_DENIED, reason browser-session-required), with config.value.write. */
+        post: operations["startOAuthAuthorization"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}/authorizations/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Connect with what the provider sent the browser back with. The state is taken, once, by the person and the session that began it (RESOURCE_NOT_FOUND for anyone else, EXPIRED after ten minutes), and then the redirect URI, the issuer (RFC 9207), the ID token and the account are checked: another account than the one before is refused unless the change was confirmed when it was begun. */
+        post: operations["completeOAuthAuthorization"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Refresh an OAuth connection's access token now, or get the first one of a client's own connection. Needs config.value.write. The answer says whether there is a new one, never the token. */
+        post: operations["refreshOAuthConnection"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}/disconnect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Disconnect an OAuth connection: its tokens revoked at the provider where it has an endpoint for that (RFC 7009), unless revokeAtProvider is false, and forgotten here whatever it answers. Needs config.value.write; also while the Organization is frozen. Many providers revoke the whole grant of that client for that account, other connections' tokens included. */
+        post: operations["disconnectOAuthConnection"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organizations/{org}/projects/{project}/environments/{environment}/entry-links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The environment's entry links (capability values.entry-links, ADR-0063), newest first, at most 200, kept until a day after they expire. A person holding config.value.write sees all of them; a machine identity, and a person without it, see what they asked for. Never a link's address, and nothing of a value. */
+        get: operations["listEntryLinks"];
+        put?: never;
+        /** Make a link a person enters one Secret's value with, once, on Varlatch's own page. A service, workload, ci or broker identity needs entry-link.create here (entry-link.create-open when restrictedTo is anyone), which no built-in role holds; a person needs config.value.write. Replacing a value needs config.value.write of either. Whoever makes the link gets no value by it, and their right is decided again when the value is entered. The item must have no value here, inherited ones included (VERSION_CONFLICT otherwise), unless replace; it must be sensitive, and no OAuth connection (VALIDATION_FAILED, reason not-sensitive or oauth-connection), and one the active Contract names when the caller has no config.value.write (not-in-contract). Under passkey-verification's enforce a link open to anyone is refused (PERMISSION_DENIED, reason passkey-verification). RATE_LIMITED beyond 100 pending links, or 300 an hour, of one identity. The link ends with the credential of this request: when a machine's is revoked or its identity retired, or a service credential expires (the link's expiresAt is never later), or an OIDC binding of the identity is revoked after an exchanged one was issued (its own expiry ends no link); when a person revokes it, or another browser session, from elsewhere, or is no member any more (signing out ends no link). PERMISSION_DENIED, reason credential-ended, for an exchanged credential whose identity's binding was revoked already. The address is in this answer only; it is never cacheable, and an Idempotency-Key is not read. */
+        post: operations["createEntryLink"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organizations/{org}/projects/{project}/environments/{environment}/entry-links/{entryLink}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One entry link, as listEntryLinks shows it: its status says whether the value was entered. */
+        get: operations["getEntryLink"];
+        put?: never;
+        post?: never;
+        /** Cancel a pending entry link: who asked for it, with or without its right still, or a person holding config.value.write. Works while the Organization is frozen. A link that has ended is RESOURCE_NOT_FOUND. */
+        delete: operations["cancelEntryLink"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/entry-links/lookup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** What an entry link's page shows before a value is entered. The token in the body is what is asked for; a link made for a member, or for one person, also needs that person's bearer credential, and without one answers signInRequired and no names. Nothing is used up and nothing recorded, however often it is asked. RESOURCE_NOT_FOUND for a token there is no link of; CONSUMED (410) after the value was entered, EXPIRED (410) once expired or cancelled (details.status), with no word on whether it was cancelled or ended with its credential; PERMISSION_DENIED for another person (reason not-for-you), or when whoever made the link may no longer (requester-not-allowed). RATE_LIMITED for an unknown token after 20 of them from one address in ten minutes; a link that there is is answered all the same. Never cacheable. */
+        post: operations["lookupEntryLink"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/entry-links/submit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Enter the value of an entry link, once. Authenticated as lookupEntryLink, with the same refusals, and the passkey-verification checkpoint of a value write for a signed-in person. One request of several at once enters it. Refused (STATE_CHANGED), and the link cancelled, when the item's value changed since the link was made. The credential that made the link is looked at in the job that writes the value. A refusal does not use the link up otherwise: a value that holds a ${NAME} reference is refused (VALIDATION_FAILED, reason reference). The answer holds nothing of the value. Never cacheable. */
+        post: operations["submitEntryLink"];
         delete?: never;
         options?: never;
         head?: never;
@@ -822,7 +1016,7 @@ export interface paths {
         /** List a machine identity's active OIDC bindings */
         get: operations["listOidcBindings"];
         put?: never;
-        /** Bind an external OIDC issuer + audience + subject (and optional exact-match claims) to a machine identity (capability auth.oidc). A binding is an Authentication Method: exchanging a matching verified token establishes identity only — authority remains the identity's Grants, evaluated per request. Subject matches exactly, or by prefix when it ends with '*'. */
+        /** Bind an external OIDC issuer + audience + subject (and optional exact-match claims) to a machine identity (capability auth.oidc). A binding is an Authentication Method: exchanging a matching verified token establishes identity only — authority remains the identity's Grants, evaluated per request. Subject matches exactly, or by prefix when it ends with '*'. exerciseOnly, runIdClaim, and singleExchange limit what its exchanges give (capability auth.oidc.limits, ADR-0060); an identity's live bindings for one issuer are either all limited or all unlimited, and a token that matches several limited bindings gets the limits of all of them. */
         post: operations["createOidcBinding"];
         delete?: never;
         options?: never;
@@ -2579,6 +2773,7 @@ export interface components {
             previousVersionId?: string | null;
             /** Format: date-time */
             createdAt: string;
+            totp?: components["schemas"]["OneTimeCode"];
         };
         EffectiveConfigurationItem: {
             name: string;
@@ -2592,6 +2787,223 @@ export interface components {
             rawValue?: string;
             /** @description True while a dual-phase rotation (ADR-0027) is active for this item. Metadata only — the retiring plaintext is exposed solely through explicit disclosure and capability exercise. */
             rotating?: boolean;
+            totp?: components["schemas"]["OneTimeCode"];
+            oauth?: components["schemas"]["OAuthItem"];
+        };
+        /** @description Present when the item is an OAuth connection (capability oauth.connections, ADR-0062). Such an item is always sensitive and has no value that is delivered: exercising a Capability that names it gives its access token. */
+        OAuthItem: {
+            preset: string;
+            grant: components["schemas"]["OAuthGrant"];
+            status: components["schemas"]["OAuthStatus"];
+            paused: boolean;
+            /** @description Whose account it is */
+            account?: string;
+        };
+        /**
+         * @description authorization_code: a person consents, in the browser. client_credentials: the client's own access, nobody's account.
+         * @enum {string}
+         */
+        OAuthGrant: "authorization_code" | "client_credentials";
+        /**
+         * @description not_connected: nobody connected it yet. connected: it has tokens. refreshing: a refresh is in progress. failing: the last refresh failed for now, and is tried again; an access token that still lasts is used. needs_reconnect: the provider refuses its refresh token (or there is none), and a person has to connect it again. revoked: it was disconnected here.
+         * @enum {string}
+         */
+        OAuthStatus: "not_connected" | "connected" | "refreshing" | "failing" | "needs_reconnect" | "revoked";
+        /** @description A provider: a preset (google; microsoft with the tenant's ID), or generic with an issuer, whose metadata is read (OpenID Connect Discovery, RFC 8414), or with its endpoints. Every URL is https. */
+        OAuthProviderInput: {
+            /** @enum {string} */
+            preset: "google" | "microsoft" | "generic";
+            /** @description microsoft only: the tenant's ID (a UUID). common, organizations and consumers are refused. */
+            tenant?: string;
+            issuer?: string;
+            authorizationEndpoint?: string;
+            tokenEndpoint?: string;
+            revocationEndpoint?: string;
+            /** @description Asked once at each connection, with the access token, for whose account it is (sub or id). */
+            userinfoEndpoint?: string;
+            /** @description generic, authorization_code only: the hosts the provider's addresses may be on beside the issuer's (or, with its endpoints given, the token endpoint's), each with its port when that is not 443. The ones they are on are in the redirect URI. */
+            endpointHosts?: string[];
+            tokenEndpointAuthMethod?: components["schemas"]["OAuthAuthMethod"];
+            /** @description More parameters of the authorization request, at most 10; none of the request's own. */
+            authorizationParams?: {
+                [key: string]: string;
+            };
+            /** @description How long an access token lasts where the provider does not say. */
+            accessTokenLifetimeSeconds?: number;
+            /** @description After how many days without use the provider drops a refresh token: Varlatch then refreshes after two thirds of them, used or not. */
+            refreshTokenIdleDays?: number;
+        };
+        /** @enum {string} */
+        OAuthAuthMethod: "client_secret_basic" | "client_secret_post" | "none";
+        /** @description A provider as a connection pinned it. */
+        OAuthProvider: {
+            preset: string;
+            /** @description The hosts of every address of the provider's here, the token endpoint's first: the client secret, codes and tokens are sent to no other, and neither is the browser. */
+            endpointHosts: string[];
+            tenant?: string;
+            issuer?: string;
+            authorizationEndpoint?: string;
+            tokenEndpoint: string;
+            revocationEndpoint?: string;
+            userinfoEndpoint?: string;
+            jwksUri?: string;
+            tokenEndpointAuthMethod: components["schemas"]["OAuthAuthMethod"];
+            authorizationParams?: {
+                [key: string]: string;
+            };
+            accessTokenLifetimeSeconds?: number;
+            refreshTokenIdleDays?: number;
+        };
+        OAuthConnectionInput: {
+            item: string;
+            provider: components["schemas"]["OAuthProviderInput"];
+            grant?: components["schemas"]["OAuthGrant"];
+            clientId: string;
+            /** @description Stored sealed. No operation answers it, to anyone. */
+            clientSecret?: string;
+            /** @description What to ask for; a preset adds what it needs to know the account and to get a refresh token. */
+            scopes?: string[];
+            /** @description The destinations its access token may go to, as a Capability's: a Capability that names the connection may name only these, and an exercise for another is refused. None, whatever the Capability names. */
+            hosts?: string[];
+        };
+        OAuthConnectionChange: {
+            provider?: components["schemas"]["OAuthProviderInput"];
+            clientId?: string;
+            clientSecret?: string;
+            scopes?: string[];
+            hosts?: string[];
+            paused?: boolean;
+            /** @description Rejects a stale change with VERSION_CONFLICT. */
+            expectedVersionId?: string;
+        };
+        OAuthDiscoveryInput: {
+            provider: components["schemas"]["OAuthProviderInput"];
+            grant?: components["schemas"]["OAuthGrant"];
+        };
+        OAuthDiscovery: {
+            provider: components["schemas"]["OAuthProvider"];
+            /** @description Of an authorization_code connection, when this installation has a public URL. */
+            redirectUri?: string;
+        };
+        OAuthAccount: {
+            /** @description The provider's own ID of it. */
+            id: string;
+            /** @description What the provider calls it: an email address, a name. */
+            label: string;
+        };
+        /** @description An OAuth connection. No secret and no token, nor anything derived from one. */
+        OAuthConnection: {
+            item: string;
+            environmentId: string;
+            /** @description Changes with its parameters and its client secret */
+            versionId: string;
+            provider: components["schemas"]["OAuthProvider"];
+            grant: components["schemas"]["OAuthGrant"];
+            clientId: string;
+            hasClientSecret: boolean;
+            scopes: string[];
+            hosts: string[];
+            status: components["schemas"]["OAuthStatus"];
+            /** @description Why it is failing or needs to be connected again: a word of Varlatch's (unreachable, timeout, refresh-answer-lost, no-refresh-token, refused-by-provider) or the provider's error code (invalid_client). Never text of the provider's. */
+            reason: string | null;
+            paused: boolean;
+            /** @description Whose account it is or, disconnected or after a change of its provider or client, was. Null when the provider does not say. */
+            account: components["schemas"]["OAuthAccount"] | null;
+            /** @description As the provider named them; null when it did not. */
+            grantedScopes: string[] | null;
+            /** @description The scopes asked for that the provider did not grant, as far as it says. */
+            missingScopes: string[];
+            hasRefreshToken: boolean;
+            /** Format: date-time */
+            accessTokenExpiresAt: string | null;
+            /** Format: date-time */
+            refreshTokenExpiresAt: string | null;
+            /** @description The person who connected it. */
+            connectedBy: string | null;
+            /** Format: date-time */
+            connectedAt: string | null;
+            /** Format: date-time */
+            refreshedAt: string | null;
+            /**
+             * Format: date-time
+             * @description When a failed refresh is tried again
+             */
+            retryAt: string | null;
+            /** @description Who wrote its parameters as they are now. */
+            createdBy: string | null;
+            /** Format: date-time */
+            createdAt: string;
+            /** @description To register at the provider. Present for authorization_code when this installation has a public URL. */
+            redirectUri?: string;
+        };
+        OAuthAuthorizationInput: {
+            /** @description Another account than the one it was connected to may connect it. */
+            confirmAccountChange?: boolean;
+            /** @description The version the person was shown. Another one is refused with VERSION_CONFLICT. */
+            expectedVersionId?: string;
+        };
+        OAuthAuthorization: {
+            authorizationUrl: string;
+            state: string;
+            redirectUri: string;
+            /** Format: date-time */
+            expiresAt: string;
+        };
+        OAuthAuthorizationAnswer: {
+            state: string;
+            /** @description The address the browser came back to, without its query. */
+            redirectUri: string;
+            code?: string;
+            error?: string;
+            iss?: string;
+        };
+        OAuthAuthorizationOutcome: {
+            /**
+             * @description refused: the answer does not fit what was asked for, and nothing was kept. failed: the provider refused, or did not answer.
+             * @enum {string}
+             */
+            outcome: "connected" | "refused" | "failed";
+            reason?: string;
+            message?: string;
+            account?: components["schemas"]["OAuthAccount"];
+            previousAccount?: components["schemas"]["OAuthAccount"];
+            connection?: components["schemas"]["OAuthConnection"];
+        };
+        OAuthRefresh: {
+            refreshed: boolean;
+            /** @description Why not. */
+            reason?: string;
+            retryAfterSeconds?: number;
+            connection: components["schemas"]["OAuthConnection"];
+        };
+        OAuthDisconnectInput: {
+            /** @default true */
+            revokeAtProvider: boolean;
+        };
+        OAuthDisconnection: {
+            /**
+             * @description What became of the tokens at the provider; here they are forgotten in every case. left: not asked.
+             * @enum {string}
+             */
+            atProvider: "revoked" | "not-supported" | "failed" | "nothing-to-revoke" | "left";
+            /** @description Of failed. */
+            reason?: string;
+            connection: components["schemas"]["OAuthConnection"];
+        };
+        /** @description The seed of one-time codes (RFC 6238) as an otpauth://totp/ URI, what an authenticator's QR code holds: a base32 secret of 80 bits or more, SHA1 (the default), SHA256, or SHA512, 6 (the default) or 8 digits, a period of 30 (the default) or 60 seconds. It goes where a value would (capability values.totp): a server without the capability refuses the request for want of a value. Refused with VALIDATION_FAILED, which never repeats any of it. */
+        OtpauthURI: string;
+        /** @description Present when the item holds the seed of one-time codes (capability values.totp, ADR-0061): what may be read of it. Such an item is always sensitive and its value is never delivered: exercising a Capability that names it gives the code. */
+        OneTimeCode: {
+            /** @description Who the code is for; may be empty. */
+            issuer: string;
+            /** @description The account there; may be empty. */
+            account: string;
+            /** @enum {string} */
+            algorithm: "SHA1" | "SHA256" | "SHA512";
+            /** @enum {integer} */
+            digits: 6 | 8;
+            /** @enum {integer} */
+            periodSeconds: 30 | 60;
         };
         /** @description Rotation state after a begin/complete operation (no plaintext). */
         ValueRotation: {
@@ -2651,10 +3063,13 @@ export interface components {
         CallerView: {
             withheld: {
                 name: string;
+                /**
+                 * @description one-time-code (strict retrieval): the item holds the seed of one-time codes, which is delivered to nobody; its code is used through a Capability (requires secret.use).
+                 * @enum {string}
+                 */
+                reason: "permission" | "requirement" | "one-time-code" | "oauth-connection";
                 /** @enum {string} */
-                reason: "permission" | "requirement";
-                /** @enum {string} */
-                requires: "config.value.read" | "secret.reveal";
+                requires: "config.value.read" | "secret.reveal" | "secret.use";
             }[];
             unexpanded: {
                 name: string;
@@ -2698,6 +3113,8 @@ export interface components {
                     value: string;
                 };
                 rotating?: boolean;
+                totp?: components["schemas"]["OneTimeCode"];
+                oauth?: components["schemas"]["OAuthItem"];
             }[];
             callerView: components["schemas"]["CallerView"];
             validation: components["schemas"]["ValidationReport"];
@@ -3118,6 +3535,12 @@ export interface components {
             revokedAt: string | null;
             /** Format: date-time */
             createdAt: string;
+            /** @description Who issued it, when that is not its Broker (ADR-0060). */
+            issuedByIdentityId?: string;
+            /** @description Present (true) for one that may be exercised once. */
+            singleUse?: boolean;
+            /** @description With singleUse, whether it was. */
+            used?: boolean;
         };
         /** @description Credential metadata (ADR-0034 §2). Never includes token material — tokens are stored hashed and unrecoverable (ADR-0007). */
         CredentialMetadata: {
@@ -3138,6 +3561,10 @@ export interface components {
             lastUsedAt: string | null;
             /** @description A short, readable summary of the client that requested a browser session or CLI login credential, such as "Firefox on Linux" or "varlatch CLI 0.14.0 on Linux". Only this summary is stored, never the User-Agent itself. Null when the client was not recognized, for every other kind, and for credentials issued before 0.14.0; absent from older servers. */
             client?: string | null;
+            /** @description Present (true) for an exercise-only credential (ADR-0060). */
+            exerciseOnly?: boolean;
+            /** @description The run whose Capabilities it exercises. Present when it is tied to one. */
+            runId?: string;
         };
         /**
          * @description never-used: no successful authentication yet. idle: last used more than idleDays days ago. no-expiry: it never expires.
@@ -3286,6 +3713,10 @@ export interface components {
              * @enum {string}
              */
             preflight: "ok" | "agent-lacks-secret-use";
+            /** @description The Broker it was issued for. Present when the request named one. */
+            brokerIdentityId?: string;
+            /** @description Present (true) for one that may be exercised once. */
+            singleUse?: boolean;
             /** @description Present when the request carried a precondition that matched. Per item: whether it is a stored Secret, and whether the Agent holds secret.use here with the Requirements evaluable at issuance. It makes no claim that exercise can resolve the item's references for the Agent: every exercise evaluates authorization again and resolves every reference or denies. */
             preflightItems?: {
                 name: string;
@@ -3299,11 +3730,45 @@ export interface components {
             items: {
                 name: string;
                 versionId: string;
+                /** @description The value or, with kind totp, the one-time code or, with kind oauth, the access token (to send as a Bearer token). */
                 value: string;
-                /** @description The previous value during a dual-phase rotation (ADR-0027), injected as-is so the consumer accepts either during the window. Absent when the item is stable. */
+                /**
+                 * @description Present for a one-time code (capability values.totp) and for an OAuth connection's access token (capability oauth.connections).
+                 * @enum {string}
+                 */
+                kind?: "totp" | "oauth";
+                /**
+                 * Format: date-time
+                 * @description Present while the code's period has not started, as the server's clock has it.
+                 */
+                notBefore?: string;
+                /** @description Present with notBefore. How long to wait from this answer. */
+                startsInSeconds?: number;
+                /**
+                 * Format: date-time
+                 * @description Of a code: when its period ends. Of an access token: when it expires, absent when the provider does not say. As the server's clock has it.
+                 */
+                expiresAt?: string;
+                /** @description Present with expiresAt: whole seconds from this answer until then. */
+                expiresInSeconds?: number;
+                /** @description The previous value during a dual-phase rotation (ADR-0027), injected as-is so the consumer accepts either during the window; of a one-time code, the previous seed's code for the same conditions. Absent when the item is stable. */
                 retiring?: {
                     versionId: string;
                     value: string;
+                    /**
+                     * Format: date-time
+                     * @description Present while the code's period has not started, as the server's clock has it.
+                     */
+                    notBefore?: string;
+                    /** @description Present with notBefore. How long to wait from this answer. */
+                    startsInSeconds?: number;
+                    /**
+                     * Format: date-time
+                     * @description Of a code. When its period ends
+                     */
+                    expiresAt?: string;
+                    /** @description Of a code: whole seconds from this answer until its period ends. */
+                    expiresInSeconds?: number;
                 };
             }[];
             withheld: string[];
@@ -3312,8 +3777,97 @@ export interface components {
                 [key: string]: string[];
             };
         };
+        /**
+         * @description pending until the value is entered, the link expires, or it is cancelled (reason says by what).
+         * @enum {string}
+         */
+        EntryLinkStatus: "pending" | "entered" | "expired" | "cancelled";
+        EntryLink: {
+            id: string;
+            environmentId: string;
+            item: string;
+            /**
+             * @description A value, or the seed of a one-time code (capability values.totp).
+             * @enum {string}
+             */
+            accepts: "value" | "otpauth";
+            /** @description It replaces the value there was when it was made. */
+            replace: boolean;
+            /**
+             * @description Who may enter the value: whoever holds the link, a signed-in member of the Organization, or the one person in identityId.
+             * @enum {string}
+             */
+            restrictedTo: "anyone" | "member" | "identity";
+            /** @description Present when restrictedTo is identity. */
+            identityId?: string;
+            description: string | null;
+            requestedByIdentityId: string;
+            status: components["schemas"]["EntryLinkStatus"];
+            /**
+             * @description Present when the status is cancelled: somebody cancelled it, the item's value changed before a value was entered, or the link ended with the credential that made it (createEntryLink).
+             * @enum {string}
+             */
+            reason?: "cancelled" | "value-changed" | "credential-ended";
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            expiresAt: string;
+            /**
+             * Format: date-time
+             * @description When the value was entered, or the link cancelled. Null also for a link that ended with its credential at a time not known.
+             */
+            endedAt: string | null;
+        };
+        EntryLinkInput: {
+            item: string;
+            /**
+             * @description value when absent.
+             * @enum {string}
+             */
+            accepts?: "value" | "otpauth";
+            /** @description Replace the value there is now. Entering is refused when it is another one by then. */
+            replace?: boolean;
+            /**
+             * @description member when absent.
+             * @enum {string}
+             */
+            restrictedTo?: "anyone" | "member" | "identity";
+            /** @description With restrictedTo identity, the person, a member of the Organization. */
+            identityId?: string;
+            /** @description A few words for the person, shown on the page as the caller's own: plain text in one line, with no link, address or markup (VALIDATION_FAILED otherwise). In the audit log. */
+            description?: string;
+            /** @description 900 when absent. */
+            ttlSeconds?: number;
+        };
+        CreatedEntryLink: {
+            link: components["schemas"]["EntryLink"];
+            /** @description The page's address, on this installation's public URL. What follows the # is the link's secret, which a browser sends to no server and to no proxy; Varlatch keeps its hash only. */
+            url: string;
+        };
+        EntryLinkView: {
+            /** @enum {string} */
+            restrictedTo: "anyone" | "member" | "identity";
+            /** @description Whether a person has to sign in first; then nothing below is there. */
+            signInRequired: boolean;
+            organization?: string;
+            project?: string;
+            environment?: string;
+            item?: string;
+            /** @enum {string} */
+            accepts?: "value" | "otpauth";
+            replace?: boolean;
+            description?: string | null;
+            requestedBy?: {
+                name: string;
+                /** @enum {string} */
+                kind: "human" | "service" | "workload" | "ci" | "broker" | "agent";
+            };
+            /** Format: date-time */
+            expiresAt?: string;
+            expiresInSeconds?: number;
+        };
         /** @enum {string} */
-        Action: "organization.read" | "organization.manage" | "project.read" | "project.manage" | "environment.read" | "environment.manage" | "config.metadata.read" | "config.value.read" | "config.value.write" | "secret.reveal" | "secret.use" | "contract.read" | "contract.submit" | "contract.activate" | "identity.read" | "identity.manage" | "policy.read" | "policy.manage" | "audit.read" | "config.sync.manage";
+        Action: "organization.read" | "organization.manage" | "project.read" | "project.manage" | "environment.read" | "environment.manage" | "config.metadata.read" | "config.value.read" | "config.value.write" | "secret.reveal" | "secret.use" | "capability.issue" | "entry-link.create" | "entry-link.create-open" | "contract.read" | "contract.submit" | "contract.activate" | "identity.read" | "identity.manage" | "policy.read" | "policy.manage" | "audit.read" | "config.sync.manage";
         GrantScope: {
             /** @enum {string} */
             kind: "organization";
@@ -3956,6 +4510,12 @@ export interface components {
             } | null;
             /** Format: date-time */
             createdAt: string;
+            /** @description Present (true) when the binding has this limit (ADR-0060). */
+            exerciseOnly?: boolean;
+            /** @description Present when the binding has this limit. */
+            runIdClaim?: string;
+            /** @description Present (true) when the binding has this limit. */
+            singleExchange?: boolean;
         };
         IssuedOidcCredential: {
             id: string;
@@ -3964,6 +4524,10 @@ export interface components {
             /** Format: date-time */
             expiresAt: string;
             identityId: string;
+            /** @description Present (true) for an exercise-only credential (ADR-0060). */
+            exerciseOnly?: boolean;
+            /** @description The run whose Capabilities it exercises. Present when its binding names a claim. */
+            runId?: string;
         };
         Webhook: {
             id: string;
@@ -4337,6 +4901,8 @@ export interface components {
         environment: string;
         /** @description Config Item name */
         item: string;
+        /** @description Entry link ID */
+        entryLink: string;
         limit: number;
         /** @description Opaque cursor from a previous response; never parse. */
         cursor: string;
@@ -4346,7 +4912,7 @@ export interface components {
         auditEventType: string;
         /** @description Only events whose actor is this identity ID (capability audit.filters). */
         auditActorIdentityId: string;
-        /** @description varlatch: only Varlatch's own events, those with no actor identity (sync delivery, webhooks, operator commands), except authentication.* events, whose missing actor is an unknown caller (capability audit.attribution). Given with actorIdentityId it is refused with VALIDATION_FAILED. */
+        /** @description varlatch: only Varlatch's own events, those with no actor identity (sync delivery, webhooks, operator commands), except authentication.* events, whose missing actor is an unknown caller, and what somebody did with an entry link open to anyone (capability audit.attribution). Given with actorIdentityId it is refused with VALIDATION_FAILED. */
         auditActor: "varlatch";
         /** @description Only events whose resource names this project ID (capability audit.filters). */
         auditProjectId: string;
@@ -5060,7 +5626,8 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    value: string;
+                    value?: string;
+                    otpauth?: components["schemas"]["OtpauthURI"];
                     /** @description Optimistic concurrency; rejects stale writes with VERSION_CONFLICT. */
                     expectedVersionId?: string;
                 };
@@ -5128,7 +5695,8 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    value: string;
+                    value?: string;
+                    otpauth?: components["schemas"]["OtpauthURI"];
                     /** @description Optimistic concurrency against the current primary. */
                     expectedVersionId?: string;
                     /** @description Overlap window; clamped to [1, 2592000] and defaulted from the contract's per-item rotationGraceSeconds, else 24h. */
@@ -5275,6 +5843,8 @@ export interface operations {
                 "application/json": {
                     items: string[];
                     purpose?: components["schemas"]["DisclosurePurpose"];
+                    /** @description Disclose the seeds of one-time codes among items too (capability values.totp), each as its otpauth:// URI. Refused with a purpose or with the all-authorized scope. */
+                    totpSeeds?: boolean;
                 } | {
                     /** @enum {string} */
                     scope: "all-authorized-secrets";
@@ -5299,6 +5869,7 @@ export interface operations {
                                 versionId: string;
                                 value: string;
                             };
+                            totp?: components["schemas"]["OneTimeCode"];
                         }[];
                         withheld: string[];
                         /** @description Present when the caller also holds config.metadata.read. */
@@ -5364,13 +5935,18 @@ export interface operations {
                 "application/json": {
                     agentIdentityId: string;
                     items: string[];
+                    /** @description Hosts: host, host:port, *.suffix, an IP address; no port is 443. Or, for a Broker that types (capability capabilities.destination-kinds, ADR-0064), pages, web:<http or https>://<host or *.suffix>[:port][/path], the path a prefix of whole segments (an http page is allowed when it is written out, and not encrypted: whoever is on the network reads what is typed there), and desktop applications on the Broker's machine, app:<name>@<the Broker's identity ID>. Not hosts and the others in one Capability (VALIDATION_FAILED, reason mixed-destinations), nor an application of another machine (app-machine). A server without the capability refuses the last two kinds. */
                     destinations: string[];
-                    /** @description Required (capability capabilities.targets). For every item, 1 to 4 substitution targets: header:<name> (never a transport-owned header such as Host, Content-Length, Transfer-Encoding, Content-Type, or connection and proxy headers), query:<name>, json:<RFC 6901 pointer>, or form:<name>. Recorded immutably on the Capability; the Broker substitutes a Placeholder only at its targets. */
+                    /** @description Required (capability capabilities.targets). For every item, 1 to 4 substitution targets: header:<name> (never a transport-owned header such as Host, Content-Length, Transfer-Encoding, Content-Type, or connection and proxy headers), query:<name>, json:<RFC 6901 pointer>, or form:<name>, in a request; or (capability capabilities.target-kinds, ADR-0064) pipe:<RFC 6901 pointer>, in a JSON document handed to a process over a pipe, or field:<name>, typed into a field (both without ; and = and characters that do not show). A field goes with pages and applications, a pipe with hosts and applications, the others with hosts: a target no destination takes is refused (VALIDATION_FAILED, reason target-without-destination). A server without the capability refuses pipe and field. Recorded immutably on the Capability; the Broker substitutes a Placeholder only at its targets. */
                     targets: {
                         [key: string]: string[];
                     };
                     ttlSeconds: number;
                     runId?: string;
+                    /** @description The Broker the Capability is issued for (capability capabilities.delegate): a broker identity of the Organization that is not retired. Naming any but the caller itself needs capability.issue. Required when the caller is not a Broker. While the Capability lives, every exercise also needs its issuer to be live and to hold capability.issue here. */
+                    brokerIdentityId?: string;
+                    /** @description Exercised once (capability capabilities.single-use). A granted exercise uses it up, even when its response is lost or the server fails after recording it; a refused one, or one whose items have no value, does not. A server without the capability ignores this member: check it, or that the answer says singleUse. */
+                    singleUse?: boolean;
                     /** @description Agent-safe strict preflight (capability retrieval.preflight): the state a preflight strict retrieval saw. Issuance compares it in its own snapshot, without decrypting anything, and refuses with STATE_CHANGED (details.categories names only what changed) when it differs. It confers no authority. */
                     precondition?: {
                         projectId: string;
@@ -5442,15 +6018,26 @@ export interface operations {
             content: {
                 "application/json": {
                     capabilitySecret: string;
+                    /** @description Where the values go, as the Broker says: host and port; or (capability capabilities.destination-kinds, ADR-0064) the page, url with topUrl, or the application, app, on the Broker's own machine. The audit log has the page's path, without query, fragment, credentials and path parameters, and the application's name; never a window's title, which is no part of a report. One of the three; a server without the capability refuses the last two for want of host and port. None of the Capability's destinations: PERMISSION_DENIED, reason destination-mismatch, recorded with what was reported. */
                     destination: {
-                        host: string;
-                        port: number;
+                        host?: string;
+                        port?: number;
+                        /** @description The address of the page whose field it is, as the browser has it (a frame's own). Compared by scheme, host, port and path; its query and fragment are not compared nor recorded. One that cannot be read, or could be read two ways, is none of any. */
+                        url?: string;
+                        /** @description The address of the page around it, when that is another one: a destination has to name it too. */
+                        topUrl?: string;
+                        /** @description The application's name, compared exactly, and recorded. Never its window's title. */
+                        app?: string;
                     };
-                    /** @description Each substitution the Broker will make, as an item and one of its recorded targets. Only these items are returned; references inside them still resolve against the other Secrets on the Capability, each dependency audited before it is decrypted. A Capability without targets (issued before they were required) is refused with reason capability-without-targets; a placement the Capability does not hold with placement-not-targeted. */
+                    /** @description Each substitution the Broker will make, as an item and one of its recorded targets. Only these items are returned; references inside them still resolve against the other Secrets on the Capability, each dependency audited before it is decrypted. A Capability without targets (issued before they were required) is refused with reason capability-without-targets; a placement the Capability does not hold with placement-not-targeted, and one whose target is none of the destination's kind with placement-not-for-destination. A single-use Capability exercised before is refused with already-used, and one whose issuer may no longer issue here with issuer-not-allowed. */
                     placements?: {
                         item: string;
                         target: string;
                     }[];
+                    /** @description How long the one-time codes (capability values.totp) and the access tokens (capability oauth.connections) among the items must still be valid. When the current code ends sooner, the next one is answered, with the time it starts (notBefore, startsInSeconds): the caller waits for it, the server does not. When an access token ends sooner, it is refreshed first. More than an item's period, or than the provider's access tokens last, is refused with VALIDATION_FAILED, reason min-validity-too-long, and uses up nothing. Other items are not affected. */
+                    minValiditySeconds?: number;
+                    /** @description Only codes of a later period than any this server has given (capability values.totp): the current period's, else the next one's. Once one of the next period or a later one was given (minValiditySeconds may have skipped the current one), the exercise is refused with RATE_LIMITED (429, Retry-After), reason no-fresh-code and retryAfterSeconds, and uses up nothing. Every code given counts, asked for as fresh or not; one made from a copy of the seed elsewhere is not known here. Other items are not affected. */
+                    fresh?: boolean;
                 };
             };
         };
@@ -5462,6 +6049,496 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CapabilityExercise"];
+                };
+            };
+            429: components["responses"]["RequestWindow"];
+            default: components["responses"]["Error"];
+        };
+    };
+    listOAuthConnections: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+                /** @description Project slug or ID */
+                project: components["parameters"]["project"];
+                /** @description Environment name or ID (names may contain one slash for derived environments) */
+                environment: components["parameters"]["environment"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The connections */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["OAuthConnection"][];
+                        nextCursor: components["schemas"]["NextCursor"];
+                        /** @description What a connection's redirect URI starts with; the token endpoint's host (and port, when it is not 443) follows, and for a generic provider its other endpointHosts, in order, each after a "~". Null when this installation has no public URL over HTTPS (or on a loopback host). */
+                        redirectBase?: string | null;
+                    };
+                };
+            };
+            429: components["responses"]["RequestWindow"];
+            default: components["responses"]["Error"];
+        };
+    };
+    createOAuthConnection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+                /** @description Project slug or ID */
+                project: components["parameters"]["project"];
+                /** @description Environment name or ID (names may contain one slash for derived environments) */
+                environment: components["parameters"]["environment"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OAuthConnectionInput"];
+            };
+        };
+        responses: {
+            /** @description Made */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OAuthConnection"];
+                };
+            };
+            429: components["responses"]["RequestWindow"];
+            default: components["responses"]["Error"];
+        };
+    };
+    discoverOAuthProvider: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+                /** @description Project slug or ID */
+                project: components["parameters"]["project"];
+                /** @description Environment name or ID (names may contain one slash for derived environments) */
+                environment: components["parameters"]["environment"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OAuthDiscoveryInput"];
+            };
+        };
+        responses: {
+            /** @description The provider */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OAuthDiscovery"];
+                };
+            };
+            429: components["responses"]["RequestWindow"];
+            default: components["responses"]["Error"];
+        };
+    };
+    getOAuthConnection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+                /** @description Project slug or ID */
+                project: components["parameters"]["project"];
+                /** @description Environment name or ID (names may contain one slash for derived environments) */
+                environment: components["parameters"]["environment"];
+                /** @description Config Item name */
+                item: components["parameters"]["item"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The connection */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OAuthConnection"];
+                };
+            };
+            429: components["responses"]["RequestWindow"];
+            default: components["responses"]["Error"];
+        };
+    };
+    updateOAuthConnection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+                /** @description Project slug or ID */
+                project: components["parameters"]["project"];
+                /** @description Environment name or ID (names may contain one slash for derived environments) */
+                environment: components["parameters"]["environment"];
+                /** @description Config Item name */
+                item: components["parameters"]["item"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OAuthConnectionChange"];
+            };
+        };
+        responses: {
+            /** @description The connection as it is now */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OAuthConnection"];
+                };
+            };
+            429: components["responses"]["RequestWindow"];
+            default: components["responses"]["Error"];
+        };
+    };
+    startOAuthAuthorization: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+                /** @description Project slug or ID */
+                project: components["parameters"]["project"];
+                /** @description Environment name or ID (names may contain one slash for derived environments) */
+                environment: components["parameters"]["environment"];
+                /** @description Config Item name */
+                item: components["parameters"]["item"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OAuthAuthorizationInput"];
+            };
+        };
+        responses: {
+            /** @description Begun (Cache-Control no-store) */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OAuthAuthorization"];
+                };
+            };
+            429: components["responses"]["RequestWindow"];
+            default: components["responses"]["Error"];
+        };
+    };
+    completeOAuthAuthorization: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+                /** @description Project slug or ID */
+                project: components["parameters"]["project"];
+                /** @description Environment name or ID (names may contain one slash for derived environments) */
+                environment: components["parameters"]["environment"];
+                /** @description Config Item name */
+                item: components["parameters"]["item"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OAuthAuthorizationAnswer"];
+            };
+        };
+        responses: {
+            /** @description Connected, or why not (Cache-Control no-store) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OAuthAuthorizationOutcome"];
+                };
+            };
+            429: components["responses"]["RequestWindow"];
+            default: components["responses"]["Error"];
+        };
+    };
+    refreshOAuthConnection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+                /** @description Project slug or ID */
+                project: components["parameters"]["project"];
+                /** @description Environment name or ID (names may contain one slash for derived environments) */
+                environment: components["parameters"]["environment"];
+                /** @description Config Item name */
+                item: components["parameters"]["item"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description What became of it */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OAuthRefresh"];
+                };
+            };
+            429: components["responses"]["RequestWindow"];
+            default: components["responses"]["Error"];
+        };
+    };
+    disconnectOAuthConnection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+                /** @description Project slug or ID */
+                project: components["parameters"]["project"];
+                /** @description Environment name or ID (names may contain one slash for derived environments) */
+                environment: components["parameters"]["environment"];
+                /** @description Config Item name */
+                item: components["parameters"]["item"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OAuthDisconnectInput"];
+            };
+        };
+        responses: {
+            /** @description What became of it */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OAuthDisconnection"];
+                };
+            };
+            429: components["responses"]["RequestWindow"];
+            default: components["responses"]["Error"];
+        };
+    };
+    listEntryLinks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+                /** @description Project slug or ID */
+                project: components["parameters"]["project"];
+                /** @description Environment name or ID (names may contain one slash for derived environments) */
+                environment: components["parameters"]["environment"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The links */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["EntryLink"][];
+                        nextCursor: components["schemas"]["NextCursor"];
+                    };
+                };
+            };
+            429: components["responses"]["RequestWindow"];
+            default: components["responses"]["Error"];
+        };
+    };
+    createEntryLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+                /** @description Project slug or ID */
+                project: components["parameters"]["project"];
+                /** @description Environment name or ID (names may contain one slash for derived environments) */
+                environment: components["parameters"]["environment"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EntryLinkInput"];
+            };
+        };
+        responses: {
+            /** @description The link, with its address */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreatedEntryLink"];
+                };
+            };
+            429: components["responses"]["RequestWindow"];
+            default: components["responses"]["Error"];
+        };
+    };
+    getEntryLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+                /** @description Project slug or ID */
+                project: components["parameters"]["project"];
+                /** @description Environment name or ID (names may contain one slash for derived environments) */
+                environment: components["parameters"]["environment"];
+                /** @description Entry link ID */
+                entryLink: components["parameters"]["entryLink"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The link */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EntryLink"];
+                };
+            };
+            429: components["responses"]["RequestWindow"];
+            default: components["responses"]["Error"];
+        };
+    };
+    cancelEntryLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+                /** @description Project slug or ID */
+                project: components["parameters"]["project"];
+                /** @description Environment name or ID (names may contain one slash for derived environments) */
+                environment: components["parameters"]["environment"];
+                /** @description Entry link ID */
+                entryLink: components["parameters"]["entryLink"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Cancelled */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            429: components["responses"]["RequestWindow"];
+            default: components["responses"]["Error"];
+        };
+    };
+    lookupEntryLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    token: string;
+                };
+            };
+        };
+        responses: {
+            /** @description What the page shows */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EntryLinkView"];
+                };
+            };
+            429: components["responses"]["RequestWindow"];
+            default: components["responses"]["Error"];
+        };
+    };
+    submitEntryLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    token: string;
+                    /** @description For a link that accepts a value. */
+                    value?: string;
+                    /** @description For a link that accepts the seed of a one-time code, an otpauth://totp/ URI. */
+                    otpauth?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Entered */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @constant */
+                        status: "entered";
+                    };
                 };
             };
             429: components["responses"]["RequestWindow"];
@@ -5492,7 +6569,8 @@ export interface operations {
                         /** @enum {string} */
                         op: "set";
                         item: string;
-                        value: string;
+                        value?: string;
+                        otpauth?: components["schemas"]["OtpauthURI"];
                         expectedVersionId?: string;
                     } | {
                         /** @enum {string} */
@@ -6382,10 +7460,16 @@ export interface operations {
                     issuer: string;
                     audience: string;
                     subject: string;
-                    /** @description Additional token claims that must match exactly. */
+                    /** @description Additional token claims that must match exactly. Names that start with varlatch: are reserved. */
                     claims?: {
                         [key: string]: string;
                     };
+                    /** @description The exchanged credential exercises Capabilities issued for the binding's identity, a Broker, and nothing else: every other operation, reads included, is refused with PERMISSION_DENIED. Turns singleExchange on. */
+                    exerciseOnly?: boolean;
+                    /** @description With exerciseOnly: only Capabilities whose runId equals this claim of the exchanged token. A token without it (a string of 1 to 200 characters) exchanges nothing. */
+                    runIdClaim?: string;
+                    /** @description A token exchanges once within its lifetime, by its issuer and jti, or by the token itself when it has no jti. A token that stays valid for more than a day exchanges nothing. Off by default, always on with exerciseOnly. */
+                    singleExchange?: boolean;
                 };
             };
         };
@@ -8543,7 +9627,7 @@ export interface operations {
                 eventType?: components["parameters"]["auditEventType"];
                 /** @description Only events whose actor is this identity ID (capability audit.filters). */
                 actorIdentityId?: components["parameters"]["auditActorIdentityId"];
-                /** @description varlatch: only Varlatch's own events, those with no actor identity (sync delivery, webhooks, operator commands), except authentication.* events, whose missing actor is an unknown caller (capability audit.attribution). Given with actorIdentityId it is refused with VALIDATION_FAILED. */
+                /** @description varlatch: only Varlatch's own events, those with no actor identity (sync delivery, webhooks, operator commands), except authentication.* events, whose missing actor is an unknown caller, and what somebody did with an entry link open to anyone (capability audit.attribution). Given with actorIdentityId it is refused with VALIDATION_FAILED. */
                 actor?: components["parameters"]["auditActor"];
                 /** @description Only events whose resource names this project ID (capability audit.filters). */
                 projectId?: components["parameters"]["auditProjectId"];
@@ -8594,7 +9678,7 @@ export interface operations {
                 eventType?: components["parameters"]["auditEventType"];
                 /** @description Only events whose actor is this identity ID (capability audit.filters). */
                 actorIdentityId?: components["parameters"]["auditActorIdentityId"];
-                /** @description varlatch: only Varlatch's own events, those with no actor identity (sync delivery, webhooks, operator commands), except authentication.* events, whose missing actor is an unknown caller (capability audit.attribution). Given with actorIdentityId it is refused with VALIDATION_FAILED. */
+                /** @description varlatch: only Varlatch's own events, those with no actor identity (sync delivery, webhooks, operator commands), except authentication.* events, whose missing actor is an unknown caller, and what somebody did with an entry link open to anyone (capability audit.attribution). Given with actorIdentityId it is refused with VALIDATION_FAILED. */
                 actor?: components["parameters"]["auditActor"];
                 /** @description Only events whose resource names this project ID (capability audit.filters). */
                 projectId?: components["parameters"]["auditProjectId"];

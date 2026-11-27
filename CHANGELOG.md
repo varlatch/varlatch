@@ -5,7 +5,174 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
-## Unreleased
+## 0.51.0 (2026-11-27)
+
+New ways for brokers and agents to use a Secret without reading it, on the
+Go server: Capabilities issued for another broker, one-time codes (TOTP)
+from a stored seed, OAuth connections that keep their tokens current,
+one-time entry links through which someone enters a Secret's value, and
+destinations for brokers that type into pages and applications. The
+container image now upgrades the database schema when it starts, when the
+previous release can still open the result. The database goes to schema
+version 7, safe to roll back to 0.50.2.
+
+### API
+
+- **Capabilities issued for another broker, exercise-only credentials, and
+  tokens exchanged once (#421, the Go server only).** Existing calls are
+  unchanged; `/v1/meta` lists `capabilities.delegate`,
+  `capabilities.single-use` and `auth.oidc.limits`, which a client checks
+  before it relies on a limit (a server without them ignores the new
+  members). [Brokers on many machines](docs/reference/ci-and-machines.md#brokers-on-many-machines)
+  shows the calls.
+  - A new action, `capability.issue`, granted like any other but held by no
+    built-in role, lets a service, workload, ci or broker identity issue a
+    Capability for the broker it names (`brokerIdentityId`). Only that
+    broker can exercise it; the issuer can list and revoke it, never
+    exercise it. Removing the issuer's grant refuses the next exercise;
+    retiring the issuer revokes what it issued, as retiring a broker or an
+    agent does, also when an earlier release retired it after a rollback:
+    the start after it revokes what that retirement left live.
+  - `singleUse` at issuing: exercised once.
+  - An OIDC binding takes `exerciseOnly` (the exchanged credential exercises
+    the broker's Capabilities and is refused everything else, reads
+    included), `runIdClaim` (only Capabilities whose `runId` equals that
+    claim of the token) and `singleExchange` (each token exchanges once, by
+    its issuer and `jti`, or by the token itself without a `jti`; always on
+    with `exerciseOnly`, off for existing bindings). Claim names that start
+    with `varlatch:` are reserved. An identity's live bindings for one issuer
+    must be all limited or all unlimited; mixed ones exchange nothing.
+  - The `Action` enum gains `capability.issue`: a client generated from the
+    earlier document that rejects unknown values needs regenerating.
+  - The database schema is version 4 (two new tables). It is rollback-safe:
+    on an earlier release, as after a reverse migration to 0.23, an
+    exercise-only credential, a limited binding, a delegated Capability and a
+    single-use Capability are refused, never unlimited.
+- **One-time codes (TOTP) from a stored seed (#417, the Go server only).** An
+  item can hold the seed of one-time codes, given as an `otpauth://` URI;
+  exercising a Capability that names it gives the code and how long it is
+  valid, never the seed. Existing calls are unchanged; `/v1/meta` lists
+  `values.totp`. [One-time codes](docs/reference/one-time-codes.md) shows the
+  calls.
+  - `otpauth` goes where `value` would, when setting a value, in a change set
+    and when starting a rotation (which then gives the codes of both seeds):
+    an earlier server refuses the request. `value` is no longer a required
+    member of those requests in the document; one of the two is.
+  - An exercise takes `minValiditySeconds` (else the next code, with its
+    start) and `fresh` (a code not given before, else 429), and its items
+    carry `kind`, `expiresAt`, `expiresInSeconds`, `notBefore` and
+    `startsInSeconds` for a code.
+  - No retrieval, run, export, scan, integration or reference delivers a
+    seed. Items that hold one are listed with `totp` (issuer, account,
+    digits, period, algorithm). A disclosure that names one and says
+    `totpSeeds` discloses it to whoever holds `secret.reveal`, audited.
+  - `callerView.withheld` gains the reason `one-time-code` with `requires:
+    secret.use` (strict retrieval): both were closed enums, so a client
+    generated from the earlier document that rejects unknown values needs
+    regenerating.
+  - `varlatch values set` and `values rotate` take `--totp`; the dashboard
+    adds, replaces and reveals seeds.
+  - The database schema is version 5 (one new table). On an earlier
+    release, as after a reverse migration to 0.23, an item that holds a seed
+    has no value and cannot be deleted there (it returns live once a server
+    that knows seeds is back, unless a value was written under that name).
+- **OAuth connections with token write-back (#418, the Go server only).** An
+  item can be an OAuth connection: Varlatch keeps the client secret and the
+  refresh token, refreshes in one place, and an exercise gives the access
+  token and when it expires. Existing calls are unchanged; `/v1/meta` lists
+  `oauth.connections`. [OAuth connections](docs/reference/oauth-connections.md)
+  shows the calls, and what to register at
+  [Google](docs/reference/oauth-google.md),
+  [Microsoft](docs/reference/oauth-microsoft.md) and
+  [another provider](docs/reference/oauth-generic.md).
+  - New operations under `…/environments/{environment}/oauth-connections`:
+    list, make, look up, change, discover a provider, connect (a person, in
+    their session: authorization code with PKCE), refresh, disconnect. An
+    earlier server answers 404.
+  - An exercise's items gain `kind: oauth`; `minValiditySeconds` refreshes
+    first; 429 with `Retry-After` when there is no token now, reason
+    `connection-unavailable`, and 403 when a person has to act.
+  - A connection can name the hosts its token may go to: issuing a Capability
+    for another destination is refused (`connection-host`), and so is an
+    exercise (`destination-mismatch`).
+  - No path delivers a refresh token or a client secret, `secret.reveal`
+    included. Items are listed with `oauth` (preset, grant, status, account).
+  - `callerView.withheld` gains the reason `oauth-connection` (strict
+    retrieval), a closed enum: a client generated from the earlier document
+    that rejects unknown values needs regenerating.
+  - A generic provider's addresses are all on one host, or on hosts the
+    request names (`provider.endpointHosts`), which are then in the redirect
+    URI; the dashboard shows them before the client secret can be typed. A
+    connection to a person's account is made, and once connected deleted, by a
+    person.
+  - A connection belongs to the Organization: when the member who connected
+    it leaves, the background refreshes that keep its refresh token alive go
+    on. Disconnect it to end them.
+  - The dashboard makes, connects, pauses, changes and disconnects them.
+  - The database schema is version 6 (two new tables). On an earlier
+    release, as after a reverse migration to 0.23, a connection has no value
+    and nothing refreshes it; a reverse migration carries no tokens.
+- **One-time entry links for a secret's value (#426, the Go server only).** An
+  application makes a link with which a person enters one Secret's value on
+  Varlatch's own page, once, so the application never handles it. Existing
+  calls are unchanged; `/v1/meta` lists `values.entry-links`.
+  [Entry links](docs/reference/entry-links.md) shows the calls.
+  - New operations: `…/environments/{environment}/entry-links` (make, list,
+    look up, cancel), and `/v1/entry-links/lookup` and `/submit`, which need no
+    credential but the link's own secret (and a signed-in person's bearer, for
+    a link that is not open to anyone). An earlier server answers 404, and 401
+    without a credential.
+  - Two new actions, `entry-link.create` and `entry-link.create-open` (a link
+    whoever has it can use), held by no built-in role and counting for
+    service, workload, ci and broker identities. They read, reveal and replace
+    nothing. A person makes links with `config.value.write`, and sees and
+    cancels their own without it. The `Action` enum
+    gains both: a client generated from the earlier document that rejects
+    unknown values needs regenerating.
+  - A link lives an hour at most, works once, and only while the item is what
+    it was when the link was made. `accepts: otpauth` takes the seed of
+    one-time codes. OAuth connections are not entered through a link.
+  - A link ends with the credential that made it: revoked, its identity
+    retired, a service credential expired, an OIDC binding revoked, any of a
+    person's credentials revoked from elsewhere, their other browsers signed
+    out (Sign out everywhere else), or their membership ended. An exchanged
+    credential's or a bearer's expiry and a sign-out end none.
+  - Under `passkey-verification`'s enforce, a link open to anyone is refused.
+  - `value.written` gains `entryLinkId`; an event without an actor can be what
+    somebody did with a link open to anyone, which `actor=varlatch` leaves out.
+  - The dashboard and the CLI (`values ask`, `asked`, `ask-cancel`) make, list
+    and cancel links.
+  - The database schema is version 7 (one new table). An earlier release
+    ignores it, and a reverse migration carries none of it.
+- **Destinations and targets for brokers that type (#419, the Go server
+  only).** A Capability can name pages (`web:https://portal.example.com/login`)
+  and desktop applications on the broker's machine (`app:CRM Client@idn_…`) as
+  destinations, and `pipe:` (a JSON document over a pipe) and `field:` (typed
+  into a field) as targets. Hosts and the targets of a request are unchanged.
+  `/v1/meta` lists `capabilities.destination-kinds` and
+  `capabilities.target-kinds`.
+  [Pages, applications and pipes](docs/reference/typed-destinations.md) says
+  how they are compared, and what a broker can still do: Varlatch compares what
+  the broker reports.
+  - An exercise's `destination` is `{ host, port }`, `{ url, topUrl? }` or
+    `{ app }`. An address that could be read two ways matches nothing; queries
+    and fragments are neither compared nor recorded. Audit events have the
+    page's path and the application's name, never a window's title.
+  - Pages over `http:` are allowed when they are written out. The dashboard
+    marks them: they are not encrypted.
+  - Issuing refuses hosts beside pages or applications (`mixed-destinations`),
+    an application on another machine than the broker's (`app-machine`), and a
+    target no destination takes (`target-without-destination`). An exercise
+    refuses a placement its destination does not take
+    (`placement-not-for-destination`).
+  - Audit events gain `destinationKind`, `selector` and `topDestination` for
+    these kinds. A `;` or a character that does not show in a target's name is
+    percent-encoded in `targets` and `placements`; `field:` and `pipe:` take
+    neither.
+  - An OAuth connection's hosts bind pages too, and a connection that names
+    hosts goes to no application.
+  - No schema change. On an earlier release, as after a reverse migration to
+    0.23, such a Capability matches nothing.
 
 ### Server
 

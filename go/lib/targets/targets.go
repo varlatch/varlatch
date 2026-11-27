@@ -11,10 +11,12 @@
 package targets
 
 import (
+	"fmt"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf16"
 	"unicode/utf8"
 )
@@ -90,6 +92,89 @@ func Parse(raw string) (string, error) {
 	return "", fail(`"` + kind + `" is not a target kind: expected header, query, json, or form`)
 }
 
+// Kinds of target (ADR-0064) beside where in a request: a value in a JSON
+// document that a Broker hands to a process over a pipe, at an RFC 6901
+// pointer (pipe:/token), and one it types into a field, by the name the
+// Broker knows the field by (field:Password).
+const (
+	KindPipe  = "pipe"
+	KindField = "field"
+)
+
+// Kind is a target's kind.
+func Kind(target string) string {
+	kind, _, _ := strings.Cut(target, ":")
+	return kind
+}
+
+// ParseAny is Parse, for a Broker that does more than send requests: pipe and
+// field targets too. The CLI's Broker reads its own with Parse, which knows
+// neither.
+func ParseAny(raw string) (string, error) {
+	kind, location, _ := strings.Cut(raw, ":")
+	switch kind {
+	case KindPipe:
+		if len(location) > 512 {
+			return "", fail("a pipe target is at most 512 bytes")
+		}
+		if _, err := Parse("json:" + location); err != nil {
+			return "", err
+		}
+		if !name(location) {
+			return "", fail("a pipe target cannot contain ; or =, nor characters that show as nothing")
+		}
+		return raw, nil
+	case KindField:
+		if n := utf16Len(location); n == 0 || n > 256 || len(location) > 512 {
+			return "", fail("a field target needs a name of 1 to 256 characters, at most 512 bytes")
+		}
+		if !name(location) || strings.TrimSpace(location) != location {
+			return "", fail("a field target name cannot contain ; or =, nor characters that show as nothing, nor begin or end with a blank")
+		}
+		return raw, nil
+	}
+	return Parse(raw)
+}
+
+// name is whether a field's or a pipe's location can be read as nothing but
+// itself, in a list of targets (Describe) too.
+func name(location string) bool {
+	return Plain(location) && !strings.ContainsAny(location, ";=")
+}
+
+// Plain is whether s is text that shows as it is: valid UTF-8, with no
+// control, format or blank character but the space, and none that shows as
+// nothing.
+func Plain(s string) bool {
+	return utf8.ValidString(s) && !strings.ContainsFunc(s, func(r rune) bool { return !plainRune(r) })
+}
+
+func plainRune(r rune) bool {
+	return unicode.IsPrint(r) && !unicode.Is(unicode.Other_Default_Ignorable_Code_Point, r) && !unicode.Is(unicode.Variation_Selector, r)
+}
+
+// Recorded is a target as a list of them names it (Describe): what separates
+// the list's entries, and what does not show as it is, percent-encoded. The
+// targets of a request may hold such characters.
+func Recorded(target string) string {
+	if Plain(target) && !strings.Contains(target, ";") {
+		return target
+	}
+	var b strings.Builder
+	for i := 0; i < len(target); {
+		r, n := utf8.DecodeRuneInString(target[i:])
+		if r == utf8.RuneError && n <= 1 || r == ';' || !plainRune(r) {
+			for _, c := range []byte(target[i : i+n]) {
+				fmt.Fprintf(&b, "%%%02X", c)
+			}
+		} else {
+			b.WriteString(target[i : i+n])
+		}
+		i += n
+	}
+	return b.String()
+}
+
 // Item is one item's targets as sent: the item's name and its targets.
 type Item struct {
 	Name    string
@@ -102,6 +187,15 @@ type Item struct {
 // enumerates them. The result is per item, items and targets sorted as
 // JavaScript sorts strings.
 func Canonical(items []string, given []Item) ([]Item, error) {
+	return canonical(items, given, Parse)
+}
+
+// CanonicalAny is Canonical with ParseAny's kinds.
+func CanonicalAny(items []string, given []Item) ([]Item, error) {
+	return canonical(items, given, ParseAny)
+}
+
+func canonical(items []string, given []Item, parse func(string) (string, error)) ([]Item, error) {
 	for _, g := range given {
 		if !slices.Contains(items, g.Name) {
 			return nil, fail("targets name " + g.Name + ", which is not an item of this Capability")
@@ -124,15 +218,15 @@ func Canonical(items []string, given []Item) ([]Item, error) {
 		if len(raw) > MaxPerItem {
 			return nil, fail(name + " has " + strconv.Itoa(len(raw)) + " targets; at most " + strconv.Itoa(MaxPerItem) + " are allowed")
 		}
-		canonical := make([]string, len(raw))
+		list := make([]string, len(raw))
 		for i, t := range raw {
-			c, err := Parse(t)
+			c, err := parse(t)
 			if err != nil {
 				return nil, err
 			}
-			canonical[i] = c
+			list[i] = c
 		}
-		sorted := slices.Clone(canonical)
+		sorted := slices.Clone(list)
 		slices.SortFunc(sorted, Compare)
 		if len(slices.Compact(slices.Clone(sorted))) != len(sorted) {
 			return nil, fail(name + " repeats a target")
@@ -143,14 +237,14 @@ func Canonical(items []string, given []Item) ([]Item, error) {
 }
 
 // Describe is describeTargets, the audit form: ITEM=kind:location;…, names
-// and locations only, items sorted.
+// and locations only, items sorted, each as Recorded.
 func Describe(targets []Item) string {
 	sorted := slices.Clone(targets)
 	slices.SortStableFunc(sorted, func(a, b Item) int { return Compare(a.Name, b.Name) })
 	var parts []string
 	for _, it := range sorted {
 		for _, t := range it.Targets {
-			parts = append(parts, it.Name+"="+t)
+			parts = append(parts, it.Name+"="+Recorded(t))
 		}
 	}
 	return strings.Join(parts, ";")

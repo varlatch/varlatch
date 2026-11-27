@@ -39,8 +39,10 @@ SELECT id FROM credentials WHERE identity_id = ? AND revoked_at IS NULL ORDER BY
 
 -- name: CredentialsOfIdentityNewestFirst :many
 -- listIdentityCredentials: metadata only, never token material.
-SELECT id, kind, name, created_at, expires_at, revoked_at, last_used_at, client
-FROM credentials WHERE identity_id = ? ORDER BY created_at DESC, id;
+SELECT c.id, c.kind, c.name, c.created_at, c.expires_at, c.revoked_at, c.last_used_at, c.client,
+       x.credential_id AS exercise_only, x.run_id
+FROM credentials c LEFT JOIN exercise_credentials x ON x.credential_id = c.id
+WHERE c.identity_id = ? ORDER BY c.created_at DESC, c.id;
 
 -- name: CredentialOfKinds :one
 -- A credential of the identity, of one of the kinds a revocation may name.

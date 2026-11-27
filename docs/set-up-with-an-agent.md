@@ -92,7 +92,7 @@ it is: each step runs only when the one before it succeeded (`&&`), so a
 failed download or check never reaches `install`.
 
 ```sh
-V=0.50.2  # serverVersion from step 1
+V=0.51.0  # serverVersion from step 1
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
 ARCH=$(uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')
 CLI="varlatch-$V-$OS-$ARCH"

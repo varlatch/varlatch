@@ -4,14 +4,18 @@ package httpserver
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 
+	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/lib/targets"
 	"github.com/varlatch/varlatch/go/server/api"
 	"github.com/varlatch/varlatch/go/server/authz"
 	"github.com/varlatch/varlatch/go/server/capabilities"
+	"github.com/varlatch/varlatch/go/server/domainerr"
 	"github.com/varlatch/varlatch/go/server/environments"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
 	"github.com/varlatch/varlatch/go/server/values"
@@ -23,6 +27,10 @@ import (
 // "Not found"); the Agent's secret.use is what an exercise evaluates.
 // People with policy.read list every Capability of an environment and with
 // policy.manage revoke one (oversight); a Broker lists and revokes its own.
+//
+// A machine identity holding capability.issue issues one for a Broker it
+// names, and lists and revokes what it issued (ADR-0060); without it the
+// answer stays "Not found". It exercises nothing.
 
 const (
 	listCapabilitiesPattern   = "GET /v1/organizations/{org}/projects/{project}/environments/{environment}/capabilities"
@@ -59,6 +67,9 @@ var issueCapabilityBody = zObject{
 	{name: "targets", schema: zRecord{value: zArray{element: zString{}, max: 8}}, optional: true},
 	{name: "ttlSeconds", schema: zNumber{gt0: true}},
 	{name: "runId", schema: zString{max: 200}, optional: true},
+	// The Broker it is issued for, and one exercise only (ADR-0060).
+	{name: "brokerIdentityId", schema: zString{min: 1, max: 200}, optional: true},
+	{name: "singleUse", schema: zBool{}, optional: true},
 	// The agent-safe strict preflight (ADR-0038 Decision 7): the state the
 	// operator's preflight retrieval saw. It confers no authority.
 	{name: "precondition", schema: zObject{
@@ -69,17 +80,59 @@ var issueCapabilityBody = zObject{
 	}, optional: true},
 }
 
-var exerciseCapabilityBody = zObject{
-	{name: "capabilitySecret", schema: zString{min: 1}},
-	{name: "destination", schema: zObject{
+// exerciseCapabilityBody is an exercise's body for a destination of a kind:
+// a host and port, as it always was; a page or an application (ADR-0064).
+func exerciseCapabilityBody(destination zObject) zObject {
+	return append(zObject{{name: "capabilitySecret", schema: zString{min: 1}}, {name: "destination", schema: destination}}, exerciseCapabilityRest...)
+}
+
+var (
+	exerciseHost = zObject{
 		{name: "host", schema: zString{min: 1}},
 		{name: "port", schema: zNumber{min: bound(1), max: bound(65535)}},
-	}},
+	}
+	exercisePage = zObject{
+		{name: "url", schema: zString{min: 1, max: authz.MaxReported}},
+		{name: "topUrl", schema: zString{min: 1, max: authz.MaxReported}, optional: true},
+	}
+	exerciseApp = zObject{
+		{name: "app", schema: zString{min: 1, max: 200}},
+	}
+)
+
+// reportedDestination is a body's destination, of the one kind its members
+// name: a body that names none is judged as a host's, and one that names
+// members of two is refused, so no part of a report is ignored.
+func reportedDestination(body any) (zObject, error) {
+	o, _ := body.(jsvalue.Object)
+	v, _ := o.Get("destination")
+	d, _ := v.(jsvalue.Object)
+	var kinds []string
+	schema := exerciseHost
+	for _, k := range []struct {
+		name    string
+		members []string
+		schema  zObject
+	}{{"a host", []string{"host", "port"}, exerciseHost}, {"a page", []string{"url", "topUrl"}, exercisePage}, {"an application", []string{"app"}, exerciseApp}} {
+		if slices.ContainsFunc(k.members, func(m string) bool { return has(d, m) }) {
+			kinds, schema = append(kinds, k.name), k.schema
+		}
+	}
+	if len(kinds) > 1 {
+		return nil, domainerr.New("VALIDATION_FAILED", "destination: "+strings.Join(kinds, " and ")+": report one destination")
+	}
+	return schema, nil
+}
+
+var exerciseCapabilityRest = zObject{
 	// Each substitution the Broker will make (ADR-0039 Decision 7).
 	{name: "placements", schema: zArray{element: zObject{
 		{name: "item", schema: zString{min: 1}},
 		{name: "target", schema: zString{min: 1}},
 	}, max: 200}, optional: true},
+	// The one-time codes among the items (ADR-0061).
+	{name: "minValiditySeconds", schema: zNumber{min: bound(0), max: bound(values.MaxMinValiditySeconds)}, optional: true},
+	{name: "fresh", schema: zBool{}, optional: true},
 }
 
 // brokerOf is the caller's Broker id when it is a Broker of q's
@@ -91,10 +144,37 @@ func (q *orgRequest) brokerOf() string {
 	return ""
 }
 
-// IssueCapability is POST …/capabilities: the environment, the Broker,
-// the body, the precondition when sent (its own snapshot: STATE_CHANGED
-// with the categories that changed), then the issuance. 201, never
-// cacheable.
+// mayIssueFor decides capability.issue for the caller on the environment,
+// before anything of the request is judged: anyone who may not issue for
+// another Broker is told "Not found", as anyone but a Broker always was.
+// asked is whether the body names a Broker: such a denial is recorded (a
+// caller that names none is answered as before, with no event).
+func (p *projectRequest) mayIssueFor(ctx context.Context, env environments.Environment, asked bool) error {
+	d, err := authz.DecideCapabilityIssue(ctx, p.o.s.opts.Auth.Store().Reader(), authzPrincipal(p.p), p.envResource(env),
+		authz.Options{RequestID: requestIDOf(p.r)})
+	if err != nil || d.Allowed {
+		return err
+	}
+	if asked && d.DenialEvent != nil {
+		if err := p.o.s.opts.Auth.Store().Write(ctx, func(tx *storage.Tx) error { return authz.RecordDenial(ctx, tx, d) }); err != nil {
+			return err
+		}
+	}
+	return domainerr.New("RESOURCE_NOT_FOUND", "Not found")
+}
+
+// namesBroker is whether a body, not parsed yet, names a Broker.
+func namesBroker(body any) bool {
+	o, _ := body.(jsvalue.Object)
+	_, named := o.Get("brokerIdentityId")
+	return named
+}
+
+// IssueCapability is POST …/capabilities: the environment, the Broker (or
+// capability.issue, for an identity that is none), the body, the
+// precondition when sent (its own snapshot: STATE_CHANGED with the
+// categories that changed), then the issuance, for the Broker the body
+// names when it names one. 201, never cacheable.
 func (o *operations) IssueCapability(ctx context.Context, _ api.IssueCapabilityRequestObject) (api.IssueCapabilityResponseObject, error) {
 	if err := o.capabilitiesAdmitted(); err != nil {
 		return nil, err
@@ -103,20 +183,33 @@ func (o *operations) IssueCapability(ctx context.Context, _ api.IssueCapabilityR
 	if err != nil {
 		return nil, err
 	}
-	if err := values.RequireBroker(p.p, p.org.ID); err != nil {
-		return nil, err
+	body, bodyErr := jsonBody(ctx)
+	isBroker := values.RequireBroker(p.p, p.org.ID) == nil
+	if !isBroker {
+		if err := p.mayIssueFor(ctx, env, bodyErr == nil && namesBroker(body)); err != nil {
+			return nil, err
+		}
 	}
-	body, err := jsonBody(ctx)
-	if err != nil {
-		return nil, err
+	if bodyErr != nil {
+		return nil, bodyErr
 	}
 	parsed, err := zParse(issueCapabilityBody, body)
 	if err != nil {
 		return nil, err
 	}
 	obj := parsed.(jsvalue.Object)
+	_, named := obj.Get("brokerIdentityId")
+	switch {
+	case !isBroker && !named:
+		return nil, domainerr.New("VALIDATION_FAILED", "brokerIdentityId: name the Broker to issue the Capability for")
+	case isBroker && named && stringMember(obj, "brokerIdentityId") != p.p.Identity.ID:
+		if err := p.mayIssueFor(ctx, env, true); err != nil {
+			return nil, err
+		}
+	}
 	get := func(k string) any { v, _ := obj.Get(k); return v }
 	in := capabilities.IssueInput{
+		RequestID:       requestIDOf(p.r),
 		AgentIdentityID: get("agentIdentityId").(string), Items: stringArray(get("items")),
 		Destinations: stringArray(get("destinations")), TTLSeconds: int64(get("ttlSeconds").(float64)),
 	}
@@ -129,6 +222,13 @@ func (o *operations) IssueCapability(ctx context.Context, _ api.IssueCapabilityR
 	if r, ok := obj.Get("runId"); ok {
 		s := r.(string)
 		in.RunID = &s
+	}
+	if named {
+		s := stringMember(obj, "brokerIdentityId")
+		in.BrokerIdentityID = &s
+	}
+	if v, ok := obj.Get("singleUse"); ok {
+		in.SingleUse = v.(bool)
 	}
 	var preflight []values.PreflightItem
 	if pre, ok := obj.Get("precondition"); ok {
@@ -167,20 +267,45 @@ func (o *operations) IssueCapability(ctx context.Context, _ api.IssueCapabilityR
 	return reply{status: http.StatusCreated, body: out}, nil
 }
 
+// issuerOf is the caller's id when it lists as an issuer: no policy.read
+// here, but capability.issue on the environment (neither decision recorded:
+// the caller's own denial, if any, is policy.read's). Else "".
+func (p *projectRequest) issuerOf(ctx context.Context, env environments.Environment) (string, error) {
+	if !authz.MayIssueCapabilities(p.p.Identity.Kind) {
+		return "", nil
+	}
+	reader, ap, opts := p.o.s.opts.Auth.Store().Reader(), authzPrincipal(p.p), authz.Options{RequestID: requestIDOf(p.r)}
+	d, err := authz.Decide(ctx, reader, ap, "policy.read", authz.Resource{OrganizationID: p.org.ID}, opts)
+	if err != nil || d.Allowed {
+		return "", err
+	}
+	if d, err = authz.DecideCapabilityIssue(ctx, reader, ap, p.envResource(env), opts); err != nil || !d.Allowed {
+		return "", err
+	}
+	return p.p.Identity.ID, nil
+}
+
 // ListCapabilities is GET …/capabilities: inspection while frozen; a
-// Broker sees its own, anyone else needs policy.read (existence hidden).
+// Broker sees its own (issued for it or by it), an identity holding
+// capability.issue what it issued, anyone else needs policy.read (existence
+// hidden).
 func (o *operations) ListCapabilities(ctx context.Context, _ api.ListCapabilitiesRequestObject) (api.ListCapabilitiesResponseObject, error) {
 	p, env, err := o.enterEnvironment(ctx, capabilitiesRoute, authz.DuringFreezeInspection)
 	if err != nil {
 		return nil, err
 	}
-	broker := p.brokerOf()
-	if broker == "" {
+	owner := p.brokerOf()
+	if owner == "" {
+		if owner, err = p.issuerOf(ctx, env); err != nil {
+			return nil, err
+		}
+	}
+	if owner == "" {
 		if err := p.authorize(ctx, "policy.read"); err != nil {
 			return nil, err
 		}
 	}
-	out, err := capabilities.List(ctx, o.s.opts.Auth.Store().Reader(), p.org.ID, env.ID, broker)
+	out, err := capabilities.List(ctx, o.s.opts.Auth.Store().Reader(), p.org.ID, env.ID, owner)
 	if err != nil {
 		return nil, err
 	}
@@ -191,20 +316,30 @@ func (o *operations) ListCapabilities(ctx context.Context, _ api.ListCapabilitie
 }
 
 // RevokeCapability is DELETE …/capabilities/{capability}: recovery while
-// frozen; a Broker revokes its own, anyone else needs policy.manage
-// (existence hidden). 204.
+// frozen; a Broker revokes its own, an identity what it issued, anyone else
+// needs policy.manage (existence hidden). 204.
 func (o *operations) RevokeCapability(ctx context.Context, _ api.RevokeCapabilityRequestObject) (api.RevokeCapabilityResponseObject, error) {
 	p, _, err := o.enterEnvironment(ctx, capabilityRoute, authz.DuringFreezeRecovery)
 	if err != nil {
 		return nil, err
 	}
-	broker := p.brokerOf()
-	if broker == "" {
+	capability := tryDecodeURIComponent(p.segs[8])
+	owner := p.brokerOf()
+	if owner == "" && authz.MayIssueCapabilities(p.p.Identity.Kind) {
+		issued, err := capabilities.Issued(ctx, o.s.opts.Auth.Store().Reader(), p.org.ID, capability, p.p.Identity.ID)
+		if err != nil {
+			return nil, err
+		}
+		if issued {
+			owner = p.p.Identity.ID
+		}
+	}
+	if owner == "" {
 		if err := p.authorize(ctx, "policy.manage"); err != nil {
 			return nil, err
 		}
 	}
-	reports, err := capabilities.Revoke(ctx, o.s.opts.Writer, p.p, p.org.ID, tryDecodeURIComponent(p.segs[8]), broker, o.s.opts.Now)
+	reports, err := capabilities.Revoke(ctx, o.s.opts.Writer, p.p, p.org.ID, capability, owner, o.s.opts.Now)
 	if err != nil {
 		return nil, p.refused(ctx, err)
 	}
@@ -231,16 +366,27 @@ func (o *operations) ExerciseCapability(ctx context.Context, _ api.ExerciseCapab
 		if err != nil {
 			return values.Exercise{}, err
 		}
-		parsed, err := zParse(exerciseCapabilityBody, body)
+		schema, err := reportedDestination(body)
+		if err != nil {
+			return values.Exercise{}, err
+		}
+		parsed, err := zParse(exerciseCapabilityBody(schema), body)
 		if err != nil {
 			return values.Exercise{}, err
 		}
 		obj := parsed.(jsvalue.Object)
 		secret, _ := obj.Get("capabilitySecret")
-		dest, _ := obj.Get("destination")
-		host, _ := dest.(jsvalue.Object).Get("host")
-		port, _ := dest.(jsvalue.Object).Get("port")
-		in := values.Exercise{Secret: secret.(string), Host: host.(string), Port: int(port.(float64))}
+		v, _ := obj.Get("destination")
+		dest := v.(jsvalue.Object)
+		in := values.Exercise{Secret: secret.(string)}
+		switch {
+		case has(dest, "url"):
+			in.Destination = authz.Reported{Kind: authz.PlaceWeb, URL: str(dest, "url"), Top: str(dest, "topUrl")}
+		case has(dest, "app"):
+			in.Destination = authz.Reported{Kind: authz.PlaceApp, App: str(dest, "app")}
+		default:
+			in.Destination = authz.Reported{Kind: authz.PlaceHost, Host: authz.Destination{Host: str(dest, "host"), Port: int(number(dest, "port"))}}
+		}
 		if list, ok := obj.Get("placements"); ok {
 			in.Placements = []values.Placement{}
 			for _, e := range list.([]any) {
@@ -249,9 +395,21 @@ func (o *operations) ExerciseCapability(ctx context.Context, _ api.ExerciseCapab
 				in.Placements = append(in.Placements, values.Placement{Item: item.(string), Target: target.(string)})
 			}
 		}
+		if n, ok := obj.Get("minValiditySeconds"); ok {
+			in.MinValiditySeconds = int64(n.(float64))
+		}
+		if f, ok := obj.Get("fresh"); ok {
+			in.Fresh = f.(bool)
+		}
 		return in, nil
 	}
 	out, err := o.s.opts.Values.ExerciseCapability(ctx, req, tryDecodeURIComponent(segs[8]), parse)
+	var refused *domainerr.Error
+	if errors.As(err, &refused) && refused.Code == "RATE_LIMITED" {
+		if after, ok := refused.Details.Get("retryAfterSeconds"); ok {
+			return nil, &headerError{err: err, headers: retryAfter(after.(int64))}
+		}
+	}
 	if err != nil {
 		return nil, valuesError(err)
 	}

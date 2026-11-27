@@ -181,6 +181,9 @@ release. CI routes by path: `.github/workflows/go.yml` checks `go/`, and
   their names for it (`lib/sync/json.go`). `testdata/ts-vectors.json` holds
   what Node.js makes of a set of JSON texts (written by
   `apps/cli/test/go-vectors-framework.test.ts`).
+- `lib/totp/`: one-time codes (RFC 6238; ADR-0061): the seed in an
+  `otpauth://` URI, parsed and normalized, and a step's code. Its tests pin
+  the vectors of RFC 6238's appendix B and RFC 4226's appendix D.
 - `lib/whatwg/`: what the TypeScript code gets from Node.js's URL
   parser, `url.domainToASCII`, `net.isIP` and string functions, as far as
   audit redaction, Destination Selectors and url Config Items use them. Domain to ASCII is
@@ -1031,6 +1034,9 @@ it to the recording.
 | Runtime error wording: the code in `Cannot reach the Varlatch server (<code>)` | the first code in the `fetch failed` error's causes that `exitCodes.ts` names, else "network error" | the same codes from Go's errors: refused, reset, timed out, unreachable host or network by their errno; NXDOMAIN `ENOTFOUND`; a temporary DNS failure `EAI_AGAIN`; a connect or TLS handshake timeout `UND_ERR_CONNECT_TIMEOUT`; a connection closed before the answer `UND_ERR_SOCKET`; anything else "network error" | Decision 2: the exit status (69) is the same; the code is Node.js's own wording, mapped where Go can tell |
 | Request headers decision 2 does not compare | `accept-language: *`, `sec-fetch-mode: cors`, `accept-encoding: gzip, deflate` | none of the first two; `accept-encoding: gzip` (Go decompresses it) | Neither the server nor any consumer reads them |
 | `self-update` (slice 6.7a of internal docs/design/go-step6.md) | replaces its `.cjs` with `varlatch-cli-<version>.cjs`; the newest release is GitHub's latest; the signature is checked only when cosign is installed and the release carries one, and `--allow-unverified` (with `--yes`) installs without it; `--repo` and `VARLATCH_RELEASE_REPO` choose another repository | replaces its own binary with the release's `varlatch-<version>-<os>-<arch>[.exe]`, always verifying SHA256SUMS's signature with the embedded verifier first (`--allow-unverified` changes nothing); the newest release is the newest of the Go line (0.50.0 or later), a prerelease only from a prerelease or with `--prerelease`; an older release only with `--allow-downgrade` (64 otherwise); `--repo` and `VARLATCH_RELEASE_REPO` other than `varlatch/varlatch` are refused (64); a Homebrew or winget copy is refused (1) with that package manager's command; `--check --json` reports `install` as `release`, `homebrew` or `winget`; 69 when GitHub cannot be reached, 1 for a release that does not verify | Decision 11: the Go CLI is a native binary from the Go line's releases, and fails closed (Decision 8). Pinned by `internal/selfupdate`'s tests and `TestSelfUpdateReplacesItself`, `TestSelfUpdateRefuses` |
+| `values-oauth` (ADR-0062) | no such items | `values list` names an OAuth connection (`OAuth connection, status, account`, `oauth` in `--json`), `run` says one is not delivered, and a strict run's violation says why | Go only. Pinned by `TestAConnectionIsListedAndNotDelivered` |
+| `values-totp` (ADR-0061) | `values set` and `values rotate` have no `--totp` ("unknown option") | `--totp` takes the seed of one-time codes from a hidden prompt, `--stdin` or `--from-file`, never from the command line nor `--generate`, and sends it as `otpauth`; only a command line with `--totp` prints a usage that names it. `values list` names an item that holds a seed (`one-time code, issuer …, account …`, `totp` in `--json`), `run` says one is not delivered, and a strict run's violation says why | Go only. Pinned by `TestValuesSetTOTP`, `TestValuesSetTOTPRefuses`, `TestASeedIsListedAndNotDelivered` |
+| `values-ask` (ADR-0063) | `values ask`, `values asked` and `values ask-cancel` print the usage of `values` | `values ask` makes an entry link and prints its address, the one token it shows on purpose, as `invite` does; not `--anyone` in assisted mode. `values asked` lists links and their status, `values ask-cancel` ends one. The usage of `values` does not name them | Go only. Pinned by `TestValuesAsk`, `TestValuesAskRefuses`, `TestValuesAskPrintsNoCredential`, `TestValuesAskedAndCancel` |
 | `self-update-usage` | `varlatch help self-update`, `self-update --help` and `self-update -h` print the TypeScript CLI's form | the Go CLI's: `[<version>] [--check [--json]] [--yes] [--prerelease] [--allow-downgrade]`, with what it checks; `varlatch --help` has it too (`host-usage`) | `self-update`. Transcript cases `help.self-update`, `help.self-update.option` and `help.self-update.short` name it; pinned by `TestHelpIsTheUsageText` |
 | `host-usage` | `varlatch`, `--help`, `-h`, `help`, and an unknown command print the whole usage with a Compose installation's host commands (`admin` with `--dir`, `setup`, `adopt`, `move`, `doctor`, `self-update`, `upgrade`) | the same text, its title without the dash, with a Go installation's in their place (`setup`, `move`, `doctor`, `admin`; `self-update`, `upgrade`, `migrate`), as each command's own help prints them, without `adopt`, and with `tailnet repin`; `varlatch help migrate` prints `migrate`'s | A release whose help names commands it refuses, and not the ones it has, sends people to the wrong ones (the audit of 2026-11-24). Transcript cases of area 5.1a name it; the text is made from the TypeScript one (`hostUsage`), and `TestUsageIsAGoInstallations` holds the rest to it |
 | `tailnet-usage` | `varlatch help tailnet`, `tailnet --help` and `tailnet -h` print `require`, `requirements` and `remove` | the same, and `repin` | Only the Go CLI has `tailnet repin`. Transcript cases `help.tailnet`, `help.tailnet.option` and `help.tailnet.short` name it |
@@ -1539,6 +1545,36 @@ other machine identity step-up operations.
 
   Every failure answers 401 `INVALID_CREDENTIAL` alike; the
   `authentication.failed` event keeps the reason.
+- **Limits** (ADR-0060, `server/oidc/limits`; Go only, capability
+  `auth.oidc.limits`). A binding may say `exerciseOnly` (a Broker's only),
+  `runIdClaim` (with it) and `singleExchange` (always on with it). A token
+  that matches several bindings gets the limits of all; two different run
+  claims are ambiguous. An identity's live bindings for one issuer are all
+  limited or all unlimited, decided in the job that creates one, because an
+  older server knows only the unlimited ones. Where that server mixed them,
+  or beside a limit of a later release, no token of the issuer exchanges as
+  that identity (`mixed-bindings`). The bindings matched are read again in
+  the job that issues the credential: one revoked while the token was
+  verified gives nothing.
+  - They are one reserved claim (`varlatch:limits`) in the binding's
+    `claims`, written and read strictly: an older server requires a token
+    to carry it, which none does, so it exchanges nothing there. Callers
+    may not name a claim that starts with `varlatch:`.
+  - An exercise-only credential's `token_hash` is `exercise:` and the hash,
+    which an older server never looks up; its run is in
+    `exercise_credentials`, and without that row it authenticates nothing.
+    `auth.Service.Authenticate` refuses one; only `AuthenticateExercise`,
+    which the HTTP layer calls for the exercise's own route pattern,
+    accepts it. Every other operation answers 403 `PERMISSION_DENIED` and
+    records `authorization.denied` (`exercise_only_credential`).
+  - A single exchange is recorded in the credential's own write job
+    (`oidc_token_uses`, the SHA-256 of the issuer and the `jti`, or of the
+    token's signed part without one), so an exchange that is refused spends
+    nothing and two at once issue one. A use is kept until 26 hours after
+    the token stops being accepted (a clock that was ahead meanwhile forgets
+    nothing it needs once it is back) and pruned by later exchanges; a token
+    valid for more than a day exchanges nothing under such a binding. A
+    replay is `token-already-exchanged`, recorded in the Organization.
 - **The verifier** (`verify.go`) checks the token as the TypeScript code
   does:
   - RS256 and ES256 only, with 60 seconds of skew on exp and nbf;
@@ -1848,6 +1884,155 @@ may use; it never adds to the Agent's Grants.
   the current one, unexpanded. An exercise a Requirement covers is
   `TAILNET_CONTEXT_REQUIRED` without a device: on the ordinary listener,
   always (see "The tailnet listeners").
+- **For another Broker, and single use** (ADR-0060; Go only, capabilities
+  `capabilities.delegate` and `capabilities.single-use`).
+  - `capability.issue` (`authz.CapabilityIssue`) on the environment lets a
+    service, workload, ci or broker identity issue for the Broker its body
+    names. It is not in `authz.Actions`: no built-in role holds it, and a
+    Grant of it to a person or an Agent has no effect. Without it the
+    answer is the one anyone but a Broker always got, and a denial that
+    named a Broker is recorded. The issuing job decides it again, then that
+    the Broker is one of the Organization's and not retired.
+  - Only the named Broker exercises. The snapshot also decides that the
+    issuer (`created_by`, when not the Broker) is live and still holds
+    `capability.issue` there, else `issuer-not-allowed`.
+  - The issuer lists what it issued and revokes it, the latter with or
+    without its Grant.
+  - A delegated Capability's `secret_hash` carries `for:`, and a single-use
+    Capability's carries `once:` (`used:` once spent); they combine as
+    `for:once:` / `for:used:`. The single use is spent in
+    `capability.exercised`'s own job, so of several exercises at once one is
+    granted. An exercise whose placed items have no value gives nothing and
+    leaves it unused. A refusal after that event (an unresolved reference)
+    gives the use back, never touching `revoked_at`; any other failure leaves
+    it spent. An older server matches no secret against any prefixed hash.
+  - `server/capabilities` `delegation_test.go` covers all of it over HTTP.
+- **Pages, applications and pipes** (ADR-0064, `server/authz/place.go`,
+  `lib/targets`; Go only, capabilities `capabilities.destination-kinds` and
+  `capabilities.target-kinds`).
+  - `authz.ParsePlace` reads a Capability's destination: a `web:` or `app:`
+    selector, and else a host's as `ParseDestinationSelector` always read it
+    ("web:443" is the host named web). Neither the TypeScript server nor an
+    earlier varlatchd reads a new one, so such a row matches nothing there.
+  - `authz.Reported` is what a Broker says, and `Reading` what is compared and
+    recorded. A host's events keep their bytes. `Page.String` is what the audit
+    log has of a page: the path, without path parameters and what follows an
+    encoded query's mark. No report has room for a window's title.
+  - `capabilities.checkPlaces` refuses what does not go together at issuing:
+    hosts beside the other kinds (an older server would match the host alone,
+    for targets that are not a host's), another machine's application, a target
+    nothing takes. `authz.Takes` decides the last again at exercise.
+  - `targets.Recorded` is a target in the audit log's lists (`targets`,
+    `placements`): `;` and what does not show percent-encoded, where the
+    TypeScript server has the name as it is.
+  - `targets.ParseAny` takes `pipe:` and `field:`; `targets.Parse`, which the
+    CLI's Broker uses, refuses them: it sends requests alone.
+- **Entry links** (ADR-0063, `server/entry`, `server/values/entry.go`,
+  `httpserver/entry.go`; Go only, capability `values.entry-links`).
+  - A row of `entry_links` (schema version 7): the hash of the link's secret,
+    the item, the effective version it had (its own or its parent's, NULL for
+    none), who may use it, who made it. No migration carries one, and an older
+    server ignores the table.
+  - `Submit` decides all of it in the job that writes the value and ends the
+    link: who it is for, the Organization, Project and environment live, the
+    maker's right, the version. A refusal is recorded in that job too, the
+    first 20 of a link.
+  - `credential_id` is what a link ends with. `entry.ofCredential` looks at a
+    machine's in that job, so any revocation counts, an older server's too. A
+    person's credentials end in the ordinary way all the time, so theirs are
+    ended by what takes a session away, in its own job (`auth/entrylinks.go`):
+    `RevokeOwnCredential` of another credential (all the person's links but
+    those of the session or login it is done with), `SignOutOtherSessions`
+    (all but the session that stays), `endMembership`,
+    `CompletePublicURLChange`. `Create` looks again in its job, so no link is
+    made that a revocation did not see.
+  - `/v1/entry-links/lookup` and `/submit` read a bearer credential when there
+    is one (`optionalBearer`) and need none. They are the only operations
+    beside device sign-in's, the OIDC exchange and `/v1/meta` that do
+    (`TestOpenOperations`).
+  - The page is `apps/web`'s `features/entry`, which `main.tsx` loads for
+    `/entry` in place of the app; `web.go` gives it headers of its own. Its
+    audit events use the Capabilities' types with an `entryLinkId`, since a
+    reverse migration carries only types the TypeScript server knows.
+- **OAuth connections** (ADR-0062, `server/oauth`, `server/values/connections.go`;
+  Go only, capability `oauth.connections`).
+  - What a connection is (`server/oauth/oauthparams`: the pinned endpoints,
+    the client, the scopes, the hosts) and its client secret are a
+    `value_versions` row, stored as a seed is (below): the secret sealed
+    under the version's DEK for `oauth-client` with the parameters in the
+    associated data, that envelope sealed as a value is, a member `oauth` in
+    `payload`, and an `env_values` row that reads as deleted to a server that
+    does not know connections.
+  - Its tokens are in `oauth_connections` (schema version 6), each sealed
+    under the Organization's KEK with the version, its parameters, the
+    account, the generation and (the access token) its expiry. Changed
+    parameters open neither the secret nor a token. A migration carries no
+    row of it.
+  - A generic provider's addresses are on the issuer's or the token endpoint's
+    host, or on hosts the request names (`Resolve`); `Params.RedirectName` has
+    them all, so a connection with another host in it connects nowhere its
+    owner registered it. Presets have fixed hosts (`Preset.CheckHosts`). A client's
+    own connection, without a redirect URI, has one host.
+  - A retrieval resolves connections apart (`State.Connections`) and captures
+    no ciphertext of one; only an exercise captures and opens the access
+    token. Nothing in `server/values` opens the refresh token or the client
+    secret but `ConnectionSecret`, for `server/oauth`.
+  - An exercise whose token does not do asks `values.Tokens` (`server/oauth`)
+    after everything else was checked and before anything is recorded, then
+    is decided again from a new snapshot.
+  - Refreshing (`refresh.go`): a flight everyone shares, the Organization's
+    gate (shared) and the connection's (exclusive) across the call, a claim in
+    the row before anything is sent, and one job that stores the answer. The
+    flight outlives the request; a stop waits for it. Waiting for the gates,
+    the call and storing the answer each have a time of their own. `CrashAt`
+    ends one at a point, for tests.
+  - Keeping (`RunOnce`): what may be refreshed and is due, every Organization's
+    oldest before anybody's next, a few of one Organization at once; one that
+    was refused is postponed (`PostponeOAuthKeepalive`).
+  - Connecting (`connect.go`): the state is deleted in a job of its own, then
+    one external effect (`write.RunEffect`) exchanges the code.
+  - Everything asked of a provider (`provider.go`) goes through the outbound
+    policy's client for the purpose `oauth`, follows no redirect, reads 128
+    KiB in 15 seconds, and keeps of an error only a word of a fixed list.
+  - Its events use the types Platform Connections have
+    (`sync.connection_created`, `_checked`, `_credential_replaced`,
+    `_revoked`; `connection: oauth`), since a reverse migration carries only
+    types the TypeScript server knows.
+  - `server/oauth/oauthtest` is the fake provider; `server/capabilities`
+    `oauth_test.go` and `oauth_bounds_test.go` cover it over HTTP.
+- **One-time codes** (ADR-0061, `server/values/seeds.go`, `lib/totp`; Go
+  only, capability `values.totp`).
+  - `lib/totp` (Apache-2.0) reads an `otpauth://` URI, normalizes it and makes
+    the code of a step; its errors are fixed texts, and a `Seed` formats as
+    `totp.Seed(hidden)`.
+  - A seed is a `value_versions` row: the normalized URI sealed under the
+    version's DEK for a seed's purpose (`totp-seed`, with what may be read of
+    it in the associated data), that envelope sealed as a value is, and a
+    member `totp` beside the outer envelope's in `payload`: the readable part.
+    Opened as a value by anyone, it is an envelope, not the seed. Its `env_values` row has `current_version_id` **and**
+    `deleted_at`, which nothing else leaves: a server that does not know
+    seeds reads it as deleted, in every path. The outer sealing is a value's
+    on purpose: the TypeScript export opens every stored version and refuses
+    as a whole when one does not open, so a purpose of its own there would
+    end reverse migrations.
+  - A retrieval resolves seeds apart (`State.Codes`, never `State.Items`),
+    so a path that delivers values has none to deliver, and `decrypt` and
+    `OpenForSync` refuse a version whose payload says it is a seed. Only an
+    exercise and a disclosure with `totpSeeds` open one (`openSeeds`).
+  - Written with `otpauth` in `value`'s place, so an older server refuses the
+    body. `value` and `otpauth` exclude each other; a value is refused where a
+    seed is, a seed for an item the Contract marks not sensitive, and a
+    rotation between the two.
+  - Which step's code is given is decided in `capability.exercised`'s own job
+    (`giveCodes`) and recorded in `one_time_codes_given` (schema version 5),
+    so two exercises that ask for a fresh code never get the same. Beside
+    Secrets that job is a second one, after their references resolved (the
+    first only looks whether there is a code to give): a refusal before it
+    gives no code and records none. The code
+    is the current step's or the next one's, never later; nothing waits. There
+    is one row per seed version, kept as long as it: a clock that ran ahead
+    and is set back forgets nothing.
+  - `server/capabilities` `totp_test.go` covers every path over HTTP.
 - **Parity.** `capabilities-v0.22.0.json`
   (go-capabilities-fixture.test.ts) replays 154 requests: issuance in
   every form and refusal (every target rule, every zod issue, the

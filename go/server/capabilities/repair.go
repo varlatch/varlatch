@@ -26,8 +26,8 @@ type Lifecycle struct {
 }
 
 // EndedByRetirement is endedByRetirement (domain/capabilityrepair.ts):
-// whether a retirement of one of a Capability's identities (its Agent or
-// its Broker) ends it. The audit log's order decides, never timestamps: an
+// whether a retirement of one of a Capability's identities (its Agent, its
+// Broker, or the issuer that issued it for another Broker) ends it. The audit log's order decides, never timestamps: an
 // identity retired now ends it; one with no identity.retired in its history
 // keeps it (a suspension by an Organization's deletion records none, and
 // reactivating an already-enabled identity is no retirement); otherwise,
@@ -64,8 +64,10 @@ var afterBatch func(n int)
 //
 // In write jobs of at most RepairBatch Capabilities each, by Organization
 // and id, so the single writer is never held for long, it revokes each
-// unexpired, unrevoked Capability that a retirement of its Agent or its
-// Broker ends (EndedByRetirement), by the identity's whole audit history,
+// unexpired, unrevoked Capability that a retirement of its Agent, its
+// Broker or, issued for another Broker, its issuer (ADR-0060) ends
+// (EndedByRetirement), so also what a release that revoked no issuer's at
+// retirement left live, by the identity's whole audit history,
 // not a window: an imported Capability may outlive a day, and a retirement
 // may be older than what it ends. Its reads go by the indexes of schema
 // version 3. Each revocation is audited as retirement's own
@@ -159,7 +161,11 @@ func repairBatch(ctx context.Context, tx *storage.Tx, at int64, afterOrg, afterI
 		var issued *int64
 		issuedRead := false
 		ended := ""
-		for _, id := range []string{c.AgentIdentityID, c.BrokerIdentityID} {
+		ids := []string{c.AgentIdentityID, c.BrokerIdentityID}
+		if c.CreatedBy != c.BrokerIdentityID {
+			ids = append(ids, c.CreatedBy)
+		}
+		for _, id := range ids {
 			retired, retiredOrder, err := identity(c.OrganizationID, id)
 			if err != nil {
 				return 0, "", "", false, err
@@ -207,9 +213,14 @@ func repairBatch(ctx context.Context, tx *storage.Tx, at int64, afterOrg, afterI
 		}); err != nil {
 			return 0, "", "", false, err
 		}
+		resource := jsvalue.Object{{Key: "capabilityId", Value: c.ID}}
+		if c.CreatedBy != c.BrokerIdentityID {
+			resource = append(resource, jsvalue.Member{Key: "brokerIdentityId", Value: c.BrokerIdentityID},
+				jsvalue.Member{Key: "issuedByIdentityId", Value: c.CreatedBy})
+		}
 		if _, err := audit.Record(ctx, tx, audit.Event{
 			Type: "capability.revoked", Decision: audit.Info, OrganizationID: &organizationID,
-			Action: &useAction, Resource: jsvalue.Object{{Key: "capabilityId", Value: c.ID}},
+			Action: &useAction, Resource: resource,
 			Metadata: jsvalue.Object{{Key: "reason", Value: "identity-retired"}, {Key: "identityId", Value: ended}},
 		}); err != nil {
 			return 0, "", "", false, err

@@ -10,11 +10,13 @@ import (
 	"encoding/hex"
 	"errors"
 	"slices"
-	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/lib/targets"
+	"github.com/varlatch/varlatch/go/lib/totp"
 	"github.com/varlatch/varlatch/go/server/audit"
 	"github.com/varlatch/varlatch/go/server/auth"
 	"github.com/varlatch/varlatch/go/server/authz"
@@ -32,7 +34,8 @@ import (
 // audit event before anything is decrypted.
 
 // RequireBroker is the routes' requireBroker: only a Broker of the
-// Organization may issue or exercise; anyone else learns nothing.
+// Organization exercises a Capability, or issues one for itself; anyone
+// else learns nothing.
 func RequireBroker(p *auth.Principal, organizationID string) error {
 	if p.Identity.Kind != "broker" || p.Identity.OrganizationID == nil || *p.Identity.OrganizationID != organizationID {
 		return domainerr.New("RESOURCE_NOT_FOUND", "Not found")
@@ -45,6 +48,62 @@ func HashSecret(secret string) string {
 	sum := sha256.Sum256([]byte(secret))
 	return hex.EncodeToString(sum[:])
 }
+
+// How a delegated or single-use Capability's secret is stored (ADR-0060):
+// its hash behind prefixes, so whether it is delegated and whether its single
+// use is spent are part of what a secret is matched by. A server that does
+// not know them (an earlier varlatchd after a rollback, the TypeScript server
+// after a reverse migration) matches no secret against any prefixed value,
+// and refuses the exercise.
+const (
+	delegatedPrefix = "for:"
+	singleUseUnused = "once:"
+	singleUseUsed   = "used:"
+)
+
+// StoredSecret is what a Capability's row keeps of its secret.
+func StoredSecret(secret string, delegated, singleUse bool) string {
+	h := HashSecret(secret)
+	if singleUse {
+		h = singleUseUnused + h
+	}
+	if delegated {
+		h = delegatedPrefix + h
+	}
+	return h
+}
+
+// SecretState reads a stored secret: its hash, whether the Capability is
+// delegated, whether it is single-use, and whether that use is spent.
+func SecretState(stored string) (hash string, delegated, singleUse, used bool) {
+	rest := stored
+	if h, ok := strings.CutPrefix(rest, delegatedPrefix); ok {
+		delegated = true
+		rest = h
+	}
+	if h, ok := strings.CutPrefix(rest, singleUseUnused); ok {
+		return h, delegated, true, false
+	}
+	if h, ok := strings.CutPrefix(rest, singleUseUsed); ok {
+		return h, delegated, true, true
+	}
+	return rest, delegated, false, false
+}
+
+func singleUseStored(hash string, delegated, used bool) string {
+	prefix := singleUseUnused
+	if used {
+		prefix = singleUseUsed
+	}
+	if delegated {
+		prefix = delegatedPrefix + prefix
+	}
+	return prefix + hash
+}
+
+// errCapabilityEnded is a single-use Capability another exercise or a
+// revocation got to first, between the snapshot and the use.
+var errCapabilityEnded = errors.New("values: the Capability was used or revoked meanwhile")
 
 // agentEvaluation is evaluateAgentSecretUse: the Agent's action on the
 // environment, with the Organization's Requirements and the request's
@@ -135,7 +194,7 @@ func (s *Service) CheckPrecondition(ctx context.Context, req Request, pre Precon
 			return err
 		}
 		secrets := map[string]bool{}
-		for _, it := range st.Items {
+		for _, it := range st.all() {
 			if it.Sensitive {
 				secrets[it.Name] = true
 			}
@@ -173,10 +232,15 @@ type Placement struct{ Item, Target string }
 
 // Exercise is an exercise's body.
 type Exercise struct {
-	Secret     string
-	Host       string
-	Port       int
-	Placements []Placement
+	Secret string
+	// Destination is where the Broker says the values go (ADR-0064).
+	Destination authz.Reported
+	Placements  []Placement
+	// MinValiditySeconds and Fresh are about the one-time codes (ADR-0061) and
+	// access tokens (ADR-0062) among the items: how long each must still be
+	// valid (0: no matter), and, for a code, that it was not given before.
+	MinValiditySeconds int64
+	Fresh              bool
 }
 
 // objectPrototype are the names a plain JavaScript object inherits:
@@ -194,12 +258,71 @@ var objectPrototype = []string{
 // refusal audited as capability.denied; then capability.exercised,
 // committed before the placed Secrets are decrypted, and each level of
 // references, audited before it is decrypted (ADR-0026: resolve or deny).
+//
+// An OAuth connection whose access token does not do (ADR-0062) is refreshed
+// first, when everything else about the exercise is in order and before
+// anything of it is recorded or spent; then the exercise is decided again
+// from its start, on a new snapshot, since a call to a provider takes time
+// in which a Grant, the Capability or the Organization's freeze may change.
 func (s *Service) ExerciseCapability(ctx context.Context, req Request, capabilityID string, parse func() (Exercise, error)) (jsvalue.Object, error) {
+	outcomes := refreshes{}
+	for round := range maxRefreshRounds {
+		out, stale, err := s.exercise(ctx, req, capabilityID, parse, outcomes, round == maxRefreshRounds-1)
+		if errors.Is(err, errTokenGone) {
+			continue // another token came in between: decided again
+		}
+		if err != nil || len(stale) == 0 {
+			return out, err
+		}
+		if err := s.refresh(ctx, stale, outcomes); err != nil {
+			return nil, err
+		}
+	}
+	return nil, errors.New("values: an exercise kept asking for refreshes")
+}
+
+// maxRefreshRounds is more than an exercise needs: each round asks for
+// connections that had none tried, or is one whose connection changed while
+// it was decided.
+const maxRefreshRounds = 6
+
+// refreshes is what became of the refreshes an exercise asked for, by value
+// row: nil for one that gave a token.
+type refreshes map[string]*NoToken
+
+// refresh asks for a new access token of each, all at once.
+func (s *Service) refresh(ctx context.Context, stale []Item, outcomes refreshes) error {
+	errs := make([]error, len(stale))
+	var wg sync.WaitGroup
+	for i, it := range stale {
+		wg.Go(func() {
+			if s.tokens == nil {
+				errs[i] = &NoToken{Status: it.Connection.Status, Reason: "unavailable"}
+				return
+			}
+			errs[i] = s.tokens.Refresh(ctx, it.ValueRowID, it.Connection.Generation)
+		})
+	}
+	wg.Wait()
+	for i, it := range stale {
+		var none *NoToken
+		if errs[i] != nil && !errors.As(errs[i], &none) {
+			return errs[i]
+		}
+		outcomes[it.ValueRowID] = none
+	}
+	return nil
+}
+
+// exercise is one round: the answer, or the connections to refresh first, or
+// errTokenGone, which the last round refuses.
+func (s *Service) exercise(ctx context.Context, req Request, capabilityID string, parse func() (Exercise, error), refreshed refreshes, last bool) (jsvalue.Object, []Item, error) {
 	t := &tracker{}
 	var st State
 	var in Exercise
 	var row *query.Capability
 	var use, plainRead authz.Evaluation
+	issuerAllowed := true
 	bound := map[string]bool{}
 	err := s.snapshot(ctx, func(tx *sql.Tx, now int64) error {
 		var err error
@@ -239,7 +362,14 @@ func (s *Service) ExerciseCapability(ctx context.Context, req Request, capabilit
 			if plainRead, err = agentEvaluation(ctx, tx, &st, r.AgentIdentityID, "config.value.read"); err != nil {
 				return err
 			}
+			if r.CreatedBy != r.BrokerIdentityID {
+				if issuerAllowed, err = issuerMayIssue(ctx, tx, &st, r.CreatedBy); err != nil {
+					return err
+				}
+			}
 		}
+		st.wantsCode = func(it Item) bool { return bound[it.Name] }
+		st.wantsToken = st.wantsCode
 		if err := capture(ctx, tx, &st, now, func(it Item) bool {
 			if it.Sensitive {
 				return bound[it.Name]
@@ -252,10 +382,19 @@ func (s *Service) ExerciseCapability(ctx context.Context, req Request, capabilit
 		return t.requireAccess(ctx, tx, req, st.Org.ID, now)
 	})
 	if err != nil {
-		return nil, s.refused(ctx, req, t, err)
+		return nil, nil, s.refused(ctx, req, t, err)
 	}
 	broker := req.Principal.Identity.ID
-	destination := in.Host + ":" + strconv.Itoa(in.Port)
+	reading := in.Destination.Read(broker)
+	// where is the destination in the audit log: of a host as it always was,
+	// of a page or an application its kind too, and the page around it.
+	where := jsvalue.Object{{Key: "destination", Value: reading.Text}}
+	if reading.Kind != authz.PlaceHost {
+		where = append(where, jsvalue.Member{Key: "destinationKind", Value: reading.Kind})
+		if reading.Top != "" {
+			where = append(where, jsvalue.Member{Key: "topDestination", Value: reading.Top})
+		}
+	}
 	resource := func() jsvalue.Object {
 		var agent any
 		if row != nil {
@@ -264,68 +403,111 @@ func (s *Service) ExerciseCapability(ctx context.Context, req Request, capabilit
 		return jsvalue.Object{{Key: "capabilityId", Value: capabilityID}, {Key: "agentIdentityId", Value: agent},
 			{Key: "projectId", Value: st.Project.ID}, {Key: "environmentId", Value: st.Env.ID}}
 	}
+	// issuer names who issued the Capability, when that is not its Broker.
+	issuer := func() jsvalue.Object {
+		if row == nil || row.CreatedBy == row.BrokerIdentityID {
+			return nil
+		}
+		return jsvalue.Object{{Key: "issuedByIdentityId", Value: row.CreatedBy}}
+	}
+	// spent is set while this exercise holds a single-use Capability's use.
+	spent := false
 	deny := func(reason string, detail ...jsvalue.Member) error {
-		md := append(jsvalue.Object{{Key: "reason", Value: reason}, {Key: "destination", Value: destination}}, detail...)
+		md := slices.Concat(jsvalue.Object{{Key: "reason", Value: reason}}, where, detail, issuer())
 		event := audit.Event{
 			Type: "capability.denied", Decision: audit.Deny, ActorIdentityID: ptr(broker), OrganizationID: ptr(st.Org.ID),
 			Action: ptr("secret.use"), Resource: resource(), RequestID: ptr(req.RequestID), Metadata: md,
 		}
-		if err := s.store.Write(ctx, func(tx *storage.Tx) error { _, err := audit.Record(ctx, tx, event); return err }); err != nil {
+		if err := s.store.Write(ctx, func(tx *storage.Tx) error {
+			if spent {
+				// Refused after all: the use is not spent.
+				hash, delegated, _, _ := SecretState(row.SecretHash)
+				if err := query.New(tx).ReleaseCapability(ctx, query.ReleaseCapabilityParams{
+					ID:     row.ID,
+					Used:   singleUseStored(hash, delegated, true),
+					Unused: singleUseStored(hash, delegated, false),
+				}); err != nil {
+					return err
+				}
+			}
+			_, err := audit.Record(ctx, tx, event)
+			return err
+		}); err != nil {
 			return err
 		}
 		return exerciseRefusal(reason, detail, authz.TailnetFrom(ctx) != nil)
 	}
 
 	if row == nil {
-		return nil, deny("not-found")
+		return nil, nil, deny("not-found")
 	}
 	if row.BrokerIdentityID != broker {
-		return nil, deny("wrong-broker")
+		return nil, nil, deny("wrong-broker")
 	}
-	if subtle.ConstantTimeCompare([]byte(HashSecret(in.Secret)), []byte(row.SecretHash)) != 1 {
-		return nil, deny("bad-secret")
+	// An exercise-only credential bound to a run exercises that run's
+	// Capabilities; another run's is as unknown to it as another Broker's.
+	if x := req.Principal.Credential.ExerciseOnly; x != nil && x.RunID != nil && (!row.RunID.Valid || row.RunID.String != *x.RunID) {
+		return nil, nil, deny("wrong-run")
+	}
+	hash, delegated, singleUse, used := SecretState(row.SecretHash)
+	if subtle.ConstantTimeCompare([]byte(HashSecret(in.Secret)), []byte(hash)) != 1 {
+		return nil, nil, deny("bad-secret")
 	}
 	if row.RevokedAt.Valid {
-		return nil, deny("revoked")
+		return nil, nil, deny("revoked")
+	}
+	if used {
+		return nil, nil, deny("already-used")
 	}
 	if row.ExpiresAt/1000 <= st.Now/1000 {
-		return nil, deny("expired")
+		return nil, nil, deny("expired")
+	}
+	// Issued for this Broker by another identity: that identity may still
+	// issue here (it is live and its Grant holds), as of this exercise.
+	if !issuerAllowed {
+		return nil, nil, deny("issuer-not-allowed")
 	}
 	selectors, err := stringList(row.Destinations)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	matched := false
+	places := make([]authz.Place, 0, len(selectors))
 	for _, raw := range selectors {
-		if sel, ok := authz.ParseDestinationSelector(raw); ok && sel.Matches(authz.Destination{Host: in.Host, Port: in.Port}) {
-			matched = true
+		if p, ok := authz.ParsePlace(raw); ok {
+			places = append(places, p)
 		}
 	}
-	if !matched {
-		return nil, deny("destination-mismatch")
+	matched, ok := reading.Match(places)
+	if !ok {
+		return nil, nil, deny("destination-mismatch")
 	}
 
 	// Substitution targets (ADR-0039 Decisions 7 and 9): a Capability issued
 	// before targets is never exercised, and the Broker names each
 	// substitution it will make; only those items are returned.
 	if !row.Targets.Valid {
-		return nil, deny("capability-without-targets")
+		return nil, nil, deny("capability-without-targets")
 	}
 	parsed, err := jsvalue.Parse([]byte(row.Targets.String))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	held, _ := jsvalue.Jsonb(parsed).(jsvalue.Object)
 	if len(in.Placements) == 0 {
-		return nil, deny("placement-not-targeted")
+		return nil, nil, deny("placement-not-targeted")
 	}
 	for _, p := range in.Placements {
 		list, own := held.Get(p.Item)
 		if !own && slices.Contains(objectPrototype, p.Item) {
-			return nil, errors.New("values: a placement names a member of Object.prototype (the TypeScript server's TypeError)")
+			return nil, nil, errors.New("values: a placement names a member of Object.prototype (the TypeScript server's TypeError)")
 		}
 		if l, ok := list.([]any); !ok || !slices.Contains(l, any(p.Target)) {
-			return nil, deny("placement-not-targeted", jsvalue.Member{Key: "item", Value: p.Item}, jsvalue.Member{Key: "target", Value: p.Target})
+			return nil, nil, deny("placement-not-targeted", jsvalue.Member{Key: "item", Value: p.Item}, jsvalue.Member{Key: "target", Value: p.Target})
+		}
+		if !authz.Takes(reading.Kind, targets.Kind(p.Target)) {
+			// Recorded as an allowed one's placements are: a request's target
+			// may hold what does not show as it is.
+			return nil, nil, deny("placement-not-for-destination", jsvalue.Member{Key: "item", Value: p.Item}, jsvalue.Member{Key: "target", Value: targets.Recorded(p.Target)})
 		}
 	}
 	var placed []string
@@ -346,48 +528,232 @@ func (s *Service) ExerciseCapability(ctx context.Context, req Request, capabilit
 			plainByName[it.Name] = it
 		}
 	}
-	var selected []Item
+	codes := map[string]Item{}
+	for _, it := range st.Codes {
+		codes[it.Name] = it
+	}
+	connections := map[string]Item{}
+	for _, it := range st.Connections {
+		connections[it.Name] = it
+	}
+	var selected, selectedCodes, selectedConnections []Item
 	withheld := []any{}
 	for _, name := range placed {
 		if it, ok := secrets[name]; ok {
 			selected = append(selected, it)
+		} else if it, ok := codes[name]; ok {
+			selectedCodes = append(selectedCodes, it)
+		} else if it, ok := connections[name]; ok {
+			selectedConnections = append(selectedConnections, it)
 		} else {
 			withheld = append(withheld, name)
 		}
 	}
 	if !use.Allowed {
 		if use.Denial == "requirement-failed" {
-			return nil, deny("requirement-failed")
+			return nil, nil, deny("requirement-failed")
 		}
-		return nil, deny("authz-denied")
+		return nil, nil, deny("authz-denied")
+	}
+
+	wanted, err := codesWanted(&st, selectedCodes)
+	if err != nil {
+		return nil, nil, err
+	}
+	if name := tooLong(wanted, in.MinValiditySeconds); name != "" {
+		return nil, nil, deny("min-validity-too-long", jsvalue.Member{Key: "item", Value: name},
+			jsvalue.Member{Key: "periodSeconds", Value: codes[name].Code.Period})
+	}
+
+	// The connections: each one's hosts name the destination, it can be used
+	// at all, and its access token does, or is refreshed first (and what a
+	// refresh gave is what there is).
+	minValidity := time.Duration(in.MinValiditySeconds) * time.Second
+	var stale []Item
+	for _, it := range selectedConnections {
+		c, item := it.Connection, jsvalue.Member{Key: "item", Value: it.Name}
+		if !c.reaches(reading) {
+			return nil, nil, deny("destination-mismatch", item)
+		}
+		if why := c.usable(); why != "" {
+			return nil, nil, deny(why, append(jsvalue.Object{item}, reasonOf(c)...)...)
+		}
+		now := s.now().UnixMicro()
+		needs, enough := c.needsRefresh(minValidity, now)
+		outcome, tried := refreshed[it.ValueRowID]
+		// For a longer validity and nothing else, one is asked for once a
+		// minute at most.
+		if anyway, _ := c.needsRefresh(0, now); needs && !anyway {
+			switch wait := c.gapLeft(now); {
+			case wait == 0 || outcome != nil:
+			case in.MinValiditySeconds >= c.Lifetime:
+				// The next one would not last longer.
+				return nil, nil, deny("min-validity-too-long", item, jsvalue.Member{Key: "lifetimeSeconds", Value: c.Lifetime})
+			case !tried:
+				return nil, nil, deny("connection-unavailable", item, jsvalue.Member{Key: "cause", Value: "just-refreshed"},
+					jsvalue.Member{Key: "retryAfterSeconds", Value: max(1, int64((wait+time.Second-1)/time.Second))})
+			}
+		}
+		switch {
+		case needs && !tried:
+			stale = append(stale, it)
+		case enough || !needs:
+		case outcome == nil && c.HasToken && c.gapLeft(now) > 0 && in.MinValiditySeconds > 0:
+			// Just given, and it does not last as long.
+			left := max(0, int64(time.Duration(c.ExpiresAt-now)*time.Microsecond/time.Second))
+			return nil, nil, deny("min-validity-too-long", item, jsvalue.Member{Key: "lifetimeSeconds", Value: left})
+		case outcome != nil && outcome.RetryAfter <= 0:
+			return nil, nil, deny("connection-needs-reconnect", item, jsvalue.Member{Key: "cause", Value: outcome.Reason})
+		default:
+			after, cause := time.Second, "changed"
+			if outcome != nil {
+				after, cause = outcome.RetryAfter, outcome.Reason
+			}
+			return nil, nil, deny("connection-unavailable", item, jsvalue.Member{Key: "cause", Value: cause},
+				jsvalue.Member{Key: "retryAfterSeconds", Value: max(1, int64((after+time.Second-1)/time.Second))})
+		}
+	}
+	if len(stale) > 0 {
+		return nil, stale, nil
 	}
 
 	runID := nullable(row.RunID)
-	entries := make([]string, len(selected))
 	var versions []string
-	for i, it := range selected {
-		entries[i] = it.Name + "@" + it.VersionID
+	for _, it := range selected {
 		versions = append(versions, it.VersionID)
 		if it.RetiringVersionID != "" {
-			entries[i] += "+" + it.RetiringVersionID
 			versions = append(versions, it.RetiringVersionID)
 		}
 	}
-	placements := make([]string, len(in.Placements))
-	for i, p := range in.Placements {
-		placements[i] = p.Item + "=" + p.Target
+	// The selector that named it is in what was exercised, and in no
+	// denial: one has the same members whatever refused it.
+	exercisedWhere := where
+	if reading.Kind != authz.PlaceHost {
+		exercisedWhere = slices.Concat(where, jsvalue.Object{{Key: "selector", Value: matched.String()}})
 	}
-	plaintext, err := s.auditThenDecrypt(ctx, &st, []audit.Event{{
-		Type: "capability.exercised", Decision: audit.Allow, ActorIdentityID: ptr(broker), OrganizationID: ptr(st.Org.ID),
-		Action: ptr("secret.use"), Resource: resource(), Authz: authz.AuditAuthz(use), RequestID: ptr(req.RequestID),
-		Metadata: jsvalue.Object{
-			{Key: "destination", Value: destination}, {Key: "items", Value: strings.Join(entries, ",")},
-			{Key: "placements", Value: strings.Join(placements, ";")}, {Key: "withheld", Value: len(withheld)}, {Key: "runId", Value: runID},
-		},
-	}}, versions, nil)
+	// exercised is capability.exercised of these items, with the placements
+	// and the withheld names that are theirs.
+	exercised := func(items []Item, theirs func(name string) bool, withheld int) audit.Event {
+		entries := make([]string, len(items))
+		for i, it := range items {
+			entries[i] = it.Name + "@" + it.VersionID
+			if it.RetiringVersionID != "" {
+				entries[i] += "+" + it.RetiringVersionID
+			}
+		}
+		placements := make([]string, 0, len(in.Placements))
+		for _, p := range in.Placements {
+			if theirs(p.Item) {
+				placements = append(placements, p.Item+"="+targets.Recorded(p.Target))
+			}
+		}
+		return audit.Event{
+			Type: "capability.exercised", Decision: audit.Allow, ActorIdentityID: ptr(broker), OrganizationID: ptr(st.Org.ID),
+			Action: ptr("secret.use"), Resource: resource(), Authz: authz.AuditAuthz(use), RequestID: ptr(req.RequestID),
+			Metadata: slices.Concat(exercisedWhere, jsvalue.Object{
+				{Key: "items", Value: strings.Join(entries, ",")},
+				{Key: "placements", Value: strings.Join(placements, ";")}, {Key: "withheld", Value: withheld}, {Key: "runId", Value: runID},
+			}, issuer()),
+		}
+	}
+	isCode := func(name string) bool { _, ok := codes[name]; return ok }
+	// Codes beside Secrets are given last, with an event of their own: a
+	// Secret's references may still refuse the exercise, which then gave no
+	// code, used none up and says of none that it did.
+	codesLast := len(selected) > 0 && len(wanted) > 0
+	event := exercised(slices.Concat(selected, selectedCodes, selectedConnections), func(string) bool { return true }, len(withheld))
+	if codesLast {
+		event = exercised(slices.Concat(selected, selectedConnections), func(name string) bool { return !isCode(name) }, len(withheld))
+	}
+	if len(selectedConnections) > 0 {
+		event.Metadata = append(event.Metadata, jsvalue.Member{Key: "oauthTokens", Value: tokensGiven(selectedConnections)})
+		if (len(wanted) == 0 || codesLast) && in.MinValiditySeconds > 0 {
+			event.Metadata = append(event.Metadata, jsvalue.Member{Key: "minValiditySeconds", Value: in.MinValiditySeconds})
+		}
+	}
+	var spend beforeAudit
+	ended := "already-used"
+	// A single-use Capability spends its use only when at least one item is
+	// delivered: an exercise whose placed items all have no value leaves it
+	// unused.
+	shouldSpend := singleUse && len(selected)+len(selectedCodes)+len(selectedConnections) > 0
+	if shouldSpend {
+		event.Metadata = append(event.Metadata, jsvalue.Member{Key: "singleUse", Value: true})
+		// The use is spent in capability.exercised's own job: two exercises
+		// at once, and only one of them has it. From here on it stays
+		// spent, whatever becomes of the answer, unless deny takes it back.
+		spend = func(ctx context.Context, tx *storage.Tx) (jsvalue.Object, error) {
+			q := query.New(tx)
+			n, err := q.UseCapability(ctx, query.UseCapabilityParams{
+				ID:     row.ID,
+				Unused: singleUseStored(hash, delegated, false),
+				Used:   singleUseStored(hash, delegated, true),
+			})
+			if err != nil || n == 1 {
+				return nil, err
+			}
+			now, err := q.CapabilityOf(ctx, query.CapabilityOfParams{ID: row.ID, OrganizationID: st.Org.ID, EnvironmentID: st.Env.ID})
+			if err != nil {
+				return nil, err
+			}
+			if now.RevokedAt.Valid {
+				ended = "revoked"
+			}
+			return nil, errCapabilityEnded
+		}
+	}
+	var steps map[string]int64
+	// Which code each seed gives is decided and recorded in the same job:
+	// two exercises that ask for a fresh one never get the same. Refused
+	// (notFresh), nothing of the job stays, a single use neither.
+	give := func(ctx context.Context, tx *storage.Tx, record bool) (md jsvalue.Object, err error) {
+		steps, md, err = giveCodes(ctx, tx, wanted, minValidity, in.Fresh, s.now(), record)
+		return md, err
+	}
+	refused := func(err error) error {
+		if late := (*notFresh)(nil); errors.As(err, &late) {
+			return deny("no-fresh-code", jsvalue.Member{Key: "item", Value: late.item},
+				jsvalue.Member{Key: "retryAfterSeconds", Value: max(1, int64((late.after+time.Second-1)/time.Second))})
+		}
+		return err
+	}
+	plaintext, err := s.auditThenDecrypt(ctx, &st, []audit.Event{event}, versions, func(ctx context.Context, tx *storage.Tx) (jsvalue.Object, error) {
+		if len(selectedConnections) > 0 {
+			if err := stillUsable(ctx, tx, selectedConnections); err != nil {
+				return nil, err
+			}
+		}
+		if spend != nil {
+			if _, err := spend(ctx, tx); err != nil {
+				return nil, err
+			}
+		}
+		switch {
+		case len(wanted) == 0:
+			return nil, nil
+		case codesLast:
+			// Not given yet: only whether there is one, before any Secret
+			// is opened.
+			_, err := give(ctx, tx, false)
+			return nil, err
+		default:
+			return give(ctx, tx, true)
+		}
+	})
+	if errors.Is(err, errCapabilityEnded) {
+		return nil, nil, deny(ended)
+	}
+	if errors.Is(err, errTokenGone) && !last {
+		return nil, nil, errTokenGone
+	}
+	if errors.Is(err, errTokenGone) {
+		return nil, nil, deny("connection-unavailable", jsvalue.Member{Key: "item", Value: selectedConnections[0].Name},
+			jsvalue.Member{Key: "cause", Value: "changed"}, jsvalue.Member{Key: "retryAfterSeconds", Value: int64(1)})
+	}
 	if err != nil {
-		return nil, err
+		return nil, nil, refused(err)
 	}
+	spent = shouldSpend
 
 	type out struct {
 		item     Item
@@ -428,16 +794,28 @@ func (s *Service) ExerciseCapability(ctx context.Context, req Request, capabilit
 				}
 				if it, ok := secrets[name]; ok {
 					if !bound[name] {
-						return nil, deny("unresolved-reference", jsvalue.Member{Key: "reference", Value: name},
+						return nil, nil, deny("unresolved-reference", jsvalue.Member{Key: "reference", Value: name},
 							jsvalue.Member{Key: "referencedBy", Value: f.by}, jsvalue.Member{Key: "cause", Value: "secret-not-bound"})
 					}
 					queued[name] = true
 					secretNeeded = append(secretNeeded, it)
 					continue
 				}
+				if _, ok := codes[name]; ok {
+					// A reference never gives a seed, nor a code: a code is
+					// asked for by placing its item.
+					return nil, nil, deny("unresolved-reference", jsvalue.Member{Key: "reference", Value: name},
+						jsvalue.Member{Key: "referencedBy", Value: f.by}, jsvalue.Member{Key: "cause", Value: "one-time-code"})
+				}
+				if _, ok := connections[name]; ok {
+					// Nor an access token: where it is placed is what the audit
+					// says it was used for.
+					return nil, nil, deny("unresolved-reference", jsvalue.Member{Key: "reference", Value: name},
+						jsvalue.Member{Key: "referencedBy", Value: f.by}, jsvalue.Member{Key: "cause", Value: "oauth-connection"})
+				}
 				it, ok := plainByName[name]
 				if !ok {
-					return nil, deny("unresolved-reference", jsvalue.Member{Key: "reference", Value: name},
+					return nil, nil, deny("unresolved-reference", jsvalue.Member{Key: "reference", Value: name},
 						jsvalue.Member{Key: "referencedBy", Value: f.by}, jsvalue.Member{Key: "cause", Value: "unknown-item"})
 				}
 				queued[name] = true
@@ -448,7 +826,7 @@ func (s *Service) ExerciseCapability(ctx context.Context, req Request, capabilit
 			break
 		}
 		if len(plainNeeded) > 0 && !plainRead.Allowed {
-			return nil, deny("unresolved-reference", jsvalue.Member{Key: "reference", Value: plainNeeded[0].Name},
+			return nil, nil, deny("unresolved-reference", jsvalue.Member{Key: "reference", Value: plainNeeded[0].Name},
 				jsvalue.Member{Key: "referencedBy", Value: plainBy[0]}, jsvalue.Member{Key: "cause", Value: "plain-read-denied"})
 		}
 		var events []audit.Event
@@ -480,7 +858,7 @@ func (s *Service) ExerciseCapability(ctx context.Context, req Request, capabilit
 		}
 		decrypted, err := s.auditThenDecrypt(ctx, &st, events, ids, nil)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		frontier = frontier[:0]
 		for _, it := range level {
@@ -489,21 +867,80 @@ func (s *Service) ExerciseCapability(ctx context.Context, req Request, capabilit
 			frontier = append(frontier, ref{it.Name, v})
 		}
 	}
-	items := make([]any, len(results))
-	for i, r := range results {
+	items := make([]any, 0, len(placed))
+	for _, r := range results {
 		value, err := expandStrict(r.value, func(n string) (string, bool) { v, ok := lookup[n]; return v, ok })
 		if err != nil {
-			return nil, deny("unresolved-reference", jsvalue.Member{Key: "referencedBy", Value: r.item.Name},
+			return nil, nil, deny("unresolved-reference", jsvalue.Member{Key: "referencedBy", Value: r.item.Name},
 				jsvalue.Member{Key: "cause", Value: "incomplete-or-excessive-expansion"})
 		}
 		o := jsvalue.Object{{Key: "name", Value: r.item.Name}, {Key: "versionId", Value: r.item.VersionID}, {Key: "value", Value: value}}
 		if r.retiring != nil {
 			o = append(o, jsvalue.Member{Key: "retiring", Value: jsvalue.Object{{Key: "versionId", Value: r.item.RetiringVersionID}, {Key: "value", Value: *r.retiring}}})
 		}
-		items[i] = o
+		items = append(items, o)
+	}
+	if codesLast {
+		if _, err := s.auditThenDecrypt(ctx, &st, []audit.Event{exercised(selectedCodes, isCode, 0)}, nil, func(ctx context.Context, tx *storage.Tx) (jsvalue.Object, error) {
+			return give(ctx, tx, true)
+		}); err != nil {
+			return nil, nil, refused(err)
+		}
+	}
+	var codeVersions []string
+	for _, w := range wanted {
+		codeVersions = append(codeVersions, w.versionID)
+	}
+	var seeds map[string]totp.Seed
+	if len(wanted) > 0 {
+		if seeds, err = s.openSeeds(&st, codeVersions); err != nil {
+			return nil, nil, err
+		}
+		defer func() {
+			for _, seed := range seeds {
+				seed.Clear()
+			}
+		}()
+	}
+	// The codes and the access tokens last, so what they have left is counted
+	// from the answer.
+	now := s.now()
+	for _, it := range selectedConnections {
+		token, err := s.openToken(&st, it)
+		if err != nil {
+			return nil, nil, err
+		}
+		items = append(items, tokenJS(it, token, now))
+	}
+	for _, it := range selectedCodes {
+		o := append(jsvalue.Object{{Key: "name", Value: it.Name}, {Key: "versionId", Value: it.VersionID}, {Key: "kind", Value: "totp"}},
+			codeJS(seeds[it.VersionID], steps[it.VersionID], now)...)
+		if it.RetiringVersionID != "" {
+			o = append(o, jsvalue.Member{Key: "retiring", Value: append(jsvalue.Object{{Key: "versionId", Value: it.RetiringVersionID}},
+				codeJS(seeds[it.RetiringVersionID], steps[it.RetiringVersionID], now)...)})
+		}
+		items = append(items, o)
 	}
 	s.settle(t)
-	return jsvalue.Object{{Key: "items", Value: items}, {Key: "withheld", Value: withheld}, {Key: "targets", Value: held}}, nil
+	return jsvalue.Object{{Key: "items", Value: items}, {Key: "withheld", Value: withheld}, {Key: "targets", Value: held}}, nil, nil
+}
+
+// issuerMayIssue is whether the identity that issued a Capability for
+// another may still issue in st's environment: live, of a kind that may,
+// and holding capability.issue.
+func issuerMayIssue(ctx context.Context, db query.DBTX, st *State, issuerID string) (bool, error) {
+	id, err := query.New(db).GetIdentity(ctx, issuerID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil || id.Disabled || !authz.MayIssueCapabilities(id.Kind) || id.OrganizationID.String != st.Org.ID {
+		return false, err
+	}
+	grants, err := authz.LoadGrants(ctx, db, st.Org.ID, issuerID)
+	if err != nil {
+		return false, err
+	}
+	return authz.Evaluate(authz.Input{Action: authz.CapabilityIssue, Resource: st.resource(), Grants: grants}).Allowed, nil
 }
 
 // exerciseRefusal is the error deny throws for reason. Existence is hidden:
@@ -517,22 +954,50 @@ func exerciseRefusal(reason string, detail jsvalue.Object, tailnet bool) error {
 	}
 	details := append(jsvalue.Object{{Key: "reason", Value: reason}}, detail...)
 	switch reason {
-	case "not-found", "wrong-broker", "bad-secret":
+	case "not-found", "wrong-broker", "wrong-run", "bad-secret":
 		return domainerr.New("RESOURCE_NOT_FOUND", "Capability not found")
 	case "requirement-failed":
 		if tailnet {
 			return domainerr.New("TAILNET_CONTEXT_UNAVAILABLE", "Tailnet Context does not satisfy the required selector")
 		}
 		return domainerr.New("TAILNET_CONTEXT_REQUIRED", "This exercise requires trusted Tailnet Context")
+	case "already-used":
+		return &domainerr.Error{Code: "PERMISSION_DENIED", Message: "This Capability may be exercised once, and was", Details: details}
+	case "issuer-not-allowed":
+		return &domainerr.Error{Code: "PERMISSION_DENIED", Message: "The identity that issued this Capability may no longer issue Capabilities here", Details: details}
 	case "capability-without-targets":
 		return &domainerr.Error{Code: "PERMISSION_DENIED", Details: details,
 			Message: "This Capability was issued before substitution targets were required. Restart the agent-safe run with Varlatch CLI 0.11.0 or later."}
+	case "placement-not-for-destination":
+		return &domainerr.Error{Code: "PERMISSION_DENIED", Message: "The target " + get("target") + " of " + get("item") + " is none of a destination of this kind", Details: details}
 	case "placement-not-targeted":
 		msg := "The Broker named a placement this Capability does not hold"
 		if get("item") != "" {
 			msg += " (" + get("item") + " at " + get("target") + ")"
 		}
 		return &domainerr.Error{Code: "PERMISSION_DENIED", Message: msg, Details: details}
+	case "connection-unavailable":
+		after, _ := detail.Get("retryAfterSeconds")
+		return &domainerr.Error{Code: "RATE_LIMITED", Details: details,
+			Message: "There is no access token of " + get("item") + " now (" + get("cause") + "): ask again in " + seconds(after.(int64))}
+	case "connection-paused":
+		return &domainerr.Error{Code: "PERMISSION_DENIED", Message: "The OAuth connection " + get("item") + " is paused", Details: details}
+	case "connection-not-connected", "connection-revoked":
+		return &domainerr.Error{Code: "PERMISSION_DENIED", Message: "The OAuth connection " + get("item") + " is not connected", Details: details}
+	case "connection-needs-reconnect":
+		return &domainerr.Error{Code: "PERMISSION_DENIED", Message: "The OAuth connection " + get("item") + " has to be connected again by a person", Details: details}
+	case "min-validity-too-long":
+		if lasts, ok := detail.Get("lifetimeSeconds"); ok {
+			return &domainerr.Error{Code: "VALIDATION_FAILED", Details: details,
+				Message: "An access token of " + get("item") + " lasts " + seconds(lasts.(int64)) + ": minValiditySeconds cannot be more"}
+		}
+		period, _ := detail.Get("periodSeconds")
+		return &domainerr.Error{Code: "VALIDATION_FAILED", Details: details,
+			Message: "A code of " + get("item") + " lasts " + seconds(period.(int64)) + ": minValiditySeconds cannot be more"}
+	case "no-fresh-code":
+		after, _ := detail.Get("retryAfterSeconds")
+		return &domainerr.Error{Code: "RATE_LIMITED", Details: details,
+			Message: "A code of " + get("item") + " for the next period or a later one was given before: a fresh one can be asked for in " + seconds(after.(int64))}
 	case "unresolved-reference":
 		reference, has := detail.Get("reference")
 		if !has {
@@ -542,6 +1007,10 @@ func exerciseRefusal(reason string, detail jsvalue.Object, tailnet bool) error {
 		switch get("cause") {
 		case "secret-not-bound":
 			which = "is a Secret this Capability does not name \u2014 bind it in the Capability's items"
+		case "one-time-code":
+			which = "is a one-time code: a reference gives neither the code nor its seed"
+		case "oauth-connection":
+			which = "is an OAuth connection: a reference does not give its access token"
 		case "plain-read-denied":
 			which = "the Agent's Grants do not allow reading here (config.value.read)"
 		default:

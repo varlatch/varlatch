@@ -9,6 +9,7 @@ import {
   type AuditEventLike,
   type NameResolver,
 } from "../src/features/audit/describe";
+import { placeLabel, withoutTLS } from "../src/features/access/places";
 
 const names: NameResolver = {
   ...emptyResolver,
@@ -207,6 +208,47 @@ describe("authorizationSummary", () => {
 
   it("counts the grants that allowed a request", () => {
     expect(authorizationSummary(event({ decision: "allow", authorization: { grantIds: ["g1", "g2"] } }))).toBe("Allowed by 2 grants.");
+  });
+});
+
+describe("values typed into pages and applications (ADR-0064)", () => {
+  const used = (metadata: Record<string, unknown>, eventType = "capability.exercised") =>
+    sentence(event({ eventType, resource: { agentIdentityId: "idn_agent", projectId: "prj_api", environmentId: "env_prod" }, metadata: { items: "API_KEY@ver_1", ...metadata } }));
+  it("says where, as the broker said, and nothing more of a host", () => {
+    expect(used({ destination: "api.example.com:443" })).toBe("used API_KEY for claude-code-agent in api / production");
+    expect(used({ destination: "web:https://portal.example.com:443/login", destinationKind: "web" })).toBe("used API_KEY for claude-code-agent at https://portal.example.com/login in api / production");
+    expect(used({ destination: "app:CRM Client@idn_abc2", destinationKind: "app" })).toBe("used API_KEY for claude-code-agent in CRM Client on its machine in api / production");
+    expect(used({ reason: "destination-mismatch", destination: "web:unreadable", destinationKind: "web" }, "capability.denied")).toBe("was refused a capability use at web:unreadable in api / production");
+  });
+  it("warns of a page without TLS, its own or the one around it", () => {
+    const http = "web:http://intra.example:80/login";
+    expect(used({ destination: http, destinationKind: "web" })).toBe("used API_KEY for claude-code-agent at http://intra.example/login (http: not encrypted) in api / production");
+    expect(used({ reason: "destination-mismatch", destination: http, destinationKind: "web" }, "capability.denied")).toContain("at http://intra.example/login (http: not encrypted)");
+    expect(used({ destination: "web:https://a.example:443/f", topDestination: http, destinationKind: "web" })).toContain("https://a.example/f (http: not encrypted)");
+    expect(["web:https://a.example:443/http://", "web:80", "http.example.com:80", "app:web:http://x@idn_abc2"].filter(withoutTLS)).toEqual([]);
+  });
+  it("labels a destination", () => {
+    const name = (id: string) => (id === "idn_abc2" ? "desk-7" : id);
+    expect(["api.example.com:443", "web:443", "web:https://portal.example.com:443/", "web:http://*.intra.example:8080/a", "web:https://[2001:db8::1]:443/x", "app:CRM: Client@idn_abc2"].map((d) => placeLabel(d, name))).toEqual([
+      "api.example.com:443", "web:443", "https://portal.example.com", "http://*.intra.example:8080/a", "https://[2001:db8::1]/x", "CRM: Client on desk-7",
+    ]);
+  });
+});
+
+describe("capabilities for another broker and exercise-only sign-ins (ADR-0060)", () => {
+  const issued = (over: Partial<AuditEventLike>) =>
+    sentence(event({ eventType: "capability.issued", resource: { agentIdentityId: "idn_agent", projectId: "prj_api", environmentId: "env_prod", ...over.resource }, metadata: { items: "API_KEY", ...over.metadata } }));
+  it("names the broker it is for and that it works once, only when they are said", () => {
+    expect(issued({})).toBe("let claude-code-agent use API_KEY in api / production");
+    expect(issued({ resource: { brokerIdentityId: "idn_admin" }, metadata: { singleUse: true } })).toBe("let claude-code-agent use API_KEY through Dev Admin once in api / production");
+  });
+  it("says what an exercise-only sign-in allows, and what its credential was denied", () => {
+    const created = { eventType: "oidc_binding.created", resource: { identityId: "idn_agent" } };
+    expect(sentence(event({ ...created, metadata: {} }))).toBe("let claude-code-agent sign in with OIDC");
+    expect(sentence(event({ ...created, metadata: { exerciseOnly: true } }))).toBe("let claude-code-agent use capabilities, and nothing else, with OIDC");
+    expect(sentence(event({ eventType: "authorization.denied", decision: "deny", metadata: { reason: "exercise_only_credential" } }))).toBe(
+      "was denied a request its exercise-only credential may not make",
+    );
   });
 });
 

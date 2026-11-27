@@ -64,32 +64,37 @@ func (e AccessCheckWhere) Valid() bool {
 
 // Defines values for Action.
 const (
-	ActionAuditRead          Action = "audit.read"
-	ActionConfigMetadataRead Action = "config.metadata.read"
-	ActionConfigSyncManage   Action = "config.sync.manage"
-	ActionConfigValueRead    Action = "config.value.read"
-	ActionConfigValueWrite   Action = "config.value.write"
-	ActionContractActivate   Action = "contract.activate"
-	ActionContractRead       Action = "contract.read"
-	ActionContractSubmit     Action = "contract.submit"
-	ActionEnvironmentManage  Action = "environment.manage"
-	ActionEnvironmentRead    Action = "environment.read"
-	ActionIdentityManage     Action = "identity.manage"
-	ActionIdentityRead       Action = "identity.read"
-	ActionOrganizationManage Action = "organization.manage"
-	ActionOrganizationRead   Action = "organization.read"
-	ActionPolicyManage       Action = "policy.manage"
-	ActionPolicyRead         Action = "policy.read"
-	ActionProjectManage      Action = "project.manage"
-	ActionProjectRead        Action = "project.read"
-	ActionSecretReveal       Action = "secret.reveal"
-	ActionSecretUse          Action = "secret.use"
+	ActionAuditRead           Action = "audit.read"
+	ActionCapabilityIssue     Action = "capability.issue"
+	ActionConfigMetadataRead  Action = "config.metadata.read"
+	ActionConfigSyncManage    Action = "config.sync.manage"
+	ActionConfigValueRead     Action = "config.value.read"
+	ActionConfigValueWrite    Action = "config.value.write"
+	ActionContractActivate    Action = "contract.activate"
+	ActionContractRead        Action = "contract.read"
+	ActionContractSubmit      Action = "contract.submit"
+	ActionEntryLinkCreate     Action = "entry-link.create"
+	ActionEntryLinkCreateOpen Action = "entry-link.create-open"
+	ActionEnvironmentManage   Action = "environment.manage"
+	ActionEnvironmentRead     Action = "environment.read"
+	ActionIdentityManage      Action = "identity.manage"
+	ActionIdentityRead        Action = "identity.read"
+	ActionOrganizationManage  Action = "organization.manage"
+	ActionOrganizationRead    Action = "organization.read"
+	ActionPolicyManage        Action = "policy.manage"
+	ActionPolicyRead          Action = "policy.read"
+	ActionProjectManage       Action = "project.manage"
+	ActionProjectRead         Action = "project.read"
+	ActionSecretReveal        Action = "secret.reveal"
+	ActionSecretUse           Action = "secret.use"
 )
 
 // Valid indicates whether the value is a known member of the Action enum.
 func (e Action) Valid() bool {
 	switch e {
 	case ActionAuditRead:
+		return true
+	case ActionCapabilityIssue:
 		return true
 	case ActionConfigMetadataRead:
 		return true
@@ -104,6 +109,10 @@ func (e Action) Valid() bool {
 	case ActionContractRead:
 		return true
 	case ActionContractSubmit:
+		return true
+	case ActionEntryLinkCreate:
+		return true
+	case ActionEntryLinkCreateOpen:
 		return true
 	case ActionEnvironmentManage:
 		return true
@@ -574,13 +583,19 @@ func (e AuditExportRetentionMode) Valid() bool {
 
 // Defines values for CallerViewWithheldReason.
 const (
-	CallerViewWithheldReasonPermission  CallerViewWithheldReason = "permission"
-	CallerViewWithheldReasonRequirement CallerViewWithheldReason = "requirement"
+	CallerViewWithheldReasonOauthConnection CallerViewWithheldReason = "oauth-connection"
+	CallerViewWithheldReasonOneTimeCode     CallerViewWithheldReason = "one-time-code"
+	CallerViewWithheldReasonPermission      CallerViewWithheldReason = "permission"
+	CallerViewWithheldReasonRequirement     CallerViewWithheldReason = "requirement"
 )
 
 // Valid indicates whether the value is a known member of the CallerViewWithheldReason enum.
 func (e CallerViewWithheldReason) Valid() bool {
 	switch e {
+	case CallerViewWithheldReasonOauthConnection:
+		return true
+	case CallerViewWithheldReasonOneTimeCode:
+		return true
 	case CallerViewWithheldReasonPermission:
 		return true
 	case CallerViewWithheldReasonRequirement:
@@ -594,6 +609,7 @@ func (e CallerViewWithheldReason) Valid() bool {
 const (
 	CallerViewWithheldRequiresConfigValueRead CallerViewWithheldRequires = "config.value.read"
 	CallerViewWithheldRequiresSecretReveal    CallerViewWithheldRequires = "secret.reveal"
+	CallerViewWithheldRequiresSecretUse       CallerViewWithheldRequires = "secret.use"
 )
 
 // Valid indicates whether the value is a known member of the CallerViewWithheldRequires enum.
@@ -602,6 +618,26 @@ func (e CallerViewWithheldRequires) Valid() bool {
 	case CallerViewWithheldRequiresConfigValueRead:
 		return true
 	case CallerViewWithheldRequiresSecretReveal:
+		return true
+	case CallerViewWithheldRequiresSecretUse:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CapabilityExerciseItemsKind.
+const (
+	Oauth CapabilityExerciseItemsKind = "oauth"
+	Totp  CapabilityExerciseItemsKind = "totp"
+)
+
+// Valid indicates whether the value is a known member of the CapabilityExerciseItemsKind enum.
+func (e CapabilityExerciseItemsKind) Valid() bool {
+	switch e {
+	case Oauth:
+		return true
+	case Totp:
 		return true
 	default:
 		return false
@@ -746,6 +782,198 @@ func (e EffectiveConfigurationItemSource) Valid() bool {
 	case EffectiveConfigurationItemSourceParent:
 		return true
 	case EffectiveConfigurationItemSourceSelf:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EntryLinkAccepts.
+const (
+	EntryLinkAcceptsOtpauth EntryLinkAccepts = "otpauth"
+	EntryLinkAcceptsValue   EntryLinkAccepts = "value"
+)
+
+// Valid indicates whether the value is a known member of the EntryLinkAccepts enum.
+func (e EntryLinkAccepts) Valid() bool {
+	switch e {
+	case EntryLinkAcceptsOtpauth:
+		return true
+	case EntryLinkAcceptsValue:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EntryLinkReason.
+const (
+	EntryLinkReasonCancelled       EntryLinkReason = "cancelled"
+	EntryLinkReasonCredentialEnded EntryLinkReason = "credential-ended"
+	EntryLinkReasonValueChanged    EntryLinkReason = "value-changed"
+)
+
+// Valid indicates whether the value is a known member of the EntryLinkReason enum.
+func (e EntryLinkReason) Valid() bool {
+	switch e {
+	case EntryLinkReasonCancelled:
+		return true
+	case EntryLinkReasonCredentialEnded:
+		return true
+	case EntryLinkReasonValueChanged:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EntryLinkRestrictedTo.
+const (
+	EntryLinkRestrictedToAnyone   EntryLinkRestrictedTo = "anyone"
+	EntryLinkRestrictedToIdentity EntryLinkRestrictedTo = "identity"
+	EntryLinkRestrictedToMember   EntryLinkRestrictedTo = "member"
+)
+
+// Valid indicates whether the value is a known member of the EntryLinkRestrictedTo enum.
+func (e EntryLinkRestrictedTo) Valid() bool {
+	switch e {
+	case EntryLinkRestrictedToAnyone:
+		return true
+	case EntryLinkRestrictedToIdentity:
+		return true
+	case EntryLinkRestrictedToMember:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EntryLinkInputAccepts.
+const (
+	EntryLinkInputAcceptsOtpauth EntryLinkInputAccepts = "otpauth"
+	EntryLinkInputAcceptsValue   EntryLinkInputAccepts = "value"
+)
+
+// Valid indicates whether the value is a known member of the EntryLinkInputAccepts enum.
+func (e EntryLinkInputAccepts) Valid() bool {
+	switch e {
+	case EntryLinkInputAcceptsOtpauth:
+		return true
+	case EntryLinkInputAcceptsValue:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EntryLinkInputRestrictedTo.
+const (
+	EntryLinkInputRestrictedToAnyone   EntryLinkInputRestrictedTo = "anyone"
+	EntryLinkInputRestrictedToIdentity EntryLinkInputRestrictedTo = "identity"
+	EntryLinkInputRestrictedToMember   EntryLinkInputRestrictedTo = "member"
+)
+
+// Valid indicates whether the value is a known member of the EntryLinkInputRestrictedTo enum.
+func (e EntryLinkInputRestrictedTo) Valid() bool {
+	switch e {
+	case EntryLinkInputRestrictedToAnyone:
+		return true
+	case EntryLinkInputRestrictedToIdentity:
+		return true
+	case EntryLinkInputRestrictedToMember:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EntryLinkStatus.
+const (
+	EntryLinkStatusCancelled EntryLinkStatus = "cancelled"
+	EntryLinkStatusEntered   EntryLinkStatus = "entered"
+	EntryLinkStatusExpired   EntryLinkStatus = "expired"
+	EntryLinkStatusPending   EntryLinkStatus = "pending"
+)
+
+// Valid indicates whether the value is a known member of the EntryLinkStatus enum.
+func (e EntryLinkStatus) Valid() bool {
+	switch e {
+	case EntryLinkStatusCancelled:
+		return true
+	case EntryLinkStatusEntered:
+		return true
+	case EntryLinkStatusExpired:
+		return true
+	case EntryLinkStatusPending:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EntryLinkViewAccepts.
+const (
+	EntryLinkViewAcceptsOtpauth EntryLinkViewAccepts = "otpauth"
+	EntryLinkViewAcceptsValue   EntryLinkViewAccepts = "value"
+)
+
+// Valid indicates whether the value is a known member of the EntryLinkViewAccepts enum.
+func (e EntryLinkViewAccepts) Valid() bool {
+	switch e {
+	case EntryLinkViewAcceptsOtpauth:
+		return true
+	case EntryLinkViewAcceptsValue:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EntryLinkViewRequestedByKind.
+const (
+	EntryLinkViewRequestedByKindAgent    EntryLinkViewRequestedByKind = "agent"
+	EntryLinkViewRequestedByKindBroker   EntryLinkViewRequestedByKind = "broker"
+	EntryLinkViewRequestedByKindCi       EntryLinkViewRequestedByKind = "ci"
+	EntryLinkViewRequestedByKindHuman    EntryLinkViewRequestedByKind = "human"
+	EntryLinkViewRequestedByKindService  EntryLinkViewRequestedByKind = "service"
+	EntryLinkViewRequestedByKindWorkload EntryLinkViewRequestedByKind = "workload"
+)
+
+// Valid indicates whether the value is a known member of the EntryLinkViewRequestedByKind enum.
+func (e EntryLinkViewRequestedByKind) Valid() bool {
+	switch e {
+	case EntryLinkViewRequestedByKindAgent:
+		return true
+	case EntryLinkViewRequestedByKindBroker:
+		return true
+	case EntryLinkViewRequestedByKindCi:
+		return true
+	case EntryLinkViewRequestedByKindHuman:
+		return true
+	case EntryLinkViewRequestedByKindService:
+		return true
+	case EntryLinkViewRequestedByKindWorkload:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EntryLinkViewRestrictedTo.
+const (
+	EntryLinkViewRestrictedToAnyone   EntryLinkViewRestrictedTo = "anyone"
+	EntryLinkViewRestrictedToIdentity EntryLinkViewRestrictedTo = "identity"
+	EntryLinkViewRestrictedToMember   EntryLinkViewRestrictedTo = "member"
+)
+
+// Valid indicates whether the value is a known member of the EntryLinkViewRestrictedTo enum.
+func (e EntryLinkViewRestrictedTo) Valid() bool {
+	switch e {
+	case EntryLinkViewRestrictedToAnyone:
+		return true
+	case EntryLinkViewRestrictedToIdentity:
+		return true
+	case EntryLinkViewRestrictedToMember:
 		return true
 	default:
 		return false
@@ -1246,13 +1474,13 @@ func (e GitHubAppRegistrationFailedOutcome) Valid() bool {
 
 // Defines values for GitHubAppRegistrationRefusedOutcome.
 const (
-	Refused GitHubAppRegistrationRefusedOutcome = "refused"
+	GitHubAppRegistrationRefusedOutcomeRefused GitHubAppRegistrationRefusedOutcome = "refused"
 )
 
 // Valid indicates whether the value is a known member of the GitHubAppRegistrationRefusedOutcome enum.
 func (e GitHubAppRegistrationRefusedOutcome) Valid() bool {
 	switch e {
-	case Refused:
+	case GitHubAppRegistrationRefusedOutcomeRefused:
 		return true
 	default:
 		return false
@@ -1784,6 +2012,144 @@ func (e MemberReviewSyncTargetsState) Valid() bool {
 	}
 }
 
+// Defines values for OAuthAuthMethod.
+const (
+	ClientSecretBasic OAuthAuthMethod = "client_secret_basic"
+	ClientSecretPost  OAuthAuthMethod = "client_secret_post"
+	None              OAuthAuthMethod = "none"
+)
+
+// Valid indicates whether the value is a known member of the OAuthAuthMethod enum.
+func (e OAuthAuthMethod) Valid() bool {
+	switch e {
+	case ClientSecretBasic:
+		return true
+	case ClientSecretPost:
+		return true
+	case None:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OAuthAuthorizationOutcomeOutcome.
+const (
+	OAuthAuthorizationOutcomeOutcomeConnected OAuthAuthorizationOutcomeOutcome = "connected"
+	OAuthAuthorizationOutcomeOutcomeFailed    OAuthAuthorizationOutcomeOutcome = "failed"
+	OAuthAuthorizationOutcomeOutcomeRefused   OAuthAuthorizationOutcomeOutcome = "refused"
+)
+
+// Valid indicates whether the value is a known member of the OAuthAuthorizationOutcomeOutcome enum.
+func (e OAuthAuthorizationOutcomeOutcome) Valid() bool {
+	switch e {
+	case OAuthAuthorizationOutcomeOutcomeConnected:
+		return true
+	case OAuthAuthorizationOutcomeOutcomeFailed:
+		return true
+	case OAuthAuthorizationOutcomeOutcomeRefused:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OAuthDisconnectionAtProvider.
+const (
+	OAuthDisconnectionAtProviderFailed          OAuthDisconnectionAtProvider = "failed"
+	OAuthDisconnectionAtProviderLeft            OAuthDisconnectionAtProvider = "left"
+	OAuthDisconnectionAtProviderNotSupported    OAuthDisconnectionAtProvider = "not-supported"
+	OAuthDisconnectionAtProviderNothingToRevoke OAuthDisconnectionAtProvider = "nothing-to-revoke"
+	OAuthDisconnectionAtProviderRevoked         OAuthDisconnectionAtProvider = "revoked"
+)
+
+// Valid indicates whether the value is a known member of the OAuthDisconnectionAtProvider enum.
+func (e OAuthDisconnectionAtProvider) Valid() bool {
+	switch e {
+	case OAuthDisconnectionAtProviderFailed:
+		return true
+	case OAuthDisconnectionAtProviderLeft:
+		return true
+	case OAuthDisconnectionAtProviderNotSupported:
+		return true
+	case OAuthDisconnectionAtProviderNothingToRevoke:
+		return true
+	case OAuthDisconnectionAtProviderRevoked:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OAuthGrant.
+const (
+	AuthorizationCode OAuthGrant = "authorization_code"
+	ClientCredentials OAuthGrant = "client_credentials"
+)
+
+// Valid indicates whether the value is a known member of the OAuthGrant enum.
+func (e OAuthGrant) Valid() bool {
+	switch e {
+	case AuthorizationCode:
+		return true
+	case ClientCredentials:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OAuthProviderInputPreset.
+const (
+	Generic   OAuthProviderInputPreset = "generic"
+	Google    OAuthProviderInputPreset = "google"
+	Microsoft OAuthProviderInputPreset = "microsoft"
+)
+
+// Valid indicates whether the value is a known member of the OAuthProviderInputPreset enum.
+func (e OAuthProviderInputPreset) Valid() bool {
+	switch e {
+	case Generic:
+		return true
+	case Google:
+		return true
+	case Microsoft:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OAuthStatus.
+const (
+	OAuthStatusConnected      OAuthStatus = "connected"
+	OAuthStatusFailing        OAuthStatus = "failing"
+	OAuthStatusNeedsReconnect OAuthStatus = "needs_reconnect"
+	OAuthStatusNotConnected   OAuthStatus = "not_connected"
+	OAuthStatusRefreshing     OAuthStatus = "refreshing"
+	OAuthStatusRevoked        OAuthStatus = "revoked"
+)
+
+// Valid indicates whether the value is a known member of the OAuthStatus enum.
+func (e OAuthStatus) Valid() bool {
+	switch e {
+	case OAuthStatusConnected:
+		return true
+	case OAuthStatusFailing:
+		return true
+	case OAuthStatusNeedsReconnect:
+		return true
+	case OAuthStatusNotConnected:
+		return true
+	case OAuthStatusRefreshing:
+		return true
+	case OAuthStatusRevoked:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ObservedCheckReason.
 const (
 	LOCALAPIUNAVAILABLE ObservedCheckReason = "LOCALAPI_UNAVAILABLE"
@@ -1835,6 +2201,63 @@ func (e ObservedCheckStatus) Valid() bool {
 	case ObservedCheckStatusPass:
 		return true
 	case ObservedCheckStatusUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OneTimeCodeAlgorithm.
+const (
+	SHA1   OneTimeCodeAlgorithm = "SHA1"
+	SHA256 OneTimeCodeAlgorithm = "SHA256"
+	SHA512 OneTimeCodeAlgorithm = "SHA512"
+)
+
+// Valid indicates whether the value is a known member of the OneTimeCodeAlgorithm enum.
+func (e OneTimeCodeAlgorithm) Valid() bool {
+	switch e {
+	case SHA1:
+		return true
+	case SHA256:
+		return true
+	case SHA512:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OneTimeCodeDigits.
+const (
+	N6 OneTimeCodeDigits = 6
+	N8 OneTimeCodeDigits = 8
+)
+
+// Valid indicates whether the value is a known member of the OneTimeCodeDigits enum.
+func (e OneTimeCodeDigits) Valid() bool {
+	switch e {
+	case N6:
+		return true
+	case N8:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OneTimeCodePeriodSeconds.
+const (
+	N30 OneTimeCodePeriodSeconds = 30
+	N60 OneTimeCodePeriodSeconds = 60
+)
+
+// Valid indicates whether the value is a known member of the OneTimeCodePeriodSeconds enum.
+func (e OneTimeCodePeriodSeconds) Valid() bool {
+	switch e {
+	case N30:
+		return true
+	case N60:
 		return true
 	default:
 		return false
@@ -2813,6 +3236,21 @@ func (e DecideDeviceSignIn200JSONResponseBodyDecision) Valid() bool {
 	}
 }
 
+// Defines values for SubmitEntryLink200JSONResponseBodyStatus.
+const (
+	SubmitEntryLink200JSONResponseBodyStatusEntered SubmitEntryLink200JSONResponseBodyStatus = "entered"
+)
+
+// Valid indicates whether the value is a known member of the SubmitEntryLink200JSONResponseBodyStatus enum.
+func (e SubmitEntryLink200JSONResponseBodyStatus) Valid() bool {
+	switch e {
+	case SubmitEntryLink200JSONResponseBodyStatusEntered:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ListAuditEventsParamsDecision.
 const (
 	ListAuditEventsParamsDecisionAllow ListAuditEventsParamsDecision = "allow"
@@ -3650,13 +4088,15 @@ type CallerView struct {
 		References []string `json:"references"`
 	} `json:"unexpanded"`
 	Withheld []struct {
-		Name     string                     `json:"name"`
+		Name string `json:"name"`
+
+		// Reason one-time-code (strict retrieval): the item holds the seed of one-time codes, which is delivered to nobody; its code is used through a Capability (requires secret.use).
 		Reason   CallerViewWithheldReason   `json:"reason"`
 		Requires CallerViewWithheldRequires `json:"requires"`
 	} `json:"withheld"`
 }
 
-// CallerViewWithheldReason defines model for CallerView.Withheld.Reason.
+// CallerViewWithheldReason one-time-code (strict retrieval): the item holds the seed of one-time codes, which is delivered to nobody; its code is used through a Capability (requires secret.use).
 type CallerViewWithheldReason string
 
 // CallerViewWithheldRequires defines model for CallerView.Withheld.Requires.
@@ -3664,28 +4104,64 @@ type CallerViewWithheldRequires string
 
 // Capability defines model for Capability.
 type Capability struct {
-	AgentIdentityId  string                       `json:"agentIdentityId"`
-	BrokerIdentityId string                       `json:"brokerIdentityId"`
-	CreatedAt        time.Time                    `json:"createdAt"`
-	Destinations     []string                     `json:"destinations"`
-	EnvironmentId    string                       `json:"environmentId"`
-	ExpiresAt        time.Time                    `json:"expiresAt"`
-	Id               string                       `json:"id"`
-	Items            []string                     `json:"items"`
-	RevokedAt        nullable.Nullable[time.Time] `json:"revokedAt"`
-	RunId            nullable.Nullable[string]    `json:"runId"`
+	AgentIdentityId  string    `json:"agentIdentityId"`
+	BrokerIdentityId string    `json:"brokerIdentityId"`
+	CreatedAt        time.Time `json:"createdAt"`
+	Destinations     []string  `json:"destinations"`
+	EnvironmentId    string    `json:"environmentId"`
+	ExpiresAt        time.Time `json:"expiresAt"`
+	Id               string    `json:"id"`
+
+	// IssuedByIdentityId Who issued it, when that is not its Broker (ADR-0060).
+	IssuedByIdentityId *string                      `json:"issuedByIdentityId,omitempty"`
+	Items              []string                     `json:"items"`
+	RevokedAt          nullable.Nullable[time.Time] `json:"revokedAt"`
+	RunId              nullable.Nullable[string]    `json:"runId"`
+
+	// SingleUse Present (true) for one that may be exercised once.
+	SingleUse *bool `json:"singleUse,omitempty"`
+
+	// Used With singleUse, whether it was.
+	Used *bool `json:"used,omitempty"`
 }
 
 // CapabilityExercise defines model for CapabilityExercise.
 type CapabilityExercise struct {
 	Items []struct {
-		Name string `json:"name"`
+		// ExpiresAt Of a code: when its period ends. Of an access token: when it expires, absent when the provider does not say. As the server's clock has it.
+		ExpiresAt *time.Time `json:"expiresAt,omitempty"`
 
-		// Retiring The previous value during a dual-phase rotation (ADR-0027), injected as-is so the consumer accepts either during the window. Absent when the item is stable.
+		// ExpiresInSeconds Present with expiresAt: whole seconds from this answer until then.
+		ExpiresInSeconds *int `json:"expiresInSeconds,omitempty"`
+
+		// Kind Present for a one-time code (capability values.totp) and for an OAuth connection's access token (capability oauth.connections).
+		Kind *CapabilityExerciseItemsKind `json:"kind,omitempty"`
+		Name string                       `json:"name"`
+
+		// NotBefore Present while the code's period has not started, as the server's clock has it.
+		NotBefore *time.Time `json:"notBefore,omitempty"`
+
+		// Retiring The previous value during a dual-phase rotation (ADR-0027), injected as-is so the consumer accepts either during the window; of a one-time code, the previous seed's code for the same conditions. Absent when the item is stable.
 		Retiring *struct {
-			Value     string `json:"value"`
-			VersionId string `json:"versionId"`
+			// ExpiresAt Of a code. When its period ends
+			ExpiresAt *time.Time `json:"expiresAt,omitempty"`
+
+			// ExpiresInSeconds Of a code: whole seconds from this answer until its period ends.
+			ExpiresInSeconds *int `json:"expiresInSeconds,omitempty"`
+
+			// NotBefore Present while the code's period has not started, as the server's clock has it.
+			NotBefore *time.Time `json:"notBefore,omitempty"`
+
+			// StartsInSeconds Present with notBefore. How long to wait from this answer.
+			StartsInSeconds *int   `json:"startsInSeconds,omitempty"`
+			Value           string `json:"value"`
+			VersionId       string `json:"versionId"`
 		} `json:"retiring,omitempty"`
+
+		// StartsInSeconds Present with notBefore. How long to wait from this answer.
+		StartsInSeconds *int `json:"startsInSeconds,omitempty"`
+
+		// Value The value or, with kind totp, the one-time code or, with kind oauth, the access token (to send as a Bearer token).
 		Value     string `json:"value"`
 		VersionId string `json:"versionId"`
 	} `json:"items"`
@@ -3694,6 +4170,9 @@ type CapabilityExercise struct {
 	Targets  map[string][]string `json:"targets"`
 	Withheld []string            `json:"withheld"`
 }
+
+// CapabilityExerciseItemsKind Present for a one-time code (capability values.totp) and for an OAuth connection's access token (capability oauth.connections).
+type CapabilityExerciseItemsKind string
 
 // ConfigItemSearchResult One (project, item name) search hit (ADR-0030). Metadata only — never Values, version history, or value-derived fields. The environments list contains only authorized, navigable Environments in which the name is effectively present; it is bounded and its truncation flag never reveals hidden-candidate counts.
 type ConfigItemSearchResult struct {
@@ -3733,6 +4212,14 @@ type ContractRevision struct {
 
 	// SemanticsVersion The Contract Semantics version this revision is evaluated with. Fixed when the revision is created, and part of its content hash unless it is 1.
 	SemanticsVersion int `json:"semanticsVersion"`
+}
+
+// CreatedEntryLink defines model for CreatedEntryLink.
+type CreatedEntryLink struct {
+	Link EntryLink `json:"link"`
+
+	// Url The page's address, on this installation's public URL. What follows the # is the link's secret, which a browser sends to no server and to no proxy; Varlatch keeps its hash only.
+	Url string `json:"url"`
 }
 
 // CreatedIdentity The new machine identity and its first credential. Not an Identity: it carries no createdAt, lastSeenAt or member fields.
@@ -3791,16 +4278,22 @@ type CredentialLifetimeConfig struct {
 // CredentialMetadata Credential metadata (ADR-0034 §2). Never includes token material — tokens are stored hashed and unrecoverable (ADR-0007).
 type CredentialMetadata struct {
 	// Client A short, readable summary of the client that requested a browser session or CLI login credential, such as "Firefox on Linux" or "varlatch CLI 0.14.0 on Linux". Only this summary is stored, never the User-Agent itself. Null when the client was not recognized, for every other kind, and for credentials issued before 0.14.0; absent from older servers.
-	Client    nullable.Nullable[string]    `json:"client,omitempty"`
-	CreatedAt time.Time                    `json:"createdAt"`
-	ExpiresAt nullable.Nullable[time.Time] `json:"expiresAt"`
-	Id        string                       `json:"id"`
-	Kind      CredentialMetadataKind       `json:"kind"`
+	Client    nullable.Nullable[string] `json:"client,omitempty"`
+	CreatedAt time.Time                 `json:"createdAt"`
+
+	// ExerciseOnly Present (true) for an exercise-only credential (ADR-0060).
+	ExerciseOnly *bool                        `json:"exerciseOnly,omitempty"`
+	ExpiresAt    nullable.Nullable[time.Time] `json:"expiresAt"`
+	Id           string                       `json:"id"`
+	Kind         CredentialMetadataKind       `json:"kind"`
 
 	// LastUsedAt Last successful authentication, throttled to ~60s granularity. An operational signal, never evidence of what was accessed.
 	LastUsedAt nullable.Nullable[time.Time] `json:"lastUsedAt"`
 	Name       nullable.Nullable[string]    `json:"name"`
 	RevokedAt  nullable.Nullable[time.Time] `json:"revokedAt"`
+
+	// RunId The run whose Capabilities it exercises. Present when it is tied to one.
+	RunId *string `json:"runId,omitempty"`
 }
 
 // CredentialMetadataKind defines model for CredentialMetadata.Kind.
@@ -3912,6 +4405,9 @@ type EffectiveConfiguration struct {
 type EffectiveConfigurationItem struct {
 	Name string `json:"name"`
 
+	// Oauth Present when the item is an OAuth connection (capability oauth.connections, ADR-0062). Such an item is always sensitive and has no value that is delivered: exercising a Capability that names it gives its access token.
+	Oauth *OAuthItem `json:"oauth,omitempty"`
+
 	// RawValue Present only when the stored value contains ${NAME} references that were expanded in `value` (capability values.references): the literal stored text. Editors must write this back — writing the expanded `value` would destroy the reference.
 	RawValue *string `json:"rawValue,omitempty"`
 
@@ -3919,6 +4415,9 @@ type EffectiveConfigurationItem struct {
 	Rotating  *bool                            `json:"rotating,omitempty"`
 	Sensitive bool                             `json:"sensitive"`
 	Source    EffectiveConfigurationItemSource `json:"source"`
+
+	// Totp Present when the item holds the seed of one-time codes (capability values.totp, ADR-0061): what may be read of it. Such an item is always sensitive and its value is never delivered: exercising a Capability that names it gives the code.
+	Totp *OneTimeCode `json:"totp,omitempty"`
 
 	// Value Present only when include=values and the caller is authorized; null for items the caller may know exist but not read.
 	Value     nullable.Nullable[string] `json:"value,omitempty"`
@@ -3930,6 +4429,107 @@ type EffectiveConfigurationItemSource string
 
 // EntityVersion Monotonic version of an editable entity's configuration (ADR-0029); starts at 1. Join mutations (membership, project ownership) and delivery progress never increment it. Supplied back as expectedVersion on PATCH; a stale value fails with VERSION_CONFLICT.
 type EntityVersion = int
+
+// EntryLink defines model for EntryLink.
+type EntryLink struct {
+	// Accepts A value, or the seed of a one-time code (capability values.totp).
+	Accepts     EntryLinkAccepts          `json:"accepts"`
+	CreatedAt   time.Time                 `json:"createdAt"`
+	Description nullable.Nullable[string] `json:"description"`
+
+	// EndedAt When the value was entered, or the link cancelled. Null also for a link that ended with its credential at a time not known.
+	EndedAt       nullable.Nullable[time.Time] `json:"endedAt"`
+	EnvironmentId string                       `json:"environmentId"`
+	ExpiresAt     time.Time                    `json:"expiresAt"`
+	Id            string                       `json:"id"`
+
+	// IdentityId Present when restrictedTo is identity.
+	IdentityId *string `json:"identityId,omitempty"`
+	Item       string  `json:"item"`
+
+	// Reason Present when the status is cancelled: somebody cancelled it, the item's value changed before a value was entered, or the link ended with the credential that made it (createEntryLink).
+	Reason *EntryLinkReason `json:"reason,omitempty"`
+
+	// Replace It replaces the value there was when it was made.
+	Replace               bool   `json:"replace"`
+	RequestedByIdentityId string `json:"requestedByIdentityId"`
+
+	// RestrictedTo Who may enter the value: whoever holds the link, a signed-in member of the Organization, or the one person in identityId.
+	RestrictedTo EntryLinkRestrictedTo `json:"restrictedTo"`
+
+	// Status pending until the value is entered, the link expires, or it is cancelled (reason says by what).
+	Status EntryLinkStatus `json:"status"`
+}
+
+// EntryLinkAccepts A value, or the seed of a one-time code (capability values.totp).
+type EntryLinkAccepts string
+
+// EntryLinkReason Present when the status is cancelled: somebody cancelled it, the item's value changed before a value was entered, or the link ended with the credential that made it (createEntryLink).
+type EntryLinkReason string
+
+// EntryLinkRestrictedTo Who may enter the value: whoever holds the link, a signed-in member of the Organization, or the one person in identityId.
+type EntryLinkRestrictedTo string
+
+// EntryLinkInput defines model for EntryLinkInput.
+type EntryLinkInput struct {
+	// Accepts value when absent.
+	Accepts *EntryLinkInputAccepts `json:"accepts,omitempty"`
+
+	// Description A few words for the person, shown on the page as the caller's own: plain text in one line, with no link, address or markup (VALIDATION_FAILED otherwise). In the audit log.
+	Description *string `json:"description,omitempty"`
+
+	// IdentityId With restrictedTo identity, the person, a member of the Organization.
+	IdentityId *string `json:"identityId,omitempty"`
+	Item       string  `json:"item"`
+
+	// Replace Replace the value there is now. Entering is refused when it is another one by then.
+	Replace *bool `json:"replace,omitempty"`
+
+	// RestrictedTo member when absent.
+	RestrictedTo *EntryLinkInputRestrictedTo `json:"restrictedTo,omitempty"`
+
+	// TtlSeconds 900 when absent.
+	TtlSeconds *int `json:"ttlSeconds,omitempty"`
+}
+
+// EntryLinkInputAccepts value when absent.
+type EntryLinkInputAccepts string
+
+// EntryLinkInputRestrictedTo member when absent.
+type EntryLinkInputRestrictedTo string
+
+// EntryLinkStatus pending until the value is entered, the link expires, or it is cancelled (reason says by what).
+type EntryLinkStatus string
+
+// EntryLinkView defines model for EntryLinkView.
+type EntryLinkView struct {
+	Accepts          *EntryLinkViewAccepts     `json:"accepts,omitempty"`
+	Description      nullable.Nullable[string] `json:"description,omitempty"`
+	Environment      *string                   `json:"environment,omitempty"`
+	ExpiresAt        *time.Time                `json:"expiresAt,omitempty"`
+	ExpiresInSeconds *int                      `json:"expiresInSeconds,omitempty"`
+	Item             *string                   `json:"item,omitempty"`
+	Organization     *string                   `json:"organization,omitempty"`
+	Project          *string                   `json:"project,omitempty"`
+	Replace          *bool                     `json:"replace,omitempty"`
+	RequestedBy      *struct {
+		Kind EntryLinkViewRequestedByKind `json:"kind"`
+		Name string                       `json:"name"`
+	} `json:"requestedBy,omitempty"`
+	RestrictedTo EntryLinkViewRestrictedTo `json:"restrictedTo"`
+
+	// SignInRequired Whether a person has to sign in first; then nothing below is there.
+	SignInRequired bool `json:"signInRequired"`
+}
+
+// EntryLinkViewAccepts defines model for EntryLinkView.Accepts.
+type EntryLinkViewAccepts string
+
+// EntryLinkViewRequestedByKind defines model for EntryLinkView.RequestedBy.Kind.
+type EntryLinkViewRequestedByKind string
+
+// EntryLinkViewRestrictedTo defines model for EntryLinkView.RestrictedTo.
+type EntryLinkViewRestrictedTo string
 
 // Environment defines model for Environment.
 type Environment struct {
@@ -4534,12 +5134,15 @@ type IssuedAgentCredential struct {
 
 // IssuedCapability defines model for IssuedCapability.
 type IssuedCapability struct {
-	AgentIdentityId string    `json:"agentIdentityId"`
-	Destinations    []string  `json:"destinations"`
-	EnvironmentId   string    `json:"environmentId"`
-	ExpiresAt       time.Time `json:"expiresAt"`
-	Id              string    `json:"id"`
-	Items           []string  `json:"items"`
+	AgentIdentityId string `json:"agentIdentityId"`
+
+	// BrokerIdentityId The Broker it was issued for. Present when the request named one.
+	BrokerIdentityId *string   `json:"brokerIdentityId,omitempty"`
+	Destinations     []string  `json:"destinations"`
+	EnvironmentId    string    `json:"environmentId"`
+	ExpiresAt        time.Time `json:"expiresAt"`
+	Id               string    `json:"id"`
+	Items            []string  `json:"items"`
 
 	// Preflight Advisory current-authority check; exercise re-evaluates regardless.
 	Preflight IssuedCapabilityPreflight `json:"preflight"`
@@ -4555,6 +5158,9 @@ type IssuedCapability struct {
 
 	// Secret Returned exactly once; stored hashed; required to exercise.
 	Secret string `json:"secret"`
+
+	// SingleUse Present (true) for one that may be exercised once.
+	SingleUse *bool `json:"singleUse,omitempty"`
 
 	// Targets The substitution targets as recorded, canonical and sorted; the only ones the Broker may enforce.
 	Targets map[string][]string `json:"targets"`
@@ -4595,9 +5201,14 @@ type IssuedMachineCredentialKind string
 
 // IssuedOidcCredential defines model for IssuedOidcCredential.
 type IssuedOidcCredential struct {
-	ExpiresAt  time.Time `json:"expiresAt"`
-	Id         string    `json:"id"`
-	IdentityId string    `json:"identityId"`
+	// ExerciseOnly Present (true) for an exercise-only credential (ADR-0060).
+	ExerciseOnly *bool     `json:"exerciseOnly,omitempty"`
+	ExpiresAt    time.Time `json:"expiresAt"`
+	Id           string    `json:"id"`
+	IdentityId   string    `json:"identityId"`
+
+	// RunId The run whose Capabilities it exercises. Present when its binding names a claim.
+	RunId *string `json:"runId,omitempty"`
 
 	// Token Returned exactly once; never retrievable again.
 	Token string `json:"token"`
@@ -4782,6 +5393,270 @@ type Meta struct {
 // NextCursor Opaque; null when no further pages exist.
 type NextCursor = string
 
+// OAuthAccount defines model for OAuthAccount.
+type OAuthAccount struct {
+	// Id The provider's own ID of it.
+	Id string `json:"id"`
+
+	// Label What the provider calls it: an email address, a name.
+	Label string `json:"label"`
+}
+
+// OAuthAuthMethod defines model for OAuthAuthMethod.
+type OAuthAuthMethod string
+
+// OAuthAuthorization defines model for OAuthAuthorization.
+type OAuthAuthorization struct {
+	AuthorizationUrl string    `json:"authorizationUrl"`
+	ExpiresAt        time.Time `json:"expiresAt"`
+	RedirectUri      string    `json:"redirectUri"`
+	State            string    `json:"state"`
+}
+
+// OAuthAuthorizationAnswer defines model for OAuthAuthorizationAnswer.
+type OAuthAuthorizationAnswer struct {
+	Code  *string `json:"code,omitempty"`
+	Error *string `json:"error,omitempty"`
+	Iss   *string `json:"iss,omitempty"`
+
+	// RedirectUri The address the browser came back to, without its query.
+	RedirectUri string `json:"redirectUri"`
+	State       string `json:"state"`
+}
+
+// OAuthAuthorizationInput defines model for OAuthAuthorizationInput.
+type OAuthAuthorizationInput struct {
+	// ConfirmAccountChange Another account than the one it was connected to may connect it.
+	ConfirmAccountChange *bool `json:"confirmAccountChange,omitempty"`
+
+	// ExpectedVersionId The version the person was shown. Another one is refused with VERSION_CONFLICT.
+	ExpectedVersionId *string `json:"expectedVersionId,omitempty"`
+}
+
+// OAuthAuthorizationOutcome defines model for OAuthAuthorizationOutcome.
+type OAuthAuthorizationOutcome struct {
+	Account *OAuthAccount `json:"account,omitempty"`
+
+	// Connection An OAuth connection. No secret and no token, nor anything derived from one.
+	Connection *OAuthConnection `json:"connection,omitempty"`
+	Message    *string          `json:"message,omitempty"`
+
+	// Outcome refused: the answer does not fit what was asked for, and nothing was kept. failed: the provider refused, or did not answer.
+	Outcome         OAuthAuthorizationOutcomeOutcome `json:"outcome"`
+	PreviousAccount *OAuthAccount                    `json:"previousAccount,omitempty"`
+	Reason          *string                          `json:"reason,omitempty"`
+}
+
+// OAuthAuthorizationOutcomeOutcome refused: the answer does not fit what was asked for, and nothing was kept. failed: the provider refused, or did not answer.
+type OAuthAuthorizationOutcomeOutcome string
+
+// OAuthConnection An OAuth connection. No secret and no token, nor anything derived from one.
+type OAuthConnection struct {
+	AccessTokenExpiresAt nullable.Nullable[time.Time] `json:"accessTokenExpiresAt"`
+
+	// Account Whose account it is or, disconnected or after a change of its provider or client, was. Null when the provider does not say.
+	Account     nullable.Nullable[OAuthAccount] `json:"account"`
+	ClientId    string                          `json:"clientId"`
+	ConnectedAt nullable.Nullable[time.Time]    `json:"connectedAt"`
+
+	// ConnectedBy The person who connected it.
+	ConnectedBy nullable.Nullable[string] `json:"connectedBy"`
+	CreatedAt   time.Time                 `json:"createdAt"`
+
+	// CreatedBy Who wrote its parameters as they are now.
+	CreatedBy     nullable.Nullable[string] `json:"createdBy"`
+	EnvironmentId string                    `json:"environmentId"`
+
+	// Grant authorization_code: a person consents, in the browser. client_credentials: the client's own access, nobody's account.
+	Grant OAuthGrant `json:"grant"`
+
+	// GrantedScopes As the provider named them; null when it did not.
+	GrantedScopes   nullable.Nullable[[]string] `json:"grantedScopes"`
+	HasClientSecret bool                        `json:"hasClientSecret"`
+	HasRefreshToken bool                        `json:"hasRefreshToken"`
+	Hosts           []string                    `json:"hosts"`
+	Item            string                      `json:"item"`
+
+	// MissingScopes The scopes asked for that the provider did not grant, as far as it says.
+	MissingScopes []string `json:"missingScopes"`
+	Paused        bool     `json:"paused"`
+
+	// Provider A provider as a connection pinned it.
+	Provider OAuthProvider `json:"provider"`
+
+	// Reason Why it is failing or needs to be connected again: a word of Varlatch's (unreachable, timeout, refresh-answer-lost, no-refresh-token, refused-by-provider) or the provider's error code (invalid_client). Never text of the provider's.
+	Reason nullable.Nullable[string] `json:"reason"`
+
+	// RedirectUri To register at the provider. Present for authorization_code when this installation has a public URL.
+	RedirectUri           *string                      `json:"redirectUri,omitempty"`
+	RefreshTokenExpiresAt nullable.Nullable[time.Time] `json:"refreshTokenExpiresAt"`
+	RefreshedAt           nullable.Nullable[time.Time] `json:"refreshedAt"`
+
+	// RetryAt When a failed refresh is tried again
+	RetryAt nullable.Nullable[time.Time] `json:"retryAt"`
+	Scopes  []string                     `json:"scopes"`
+
+	// Status not_connected: nobody connected it yet. connected: it has tokens. refreshing: a refresh is in progress. failing: the last refresh failed for now, and is tried again; an access token that still lasts is used. needs_reconnect: the provider refuses its refresh token (or there is none), and a person has to connect it again. revoked: it was disconnected here.
+	Status OAuthStatus `json:"status"`
+
+	// VersionId Changes with its parameters and its client secret
+	VersionId string `json:"versionId"`
+}
+
+// OAuthConnectionChange defines model for OAuthConnectionChange.
+type OAuthConnectionChange struct {
+	ClientId     *string `json:"clientId,omitempty"`
+	ClientSecret *string `json:"clientSecret,omitempty"`
+
+	// ExpectedVersionId Rejects a stale change with VERSION_CONFLICT.
+	ExpectedVersionId *string   `json:"expectedVersionId,omitempty"`
+	Hosts             *[]string `json:"hosts,omitempty"`
+	Paused            *bool     `json:"paused,omitempty"`
+
+	// Provider A provider: a preset (google; microsoft with the tenant's ID), or generic with an issuer, whose metadata is read (OpenID Connect Discovery, RFC 8414), or with its endpoints. Every URL is https.
+	Provider *OAuthProviderInput `json:"provider,omitempty"`
+	Scopes   *[]string           `json:"scopes,omitempty"`
+}
+
+// OAuthConnectionInput defines model for OAuthConnectionInput.
+type OAuthConnectionInput struct {
+	ClientId string `json:"clientId"`
+
+	// ClientSecret Stored sealed. No operation answers it, to anyone.
+	ClientSecret *string `json:"clientSecret,omitempty"`
+
+	// Grant authorization_code: a person consents, in the browser. client_credentials: the client's own access, nobody's account.
+	Grant *OAuthGrant `json:"grant,omitempty"`
+
+	// Hosts The destinations its access token may go to, as a Capability's: a Capability that names the connection may name only these, and an exercise for another is refused. None, whatever the Capability names.
+	Hosts *[]string `json:"hosts,omitempty"`
+	Item  string    `json:"item"`
+
+	// Provider A provider: a preset (google; microsoft with the tenant's ID), or generic with an issuer, whose metadata is read (OpenID Connect Discovery, RFC 8414), or with its endpoints. Every URL is https.
+	Provider OAuthProviderInput `json:"provider"`
+
+	// Scopes What to ask for; a preset adds what it needs to know the account and to get a refresh token.
+	Scopes *[]string `json:"scopes,omitempty"`
+}
+
+// OAuthDisconnectInput defines model for OAuthDisconnectInput.
+type OAuthDisconnectInput struct {
+	RevokeAtProvider *bool `json:"revokeAtProvider,omitempty"`
+}
+
+// OAuthDisconnection defines model for OAuthDisconnection.
+type OAuthDisconnection struct {
+	// AtProvider What became of the tokens at the provider; here they are forgotten in every case. left: not asked.
+	AtProvider OAuthDisconnectionAtProvider `json:"atProvider"`
+
+	// Connection An OAuth connection. No secret and no token, nor anything derived from one.
+	Connection OAuthConnection `json:"connection"`
+
+	// Reason Of failed.
+	Reason *string `json:"reason,omitempty"`
+}
+
+// OAuthDisconnectionAtProvider What became of the tokens at the provider; here they are forgotten in every case. left: not asked.
+type OAuthDisconnectionAtProvider string
+
+// OAuthDiscovery defines model for OAuthDiscovery.
+type OAuthDiscovery struct {
+	// Provider A provider as a connection pinned it.
+	Provider OAuthProvider `json:"provider"`
+
+	// RedirectUri Of an authorization_code connection, when this installation has a public URL.
+	RedirectUri *string `json:"redirectUri,omitempty"`
+}
+
+// OAuthDiscoveryInput defines model for OAuthDiscoveryInput.
+type OAuthDiscoveryInput struct {
+	// Grant authorization_code: a person consents, in the browser. client_credentials: the client's own access, nobody's account.
+	Grant *OAuthGrant `json:"grant,omitempty"`
+
+	// Provider A provider: a preset (google; microsoft with the tenant's ID), or generic with an issuer, whose metadata is read (OpenID Connect Discovery, RFC 8414), or with its endpoints. Every URL is https.
+	Provider OAuthProviderInput `json:"provider"`
+}
+
+// OAuthGrant authorization_code: a person consents, in the browser. client_credentials: the client's own access, nobody's account.
+type OAuthGrant string
+
+// OAuthItem Present when the item is an OAuth connection (capability oauth.connections, ADR-0062). Such an item is always sensitive and has no value that is delivered: exercising a Capability that names it gives its access token.
+type OAuthItem struct {
+	// Account Whose account it is
+	Account *string `json:"account,omitempty"`
+
+	// Grant authorization_code: a person consents, in the browser. client_credentials: the client's own access, nobody's account.
+	Grant  OAuthGrant `json:"grant"`
+	Paused bool       `json:"paused"`
+	Preset string     `json:"preset"`
+
+	// Status not_connected: nobody connected it yet. connected: it has tokens. refreshing: a refresh is in progress. failing: the last refresh failed for now, and is tried again; an access token that still lasts is used. needs_reconnect: the provider refuses its refresh token (or there is none), and a person has to connect it again. revoked: it was disconnected here.
+	Status OAuthStatus `json:"status"`
+}
+
+// OAuthProvider A provider as a connection pinned it.
+type OAuthProvider struct {
+	AccessTokenLifetimeSeconds *int               `json:"accessTokenLifetimeSeconds,omitempty"`
+	AuthorizationEndpoint      *string            `json:"authorizationEndpoint,omitempty"`
+	AuthorizationParams        *map[string]string `json:"authorizationParams,omitempty"`
+
+	// EndpointHosts The hosts of every address of the provider's here, the token endpoint's first: the client secret, codes and tokens are sent to no other, and neither is the browser.
+	EndpointHosts           []string        `json:"endpointHosts"`
+	Issuer                  *string         `json:"issuer,omitempty"`
+	JwksUri                 *string         `json:"jwksUri,omitempty"`
+	Preset                  string          `json:"preset"`
+	RefreshTokenIdleDays    *int            `json:"refreshTokenIdleDays,omitempty"`
+	RevocationEndpoint      *string         `json:"revocationEndpoint,omitempty"`
+	Tenant                  *string         `json:"tenant,omitempty"`
+	TokenEndpoint           string          `json:"tokenEndpoint"`
+	TokenEndpointAuthMethod OAuthAuthMethod `json:"tokenEndpointAuthMethod"`
+	UserinfoEndpoint        *string         `json:"userinfoEndpoint,omitempty"`
+}
+
+// OAuthProviderInput A provider: a preset (google; microsoft with the tenant's ID), or generic with an issuer, whose metadata is read (OpenID Connect Discovery, RFC 8414), or with its endpoints. Every URL is https.
+type OAuthProviderInput struct {
+	// AccessTokenLifetimeSeconds How long an access token lasts where the provider does not say.
+	AccessTokenLifetimeSeconds *int    `json:"accessTokenLifetimeSeconds,omitempty"`
+	AuthorizationEndpoint      *string `json:"authorizationEndpoint,omitempty"`
+
+	// AuthorizationParams More parameters of the authorization request, at most 10; none of the request's own.
+	AuthorizationParams *map[string]string `json:"authorizationParams,omitempty"`
+
+	// EndpointHosts generic, authorization_code only: the hosts the provider's addresses may be on beside the issuer's (or, with its endpoints given, the token endpoint's), each with its port when that is not 443. The ones they are on are in the redirect URI.
+	EndpointHosts *[]string                `json:"endpointHosts,omitempty"`
+	Issuer        *string                  `json:"issuer,omitempty"`
+	Preset        OAuthProviderInputPreset `json:"preset"`
+
+	// RefreshTokenIdleDays After how many days without use the provider drops a refresh token: Varlatch then refreshes after two thirds of them, used or not.
+	RefreshTokenIdleDays *int    `json:"refreshTokenIdleDays,omitempty"`
+	RevocationEndpoint   *string `json:"revocationEndpoint,omitempty"`
+
+	// Tenant microsoft only: the tenant's ID (a UUID). common, organizations and consumers are refused.
+	Tenant                  *string          `json:"tenant,omitempty"`
+	TokenEndpoint           *string          `json:"tokenEndpoint,omitempty"`
+	TokenEndpointAuthMethod *OAuthAuthMethod `json:"tokenEndpointAuthMethod,omitempty"`
+
+	// UserinfoEndpoint Asked once at each connection, with the access token, for whose account it is (sub or id).
+	UserinfoEndpoint *string `json:"userinfoEndpoint,omitempty"`
+}
+
+// OAuthProviderInputPreset defines model for OAuthProviderInput.Preset.
+type OAuthProviderInputPreset string
+
+// OAuthRefresh defines model for OAuthRefresh.
+type OAuthRefresh struct {
+	// Connection An OAuth connection. No secret and no token, nor anything derived from one.
+	Connection OAuthConnection `json:"connection"`
+
+	// Reason Why not.
+	Reason            *string `json:"reason,omitempty"`
+	Refreshed         bool    `json:"refreshed"`
+	RetryAfterSeconds *int    `json:"retryAfterSeconds,omitempty"`
+}
+
+// OAuthStatus not_connected: nobody connected it yet. connected: it has tokens. refreshing: a refresh is in progress. failing: the last refresh failed for now, and is tried again; an access token that still lasts is used. needs_reconnect: the provider refuses its refresh token (or there is none), and a person has to connect it again. revoked: it was disconnected here.
+type OAuthStatus string
+
 // ObservedCheck defines model for ObservedCheck.
 type ObservedCheck struct {
 	// CertificateNotAfter browserTls only, when the certificate in use expires.
@@ -4821,14 +5696,44 @@ type ObservedNode struct {
 
 // OidcBinding defines model for OidcBinding.
 type OidcBinding struct {
-	Audience   string                               `json:"audience"`
-	Claims     nullable.Nullable[map[string]string] `json:"claims"`
-	CreatedAt  time.Time                            `json:"createdAt"`
-	Id         string                               `json:"id"`
-	IdentityId string                               `json:"identityId"`
-	Issuer     string                               `json:"issuer"`
-	Subject    string                               `json:"subject"`
+	Audience  string                               `json:"audience"`
+	Claims    nullable.Nullable[map[string]string] `json:"claims"`
+	CreatedAt time.Time                            `json:"createdAt"`
+
+	// ExerciseOnly Present (true) when the binding has this limit (ADR-0060).
+	ExerciseOnly *bool  `json:"exerciseOnly,omitempty"`
+	Id           string `json:"id"`
+	IdentityId   string `json:"identityId"`
+	Issuer       string `json:"issuer"`
+
+	// RunIdClaim Present when the binding has this limit.
+	RunIdClaim *string `json:"runIdClaim,omitempty"`
+
+	// SingleExchange Present (true) when the binding has this limit.
+	SingleExchange *bool  `json:"singleExchange,omitempty"`
+	Subject        string `json:"subject"`
 }
+
+// OneTimeCode Present when the item holds the seed of one-time codes (capability values.totp, ADR-0061): what may be read of it. Such an item is always sensitive and its value is never delivered: exercising a Capability that names it gives the code.
+type OneTimeCode struct {
+	// Account The account there; may be empty.
+	Account   string               `json:"account"`
+	Algorithm OneTimeCodeAlgorithm `json:"algorithm"`
+	Digits    OneTimeCodeDigits    `json:"digits"`
+
+	// Issuer Who the code is for; may be empty.
+	Issuer        string                   `json:"issuer"`
+	PeriodSeconds OneTimeCodePeriodSeconds `json:"periodSeconds"`
+}
+
+// OneTimeCodeAlgorithm defines model for OneTimeCode.Algorithm.
+type OneTimeCodeAlgorithm string
+
+// OneTimeCodeDigits defines model for OneTimeCode.Digits.
+type OneTimeCodeDigits int
+
+// OneTimeCodePeriodSeconds defines model for OneTimeCode.PeriodSeconds.
+type OneTimeCodePeriodSeconds int
 
 // Organization defines model for Organization.
 type Organization struct {
@@ -4868,6 +5773,9 @@ type OrganizationPermissionsActions string
 
 // OrganizationPermissionsRole The caller's role; null for a machine identity.
 type OrganizationPermissionsRole string
+
+// OtpauthURI The seed of one-time codes (RFC 6238) as an otpauth://totp/ URI, what an authenticator's QR code holds: a base32 secret of 80 bits or more, SHA1 (the default), SHA256, or SHA512, 6 (the default) or 8 digits, a period of 30 (the default) or 60 seconds. It goes where a value would (capability values.totp): a server without the capability refuses the request for want of a value. Refused with VALIDATION_FAILED, which never repeats any of it.
+type OtpauthURI = string
 
 // OutboundDestinationKind defines model for OutboundDestinationKind.
 type OutboundDestinationKind string
@@ -5370,6 +6278,9 @@ type StrictRetrieval struct {
 	Items         []struct {
 		Name string `json:"name"`
 
+		// Oauth Present when the item is an OAuth connection (capability oauth.connections, ADR-0062). Such an item is always sensitive and has no value that is delivered: exercising a Capability that names it gives its access token.
+		Oauth *OAuthItem `json:"oauth,omitempty"`
+
 		// RawValue The stored text, present only when expansion changed `value`.
 		RawValue *string `json:"rawValue,omitempty"`
 
@@ -5381,6 +6292,9 @@ type StrictRetrieval struct {
 		Rotating  *bool                      `json:"rotating,omitempty"`
 		Sensitive bool                       `json:"sensitive"`
 		Source    StrictRetrievalItemsSource `json:"source"`
+
+		// Totp Present when the item holds the seed of one-time codes (capability values.totp, ADR-0061): what may be read of it. Such an item is always sensitive and its value is never delivered: exercising a Capability that names it gives the code.
+		Totp *OneTimeCode `json:"totp,omitempty"`
 
 		// Value The delivered value, references expanded; null when withheld.
 		Value     nullable.Nullable[string] `json:"value"`
@@ -5671,7 +6585,10 @@ type ValueVersion struct {
 	ItemName          string                    `json:"itemName"`
 	PreviousVersionId nullable.Nullable[string] `json:"previousVersionId,omitempty"`
 	Sensitive         bool                      `json:"sensitive"`
-	VersionId         string                    `json:"versionId"`
+
+	// Totp Present when the item holds the seed of one-time codes (capability values.totp, ADR-0061): what may be read of it. Such an item is always sensitive and its value is never delivered: exercising a Capability that names it gives the code.
+	Totp      *OneTimeCode `json:"totp,omitempty"`
+	VersionId string       `json:"versionId"`
 }
 
 // Webhook defines model for Webhook.
@@ -5760,6 +6677,9 @@ type AuditUntil = time.Time
 // Cursor defines model for cursor.
 type Cursor = string
 
+// EntryLinkParameter defines model for entryLink.
+type EntryLinkParameter = string
+
 // EnvironmentParameter defines model for environment.
 type EnvironmentParameter = string
 
@@ -5827,6 +6747,24 @@ type ListDeletedOrganizationAuditEventsParams struct {
 	// Cursor Opaque cursor from a previous response; never parse.
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
+
+// LookupEntryLinkJSONBody defines parameters for LookupEntryLink.
+type LookupEntryLinkJSONBody struct {
+	Token string `json:"token"`
+}
+
+// SubmitEntryLinkJSONBody defines parameters for SubmitEntryLink.
+type SubmitEntryLinkJSONBody struct {
+	// Otpauth For a link that accepts the seed of a one-time code, an otpauth://totp/ URI.
+	Otpauth *string `json:"otpauth,omitempty"`
+	Token   string  `json:"token"`
+
+	// Value For a link that accepts a value.
+	Value *string `json:"value,omitempty"`
+}
+
+// SubmitEntryLink200JSONResponseBodyStatus defines parameters for SubmitEntryLink.
+type SubmitEntryLink200JSONResponseBodyStatus string
 
 // ApproveApprovalJSONBody defines parameters for ApproveApproval.
 type ApproveApprovalJSONBody struct {
@@ -5902,7 +6840,7 @@ type ListAuditEventsParams struct {
 	// ActorIdentityId Only events whose actor is this identity ID (capability audit.filters).
 	ActorIdentityId *AuditActorIdentityId `form:"actorIdentityId,omitempty" json:"actorIdentityId,omitempty"`
 
-	// Actor varlatch: only Varlatch's own events, those with no actor identity (sync delivery, webhooks, operator commands), except authentication.* events, whose missing actor is an unknown caller (capability audit.attribution). Given with actorIdentityId it is refused with VALIDATION_FAILED.
+	// Actor varlatch: only Varlatch's own events, those with no actor identity (sync delivery, webhooks, operator commands), except authentication.* events, whose missing actor is an unknown caller, and what somebody did with an entry link open to anyone (capability audit.attribution). Given with actorIdentityId it is refused with VALIDATION_FAILED.
 	Actor *ListAuditEventsParamsActor `form:"actor,omitempty" json:"actor,omitempty"`
 
 	// ProjectId Only events whose resource names this project ID (capability audit.filters).
@@ -5938,7 +6876,7 @@ type ExportAuditEventsParams struct {
 	// ActorIdentityId Only events whose actor is this identity ID (capability audit.filters).
 	ActorIdentityId *AuditActorIdentityId `form:"actorIdentityId,omitempty" json:"actorIdentityId,omitempty"`
 
-	// Actor varlatch: only Varlatch's own events, those with no actor identity (sync delivery, webhooks, operator commands), except authentication.* events, whose missing actor is an unknown caller (capability audit.attribution). Given with actorIdentityId it is refused with VALIDATION_FAILED.
+	// Actor varlatch: only Varlatch's own events, those with no actor identity (sync delivery, webhooks, operator commands), except authentication.* events, whose missing actor is an unknown caller, and what somebody did with an entry link open to anyone (capability audit.attribution). Given with actorIdentityId it is refused with VALIDATION_FAILED.
 	Actor *ExportAuditEventsParamsActor `form:"actor,omitempty" json:"actor,omitempty"`
 
 	// ProjectId Only events whose resource names this project ID (capability audit.filters).
@@ -6239,10 +7177,19 @@ type IssueIdentityCredential201JSONResponseBody struct {
 type CreateOidcBindingJSONBody struct {
 	Audience string `json:"audience"`
 
-	// Claims Additional token claims that must match exactly.
-	Claims  *map[string]string `json:"claims,omitempty"`
-	Issuer  string             `json:"issuer"`
-	Subject string             `json:"subject"`
+	// Claims Additional token claims that must match exactly. Names that start with varlatch: are reserved.
+	Claims *map[string]string `json:"claims,omitempty"`
+
+	// ExerciseOnly The exchanged credential exercises Capabilities issued for the binding's identity, a Broker, and nothing else: every other operation, reads included, is refused with PERMISSION_DENIED. Turns singleExchange on.
+	ExerciseOnly *bool  `json:"exerciseOnly,omitempty"`
+	Issuer       string `json:"issuer"`
+
+	// RunIdClaim With exerciseOnly: only Capabilities whose runId equals this claim of the exchanged token. A token without it (a string of 1 to 200 characters) exchanges nothing.
+	RunIdClaim *string `json:"runIdClaim,omitempty"`
+
+	// SingleExchange A token exchanges once within its lifetime, by its issuer and jti, or by the token itself when it has no jti. A token that stays valid for more than a day exchanges nothing. Off by default, always on with exerciseOnly.
+	SingleExchange *bool  `json:"singleExchange,omitempty"`
+	Subject        string `json:"subject"`
 }
 
 // CreateOidcBindingParams defines parameters for CreateOidcBinding.
@@ -6478,9 +7425,14 @@ type CreateEnvironmentJSONBody struct {
 
 // IssueCapabilityJSONBody defines parameters for IssueCapability.
 type IssueCapabilityJSONBody struct {
-	AgentIdentityId string   `json:"agentIdentityId"`
-	Destinations    []string `json:"destinations"`
-	Items           []string `json:"items"`
+	AgentIdentityId string `json:"agentIdentityId"`
+
+	// BrokerIdentityId The Broker the Capability is issued for (capability capabilities.delegate): a broker identity of the Organization that is not retired. Naming any but the caller itself needs capability.issue. Required when the caller is not a Broker. While the Capability lives, every exercise also needs its issuer to be live and to hold capability.issue here.
+	BrokerIdentityId *string `json:"brokerIdentityId,omitempty"`
+
+	// Destinations Hosts: host, host:port, *.suffix, an IP address; no port is 443. Or, for a Broker that types (capability capabilities.destination-kinds, ADR-0064), pages, web:<http or https>://<host or *.suffix>[:port][/path], the path a prefix of whole segments (an http page is allowed when it is written out, and not encrypted: whoever is on the network reads what is typed there), and desktop applications on the Broker's machine, app:<name>@<the Broker's identity ID>. Not hosts and the others in one Capability (VALIDATION_FAILED, reason mixed-destinations), nor an application of another machine (app-machine). A server without the capability refuses the last two kinds.
+	Destinations []string `json:"destinations"`
+	Items        []string `json:"items"`
 
 	// Precondition Agent-safe strict preflight (capability retrieval.preflight): the state a preflight strict retrieval saw. Issuance compares it in its own snapshot, without decrypting anything, and refuses with STATE_CHANGED (details.categories names only what changed) when it differs. It confers no authority.
 	Precondition *struct {
@@ -6495,7 +7447,10 @@ type IssueCapabilityJSONBody struct {
 	} `json:"precondition,omitempty"`
 	RunId *string `json:"runId,omitempty"`
 
-	// Targets Required (capability capabilities.targets). For every item, 1 to 4 substitution targets: header:<name> (never a transport-owned header such as Host, Content-Length, Transfer-Encoding, Content-Type, or connection and proxy headers), query:<name>, json:<RFC 6901 pointer>, or form:<name>. Recorded immutably on the Capability; the Broker substitutes a Placeholder only at its targets.
+	// SingleUse Exercised once (capability capabilities.single-use). A granted exercise uses it up, even when its response is lost or the server fails after recording it; a refused one, or one whose items have no value, does not. A server without the capability ignores this member: check it, or that the answer says singleUse.
+	SingleUse *bool `json:"singleUse,omitempty"`
+
+	// Targets Required (capability capabilities.targets). For every item, 1 to 4 substitution targets: header:<name> (never a transport-owned header such as Host, Content-Length, Transfer-Encoding, Content-Type, or connection and proxy headers), query:<name>, json:<RFC 6901 pointer>, or form:<name>, in a request; or (capability capabilities.target-kinds, ADR-0064) pipe:<RFC 6901 pointer>, in a JSON document handed to a process over a pipe, or field:<name>, typed into a field (both without ; and = and characters that do not show). A field goes with pages and applications, a pipe with hosts and applications, the others with hosts: a target no destination takes is refused (VALIDATION_FAILED, reason target-without-destination). A server without the capability refuses pipe and field. Recorded immutably on the Capability; the Broker substitutes a Placeholder only at its targets.
 	Targets    map[string][]string `json:"targets"`
 	TtlSeconds int                 `json:"ttlSeconds"`
 }
@@ -6503,12 +7458,28 @@ type IssueCapabilityJSONBody struct {
 // ExerciseCapabilityJSONBody defines parameters for ExerciseCapability.
 type ExerciseCapabilityJSONBody struct {
 	CapabilitySecret string `json:"capabilitySecret"`
-	Destination      struct {
-		Host string `json:"host"`
-		Port int    `json:"port"`
+
+	// Destination Where the values go, as the Broker says: host and port; or (capability capabilities.destination-kinds, ADR-0064) the page, url with topUrl, or the application, app, on the Broker's own machine. The audit log has the page's path, without query, fragment, credentials and path parameters, and the application's name; never a window's title, which is no part of a report. One of the three; a server without the capability refuses the last two for want of host and port. None of the Capability's destinations: PERMISSION_DENIED, reason destination-mismatch, recorded with what was reported.
+	Destination struct {
+		// App The application's name, compared exactly, and recorded. Never its window's title.
+		App  *string `json:"app,omitempty"`
+		Host *string `json:"host,omitempty"`
+		Port *int    `json:"port,omitempty"`
+
+		// TopUrl The address of the page around it, when that is another one: a destination has to name it too.
+		TopUrl *string `json:"topUrl,omitempty"`
+
+		// Url The address of the page whose field it is, as the browser has it (a frame's own). Compared by scheme, host, port and path; its query and fragment are not compared nor recorded. One that cannot be read, or could be read two ways, is none of any.
+		Url *string `json:"url,omitempty"`
 	} `json:"destination"`
 
-	// Placements Each substitution the Broker will make, as an item and one of its recorded targets. Only these items are returned; references inside them still resolve against the other Secrets on the Capability, each dependency audited before it is decrypted. A Capability without targets (issued before they were required) is refused with reason capability-without-targets; a placement the Capability does not hold with placement-not-targeted.
+	// Fresh Only codes of a later period than any this server has given (capability values.totp): the current period's, else the next one's. Once one of the next period or a later one was given (minValiditySeconds may have skipped the current one), the exercise is refused with RATE_LIMITED (429, Retry-After), reason no-fresh-code and retryAfterSeconds, and uses up nothing. Every code given counts, asked for as fresh or not; one made from a copy of the seed elsewhere is not known here. Other items are not affected.
+	Fresh *bool `json:"fresh,omitempty"`
+
+	// MinValiditySeconds How long the one-time codes (capability values.totp) and the access tokens (capability oauth.connections) among the items must still be valid. When the current code ends sooner, the next one is answered, with the time it starts (notBefore, startsInSeconds): the caller waits for it, the server does not. When an access token ends sooner, it is refreshed first. More than an item's period, or than the provider's access tokens last, is refused with VALIDATION_FAILED, reason min-validity-too-long, and uses up nothing. Other items are not affected.
+	MinValiditySeconds *int `json:"minValiditySeconds,omitempty"`
+
+	// Placements Each substitution the Broker will make, as an item and one of its recorded targets. Only these items are returned; references inside them still resolve against the other Secrets on the Capability, each dependency audited before it is decrypted. A Capability without targets (issued before they were required) is refused with reason capability-without-targets; a placement the Capability does not hold with placement-not-targeted, and one whose target is none of the destination's kind with placement-not-for-destination. A single-use Capability exercised before is refused with already-used, and one whose issuer may no longer issue here with issuer-not-allowed.
 	Placements *[]struct {
 		Item   string `json:"item"`
 		Target string `json:"target"`
@@ -6531,7 +7502,10 @@ type ApplyChangeSetJSONBodyChanges0 struct {
 	ExpectedVersionId *string                          `json:"expectedVersionId,omitempty"`
 	Item              string                           `json:"item"`
 	Op                ApplyChangeSetJSONBodyChanges0Op `json:"op"`
-	Value             string                           `json:"value"`
+
+	// Otpauth The seed of one-time codes (RFC 6238) as an otpauth://totp/ URI, what an authenticator's QR code holds: a base32 secret of 80 bits or more, SHA1 (the default), SHA256, or SHA512, 6 (the default) or 8 digits, a period of 30 (the default) or 60 seconds. It goes where a value would (capability values.totp): a server without the capability refuses the request for want of a value. Refused with VALIDATION_FAILED, which never repeats any of it.
+	Otpauth *OtpauthURI `json:"otpauth,omitempty"`
+	Value   *string     `json:"value,omitempty"`
 }
 
 // ApplyChangeSetJSONBodyChanges0Op defines parameters for ApplyChangeSet.
@@ -6572,6 +7546,9 @@ type DiscloseSecretsJSONBody0 struct {
 
 	// Purpose Why the caller asks for a disclosure, recorded as `purpose` in the disclosure's `secret.disclosed` audit event and in any reference-expansion `value.disclosed` events it causes. `scan`: a local secret scan (`varlatch scan`). `export`: read for an env file (capability `disclosure.purpose.export`, ADR-0053); it proves neither that a file was saved nor which values went into it. Any other value is refused with VALIDATION_FAILED.
 	Purpose *DisclosurePurpose `json:"purpose,omitempty"`
+
+	// TotpSeeds Disclose the seeds of one-time codes among items too (capability values.totp), each as its otpauth:// URI. Refused with a purpose or with the all-authorized scope.
+	TotpSeeds *bool `json:"totpSeeds,omitempty"`
 }
 
 // DiscloseSecretsJSONBody1 defines parameters for DiscloseSecrets.
@@ -6650,7 +7627,10 @@ type PauseSyncTargetParamsWait string
 type SetValueJSONBody struct {
 	// ExpectedVersionId Optimistic concurrency; rejects stale writes with VERSION_CONFLICT.
 	ExpectedVersionId *string `json:"expectedVersionId,omitempty"`
-	Value             string  `json:"value"`
+
+	// Otpauth The seed of one-time codes (RFC 6238) as an otpauth://totp/ URI, what an authenticator's QR code holds: a base32 secret of 80 bits or more, SHA1 (the default), SHA256, or SHA512, 6 (the default) or 8 digits, a period of 30 (the default) or 60 seconds. It goes where a value would (capability values.totp): a server without the capability refuses the request for want of a value. Refused with VALIDATION_FAILED, which never repeats any of it.
+	Otpauth *OtpauthURI `json:"otpauth,omitempty"`
+	Value   *string     `json:"value,omitempty"`
 }
 
 // SetValueParams defines parameters for SetValue.
@@ -6665,8 +7645,11 @@ type BeginRotationJSONBody struct {
 	ExpectedVersionId *string `json:"expectedVersionId,omitempty"`
 
 	// GraceSeconds Overlap window; clamped to [1, 2592000] and defaulted from the contract's per-item rotationGraceSeconds, else 24h.
-	GraceSeconds *int   `json:"graceSeconds,omitempty"`
-	Value        string `json:"value"`
+	GraceSeconds *int `json:"graceSeconds,omitempty"`
+
+	// Otpauth The seed of one-time codes (RFC 6238) as an otpauth://totp/ URI, what an authenticator's QR code holds: a base32 secret of 80 bits or more, SHA1 (the default), SHA256, or SHA512, 6 (the default) or 8 digits, a period of 30 (the default) or 60 seconds. It goes where a value would (capability values.totp): a server without the capability refuses the request for want of a value. Refused with VALIDATION_FAILED, which never repeats any of it.
+	Otpauth *OtpauthURI `json:"otpauth,omitempty"`
+	Value   *string     `json:"value,omitempty"`
 }
 
 // ListRequirementsParams defines parameters for ListRequirements.
@@ -6878,6 +7861,12 @@ type LookupDeviceSignInJSONRequestBody LookupDeviceSignInJSONBody
 // CollectDeviceSignInJSONRequestBody defines body for CollectDeviceSignIn for application/json ContentType.
 type CollectDeviceSignInJSONRequestBody CollectDeviceSignInJSONBody
 
+// LookupEntryLinkJSONRequestBody defines body for LookupEntryLink for application/json ContentType.
+type LookupEntryLinkJSONRequestBody LookupEntryLinkJSONBody
+
+// SubmitEntryLinkJSONRequestBody defines body for SubmitEntryLink for application/json ContentType.
+type SubmitEntryLinkJSONRequestBody SubmitEntryLinkJSONBody
+
 // ApproveApprovalJSONRequestBody defines body for ApproveApproval for application/json ContentType.
 type ApproveApprovalJSONRequestBody ApproveApprovalJSONBody
 
@@ -7000,6 +7989,27 @@ type ApplyChangeSetJSONRequestBody ApplyChangeSetJSONBody
 
 // DiscloseSecretsJSONRequestBody defines body for DiscloseSecrets for application/json ContentType.
 type DiscloseSecretsJSONRequestBody DiscloseSecretsJSONBody
+
+// CreateEntryLinkJSONRequestBody defines body for CreateEntryLink for application/json ContentType.
+type CreateEntryLinkJSONRequestBody = EntryLinkInput
+
+// CreateOAuthConnectionJSONRequestBody defines body for CreateOAuthConnection for application/json ContentType.
+type CreateOAuthConnectionJSONRequestBody = OAuthConnectionInput
+
+// DiscoverOAuthProviderJSONRequestBody defines body for DiscoverOAuthProvider for application/json ContentType.
+type DiscoverOAuthProviderJSONRequestBody = OAuthDiscoveryInput
+
+// UpdateOAuthConnectionJSONRequestBody defines body for UpdateOAuthConnection for application/json ContentType.
+type UpdateOAuthConnectionJSONRequestBody = OAuthConnectionChange
+
+// StartOAuthAuthorizationJSONRequestBody defines body for StartOAuthAuthorization for application/json ContentType.
+type StartOAuthAuthorizationJSONRequestBody = OAuthAuthorizationInput
+
+// CompleteOAuthAuthorizationJSONRequestBody defines body for CompleteOAuthAuthorization for application/json ContentType.
+type CompleteOAuthAuthorizationJSONRequestBody = OAuthAuthorizationAnswer
+
+// DisconnectOAuthConnectionJSONRequestBody defines body for DisconnectOAuthConnection for application/json ContentType.
+type DisconnectOAuthConnectionJSONRequestBody = OAuthDisconnectInput
 
 // StrictRetrievalJSONRequestBody defines body for StrictRetrieval for application/json ContentType.
 type StrictRetrievalJSONRequestBody StrictRetrievalJSONBody

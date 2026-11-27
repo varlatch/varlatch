@@ -13,6 +13,7 @@ import { PlatformLogo } from "../../components/brand-logos";
 import { Avatar, Badge, Button, Skeleton, cn } from "../../components/ui";
 import { useCapability } from "../projects/hooks";
 import {
+  codeLabel,
   draftKind,
   requirednessLabel,
   type CellState,
@@ -21,7 +22,10 @@ import {
   type ServerItem,
 } from "../values/model";
 import type { Disclosed } from "../values/useDisclosure";
-import { DraftMarker, SecretMask } from "../values/bits";
+import { CodeValue, ConnectionValue, DraftMarker, SecretMask } from "../values/bits";
+import { OAuthPanel } from "../oauth/OAuthPanel";
+import { connectionLabel } from "../oauth/model";
+import { EntryLinksPanel } from "../entry/EntryLinksPanel";
 import { itemLedgerEntry, syncTargetItemStatus, targetLabel, targetPlatform } from "../sync/syncStatus";
 
 export type PanelActions = {
@@ -32,6 +36,8 @@ export type PanelActions = {
   remove: () => void;
   rotate: () => void;
   finishRotation: () => void;
+  /** The item changed on the server, not through a draft. */
+  changed: () => void;
 };
 
 /**
@@ -83,6 +89,7 @@ export function ItemPanelBody({
   const disclosed = tailnetOnly ? undefined : revealed;
   const kind = draftKind(draft, server);
   const own = server?.source === "self";
+  const entryLinks = useCapability("values.entry-links");
   return (
     <>
       {contract?.description ? (
@@ -136,7 +143,7 @@ export function ItemPanelBody({
               contract={contract}
             />
           </div>
-          {sensitive && server && !draft && !tailnetOnly && (
+          {sensitive && server && !server.oauth && !draft && !tailnetOnly && (
             <Button
               className="h-auto min-h-10 flex-col gap-0 px-3 py-1 leading-tight"
               data-testid="panel-reveal"
@@ -145,14 +152,14 @@ export function ItemPanelBody({
             >
               <span className="flex items-center gap-1.5">
                 {disclosed ? <EyeOff size={14} /> : <Eye size={14} />}
-                {disclosed ? "Hide" : "Reveal"}
+                {disclosed ? "Hide" : server.totp ? "Reveal seed" : "Reveal"}
               </span>
               {!disclosed && <span className="text-[10.5px] font-normal text-muted">audited</span>}
             </Button>
           )}
           {(() => {
             const copy = sensitive ? disclosed?.value : !withheld ? server?.value : undefined;
-            if (draft || !server) return null;
+            if (draft || !server || server.oauth) return null;
             return copy !== undefined && copy !== null ? (
               <CopyButton value={copy} className="h-auto min-h-10" data-testid="panel-copy">
                 Copy
@@ -164,6 +171,12 @@ export function ItemPanelBody({
             ) : null;
           })()}
         </div>
+        {server?.totp && !draft && (
+          <p className="mt-2 text-xs text-muted" data-testid="panel-code">
+            {server.totp.digits} digits, every {server.totp.periodSeconds} seconds, {server.totp.algorithm}. A Capability that names this item gives its
+            Broker the code; the seed is delivered nowhere.
+          </p>
+        )}
         {server?.rawValue !== undefined && !draft && (
           <p className="mt-2 text-xs text-muted">
             Stored with a reference: <span className="font-mono text-fg/90">{server.rawValue}</span>
@@ -176,9 +189,9 @@ export function ItemPanelBody({
           </p>
         )}
         <div className="mt-3 flex flex-wrap gap-2">
-          {kind !== "deleted" && (
+          {kind !== "deleted" && !server?.oauth && (
             <Button size="sm" icon={<Pencil size={13} />} onClick={actions.edit} data-testid="panel-edit">
-              {sensitive && server ? "Overwrite…" : server || draft ? "Edit" : "Set value"}
+              {server?.totp ? "Replace seed…" : sensitive && server ? "Overwrite…" : server || draft ? "Edit" : "Set value"}
             </Button>
           )}
           {draft && (
@@ -195,13 +208,19 @@ export function ItemPanelBody({
               onClick={actions.remove}
               data-testid={`delete-${name}`}
             >
-              Delete value
+              {server?.oauth ? "Delete connection" : "Delete value"}
             </Button>
           )}
         </div>
       </PanelSection>
 
-      {own && (
+      {server?.oauth && (
+        <PanelSection title="OAuth connection">
+          <OAuthPanel org={org} project={project} env={env.name} item={name} own={own} onChanged={actions.changed} />
+        </PanelSection>
+      )}
+
+      {own && !server?.oauth && (
         <PanelSection title="Rotation">
           {server?.rotating ? (
             <div className="space-y-3" data-testid="panel-rotation">
@@ -262,6 +281,12 @@ export function ItemPanelBody({
         </PanelSection>
       )}
 
+      {entryLinks && sensitive && !server?.oauth && !server?.rotating && !draft && (
+        <PanelSection title="Entry link">
+          <EntryLinksPanel org={org} project={project} env={env.name} item={name} has={server !== undefined} seed={Boolean(server?.totp)} />
+        </PanelSection>
+      )}
+
       <SyncedTo org={org} project={project} env={env} name={name} targets={targets} connections={connections} />
       <History org={org} env={env} name={name} />
     </>
@@ -298,6 +323,8 @@ function ValueText({
   }
   if (!server) return <span className="text-[13px] text-muted">Not set</span>;
   if (tailnetOnly) return <span className="text-[13px] text-muted">Set. {TAILNET_ONLY_GUIDANCE}</span>;
+  if (server.oauth) return <ConnectionValue label={connectionLabel(server.oauth) ?? ""} />;
+  if (server.totp && !disclosed) return <CodeValue label={codeLabel(server) ?? ""} />;
   if (sensitive) return disclosed ? <span className={mono}>{disclosed.value}</span> : <SecretMask />;
   if (withheld) return <span className="text-[13px] text-muted">Set; your access does not include reading it</span>;
   return <span className={mono}>{server.value === "" ? <em className="text-muted">(empty)</em> : server.value}</span>;

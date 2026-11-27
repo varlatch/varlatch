@@ -342,8 +342,15 @@ func normalize(v any) any {
 // after it served) may hold rows in: varlatchd's own records, which no
 // bundle carries. certificate_issuances is the public name's issuance
 // count (schema version 2), carried across a reverse apart from the bundle
-// (migrate's migration-issuances.json).
-var reverseKeeps = map[string]bool{"certificate_issuances": true}
+// (migrate's migration-issuances.json). exercise_credentials and
+// oidc_token_uses (schema version 4) stay behind: what they limit is inert
+// on the TypeScript server (ADR-0060). So does one_time_codes_given (schema
+// version 5): the seeds are no values there (ADR-0061). So do
+// oauth_connections and oauth_authorizations (schema version 6): nothing is
+// refreshed there (ADR-0062). And entry_links (schema version 7): there is
+// no page to enter a value on (ADR-0063).
+var reverseKeeps = map[string]bool{"certificate_issuances": true, "exercise_credentials": true, "oidc_token_uses": true, "one_time_codes_given": true,
+	"oauth_connections": true, "oauth_authorizations": true, "entry_links": true}
 
 // otherTables checks the target holds no table the bundle does not
 // account for, and the target-only tables what an import writes:

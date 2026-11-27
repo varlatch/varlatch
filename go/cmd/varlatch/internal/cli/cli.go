@@ -588,8 +588,8 @@ func (r *Run) out(text string) error {
 
 // outShowing writes stdout through the fail-safe with one token shown
 // (redactOutputShowing): the only writer that lets a token through, for
-// `invite`'s enrollment link, a move's re-enrollment links and setup's
-// first administrator's. A value in flight is still redacted.
+// `invite`'s enrollment link, a move's re-enrollment links, setup's first
+// administrator's and `values ask`'s. A value in flight is still redacted.
 func (r *Run) outShowing(text, shown string) error {
 	_, err := io.WriteString(r.Stdout, jsval.NodeText(redactOutputShowing(text, shown, r.inFlight...)))
 	return err

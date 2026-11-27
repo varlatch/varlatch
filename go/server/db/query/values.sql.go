@@ -57,6 +57,73 @@ func (q *Queries) CapturedCiphertext(ctx context.Context, ids []string) ([]Captu
 	return items, nil
 }
 
+const connectionsOfEnvironment = `-- name: ConnectionsOfEnvironment :many
+SELECT v.id, v.item_name, v.current_version_id, CAST(json_extract(s.payload, '$.oauth') AS TEXT) AS params,
+  c.status, c.reason, c.paused_at, c.generation, c.access_expires_at, c.access_lifetime, c.account, c.account_label, c.claim_until,
+  CAST(c.access_token IS NOT NULL AS INTEGER) AS has_token
+FROM env_values v JOIN value_versions s ON s.id = v.current_version_id
+LEFT JOIN oauth_connections c ON c.value_id = v.id AND c.version_id = v.current_version_id
+WHERE v.environment_id = ? AND v.deleted_at IS NOT NULL AND v.current_version_id IS NOT NULL AND json_type(s.payload, '$.oauth') = 'object'
+`
+
+type ConnectionsOfEnvironmentRow struct {
+	ID               string
+	ItemName         string
+	CurrentVersionID sql.NullString
+	Params           string
+	Status           sql.NullString
+	Reason           sql.NullString
+	PausedAt         sql.NullInt64
+	Generation       sql.NullInt64
+	AccessExpiresAt  sql.NullInt64
+	AccessLifetime   sql.NullInt64
+	Account          sql.NullString
+	AccountLabel     sql.NullString
+	ClaimUntil       sql.NullInt64
+	HasToken         int64
+}
+
+// An environment's OAuth connections (ADR-0062), as SeedsOfEnvironment finds
+// seeds, with what their tokens are now: none when the row of oauth_connections
+// is missing or is another version's.
+func (q *Queries) ConnectionsOfEnvironment(ctx context.Context, environmentID string) ([]ConnectionsOfEnvironmentRow, error) {
+	rows, err := q.db.QueryContext(ctx, connectionsOfEnvironment, environmentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ConnectionsOfEnvironmentRow
+	for rows.Next() {
+		var i ConnectionsOfEnvironmentRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ItemName,
+			&i.CurrentVersionID,
+			&i.Params,
+			&i.Status,
+			&i.Reason,
+			&i.PausedAt,
+			&i.Generation,
+			&i.AccessExpiresAt,
+			&i.AccessLifetime,
+			&i.Account,
+			&i.AccountLabel,
+			&i.ClaimUntil,
+			&i.HasToken,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const countWouldBlock = `-- name: CountWouldBlock :many
 INSERT INTO security_control_counters
   (organization_id, control, config_version, operation, actor_identity_id, reason, bucket_hour, count, first_seen, last_seen)
@@ -220,6 +287,21 @@ func (q *Queries) ExportControl(ctx context.Context, organizationID string) (Exp
 	return i, err
 }
 
+const giveOneTimeCode = `-- name: GiveOneTimeCode :exec
+INSERT INTO one_time_codes_given (version_id, step) VALUES (?, ?)
+ON CONFLICT (version_id) DO UPDATE SET step = max(one_time_codes_given.step, excluded.step)
+`
+
+type GiveOneTimeCodeParams struct {
+	VersionID string
+	Step      int64
+}
+
+func (q *Queries) GiveOneTimeCode(ctx context.Context, arg GiveOneTimeCodeParams) error {
+	_, err := q.db.ExecContext(ctx, giveOneTimeCode, arg.VersionID, arg.Step)
+	return err
+}
+
 const liveEnvironment = `-- name: LiveEnvironment :one
 SELECT id, project_id, name, kind, tier, parent_environment_id, owner_identity_id, expires_at, created_at FROM environments
 WHERE project_id = ?1 AND (id = ?2 OR name = ?2) AND deleted_at IS NULL
@@ -323,6 +405,34 @@ func (q *Queries) LiveProject(ctx context.Context, arg LiveProjectParams) (LiveP
 	return i, err
 }
 
+const oneTimeCodeGiven = `-- name: OneTimeCodeGiven :many
+SELECT step FROM one_time_codes_given WHERE version_id = ?
+`
+
+// The newest step a seed's code was given for; no row when there is none.
+func (q *Queries) OneTimeCodeGiven(ctx context.Context, versionID string) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, oneTimeCodeGiven, versionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var step int64
+		if err := rows.Scan(&step); err != nil {
+			return nil, err
+		}
+		items = append(items, step)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const projectContractRevision = `-- name: ProjectContractRevision :one
 SELECT id, content_hash, contract FROM contract_revisions WHERE id = ? AND project_id = ?
 `
@@ -381,4 +491,52 @@ func (q *Queries) RetrievalOrganization(ctx context.Context, id string) (Retriev
 	var i RetrievalOrganizationRow
 	err := row.Scan(&i.ID, &i.WrappedOrgKek)
 	return i, err
+}
+
+const seedsOfEnvironment = `-- name: SeedsOfEnvironment :many
+SELECT v.id, v.item_name, v.current_version_id, v.retiring_version_id, v.rotation_deadline,
+  CAST(json_extract(s.payload, '$.totp') AS TEXT) AS params
+FROM env_values v JOIN value_versions s ON s.id = v.current_version_id
+WHERE v.environment_id = ? AND v.deleted_at IS NOT NULL AND v.current_version_id IS NOT NULL AND json_type(s.payload, '$.totp') = 'object'
+`
+
+type SeedsOfEnvironmentRow struct {
+	ID                string
+	ItemName          string
+	CurrentVersionID  sql.NullString
+	RetiringVersionID sql.NullString
+	RotationDeadline  sql.NullInt64
+	Params            string
+}
+
+// An environment's seeds of one-time codes (ADR-0061): the rows a reader of
+// values takes for deleted ones, whose current version says it is a seed.
+func (q *Queries) SeedsOfEnvironment(ctx context.Context, environmentID string) ([]SeedsOfEnvironmentRow, error) {
+	rows, err := q.db.QueryContext(ctx, seedsOfEnvironment, environmentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SeedsOfEnvironmentRow
+	for rows.Next() {
+		var i SeedsOfEnvironmentRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ItemName,
+			&i.CurrentVersionID,
+			&i.RetiringVersionID,
+			&i.RotationDeadline,
+			&i.Params,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

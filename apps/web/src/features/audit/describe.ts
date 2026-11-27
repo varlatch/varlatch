@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { placeLabel, withoutTLS } from "../access/places";
 
 /**
  * Plain-English audit lines. Each event becomes an icon, a short title and a
@@ -119,6 +120,9 @@ export const ACTION_LABELS: Record<string, string> = {
   "config.value.write": "Write values",
   "secret.reveal": "Reveal secrets",
   "secret.use": "Use secrets",
+  "capability.issue": "Issue capabilities for brokers",
+  "entry-link.create": "Ask for values",
+  "entry-link.create-open": "Ask anyone for values",
   "contract.read": "View the contract",
   "contract.submit": "Push contract revisions",
   "contract.activate": "Activate contract revisions",
@@ -175,6 +179,18 @@ function who(id: unknown, names: NameResolver, fallback = "an identity"): Segmen
   return name ? { kind: "name", text: name } : fallback;
 }
 
+/** Where a value was typed (ADR-0064), as the broker said: a page or an application; nothing for a host, as ever. */
+function typedInto(metadata: Rec, names: NameResolver): Segment[] {
+  const destination = str(metadata.destination);
+  if (!destination || (metadata.destinationKind !== "web" && metadata.destinationKind !== "app")) return [];
+  const insecure = withoutTLS(destination) || withoutTLS(str(metadata.topDestination) ?? "");
+  return [
+    metadata.destinationKind === "web" ? " at " : " in ",
+    { kind: "mono", text: placeLabel(destination, (id) => names.identity(id) ?? "its machine") },
+    ...(insecure ? [" (http: not encrypted)"] : []),
+  ];
+}
+
 function actionText(action: string | null | undefined): Segment {
   return { kind: "mono", text: action ?? "an action" };
 }
@@ -223,13 +239,44 @@ export function describeEvent(event: AuditEventLike, names: NameResolver = empty
   const target = names.target(str(r.targetId));
   const dest: Segment = target ? { kind: "name", text: target } : "an integration";
 
+  // An OAuth connection's events (ADR-0062), under the types Platform Connections have.
+  const oauthEvent = (icon: EventIcon, title: string, verb: string, after = "") => ({
+    icon,
+    title,
+    segments: [
+      verb,
+      { kind: "mono" as const, text: item ?? "an item" },
+      ...(str(m.account) ? [" of ", { kind: "name" as const, text: str(m.account)! }] : []),
+      ...inPlace(r, names),
+      ...(after ? [after] : []),
+    ],
+  });
+  // Where its secrets go: named when it is made, changed and connected.
+  const oauthHosts = str(m.endpointHosts) ? `, at ${str(m.endpointHosts)!.split(",").join(", ")}` : "";
+  const oauthChecked = () => {
+    const why = str(m.reason) ? `: ${str(m.reason)!.replace(/[-_]/g, " ")}` : "";
+    switch (str(m.outcome)) {
+      case "paused":
+        return oauthEvent("pause", "OAuth connection paused", "paused ");
+      case "resumed":
+        return oauthEvent("play", "OAuth connection resumed", "resumed ");
+      case "not-connected":
+        return oauthEvent("alert", "OAuth connection not connected", "tried to connect ", why);
+      case "needs-reconnect":
+        return oauthEvent("alert", "OAuth connection needs a person", "could not refresh ", `${why}; it has to be connected again`);
+      default:
+        return oauthEvent("alert", "OAuth refresh failing", "could not refresh ", why);
+    }
+  };
+
   switch (t) {
     // ---- values and secrets
     case "value.written":
       return {
         icon: "pencil",
-        title: r.previousVersionId ? "Value changed" : "Value set",
-        segments: [r.previousVersionId ? "changed " : "set ", { kind: "mono", text: item ?? "an item" }, ...inPlace(r, names)],
+        // ADR-0061, ADR-0062: a seed of one-time codes, an OAuth connection.
+        title: m.oauth === true ? (r.previousVersionId ? "OAuth connection changed" : "OAuth connection added") : m.totp === true ? "One-time code seed set" : r.previousVersionId ? "Value changed" : "Value set",
+        segments: [m.oauth === true ? (r.previousVersionId ? "changed the OAuth connection " : "added the OAuth connection ") : m.totp === true ? "set the seed of " : r.previousVersionId ? "changed " : "set ", { kind: "mono", text: item ?? "an item" }, ...(str(m.entryLinkId) ? [" with a link"] : []), ...inPlace(r, names), ...(m.oauth === true && oauthHosts ? [oauthHosts] : [])],
       };
     case "value.deleted":
       return { icon: "trash", title: "Value removed", segments: ["removed ", { kind: "mono", text: item ?? "an item" }, ...inPlace(r, names, "from")] };
@@ -253,9 +300,10 @@ export function describeEvent(event: AuditEventLike, names: NameResolver = empty
       const forExport = str(m.purpose) === "export";
       return {
         icon: "eye",
-        title: forExport ? "Secrets read for export" : "Secrets revealed",
+        // ADR-0061: a disclosure that asked for seeds of one-time codes.
+        title: forExport ? "Secrets read for export" : typeof m.totpSeeds === "number" ? "One-time code seed revealed" : "Secrets revealed",
         segments: [
-          str(m.mode) === "strict-retrieval" ? "received " : forExport ? "read " : "revealed ",
+          str(m.mode) === "strict-retrieval" ? "received " : forExport ? "read " : typeof m.totpSeeds === "number" ? "revealed the seed of " : "revealed ",
           ...itemsPhrase(items, "secret"),
           ...inPlace(r, names),
           ...(forExport ? [" for export"] : []),
@@ -272,6 +320,9 @@ export function describeEvent(event: AuditEventLike, names: NameResolver = empty
 
     // ---- access decisions
     case "authorization.denied":
+      if (str(m.reason) === "exercise_only_credential") {
+        return { icon: "shield", title: "Access denied", segments: ["was denied a request its exercise-only credential may not make"] };
+      }
       return { icon: "shield", title: "Access denied", segments: ["was denied ", actionText(event.action), ...inPlace(r, names, "on")] };
     case "authentication.failed":
       return {
@@ -316,20 +367,55 @@ export function describeEvent(event: AuditEventLike, names: NameResolver = empty
         ],
       };
     case "capability.issued":
+      // A link to enter a value with (ADR-0063).
+      if (str(r.entryLinkId)) {
+        return {
+          icon: "key",
+          title: "Entry link made",
+          segments: [
+            "asked ",
+            str(m.identityId) ? who(m.identityId, names, "a person") : m.entryLink === "anyone" ? "anyone with a link" : "a member",
+            m.replace === true ? " to replace " : " for ",
+            { kind: "mono", text: item ?? "a secret" },
+            ...inPlace(r, names),
+          ],
+        };
+      }
       return {
         icon: "key",
         title: "Capability issued",
-        segments: ["let ", who(r.agentIdentityId, names, "an agent"), " use ", ...itemsPhrase(items, "secret"), ...inPlace(r, names)],
+        segments: [
+          "let ",
+          who(r.agentIdentityId, names, "an agent"),
+          " use ",
+          ...itemsPhrase(items, "secret"),
+          // Issued for another broker (ADR-0060).
+          ...(str(r.brokerIdentityId) ? [" through ", who(r.brokerIdentityId, names, "a broker")] : []),
+          ...(m.singleUse === true ? [" once"] : []),
+          ...inPlace(r, names),
+        ],
       };
     case "capability.exercised":
       return {
         icon: "key",
         title: "Capability used",
-        segments: ["used ", ...itemsPhrase(items, "secret"), " for ", who(r.agentIdentityId, names, "an agent"), ...inPlace(r, names)],
+        segments: [typeof m.oauthTokens === "string" ? "got an access token, using " : typeof m.oneTimeCodes === "string" ? "got a one-time code, using " : "used ", ...itemsPhrase(items, "secret"), " for ", who(r.agentIdentityId, names, "an agent"), ...typedInto(m, names), ...inPlace(r, names)],
       };
     case "capability.denied":
-      return { icon: "shield", title: "Capability refused", segments: ["was refused a capability use", ...inPlace(r, names)] };
+      if (str(r.entryLinkId)) {
+        return { icon: "shield", title: "Entry refused", segments: ["was refused to enter ", { kind: "mono", text: item ?? "a secret" }, " with a link", ...inPlace(r, names)] };
+      }
+      return { icon: "shield", title: "Capability refused", segments: ["was refused a capability use", ...typedInto(m, names), ...inPlace(r, names)] };
     case "capability.revoked":
+      if (str(r.entryLinkId)) {
+        // It ended with the credential that made it, which was revoked.
+        const ended = str(m.reason) === "credential-ended";
+        return {
+          icon: "trash",
+          title: ended ? "Entry link ended" : "Entry link cancelled",
+          segments: [ended ? "ended, by revoking what made it, the link to enter " : "cancelled the link to enter ", { kind: "mono", text: item ?? "a secret" }, ...inPlace(r, names)],
+        };
+      }
       return { icon: "trash", title: "Capability revoked", segments: ["revoked a capability", ...inPlace(r, names)] };
     case "credential.issued": {
       const kind = str(m.kind);
@@ -423,7 +509,7 @@ export function describeEvent(event: AuditEventLike, names: NameResolver = empty
     case "invitation.accepted":
       return { icon: "user-plus", title: "Invitation accepted", segments: ["joined through an invitation"] };
     case "oidc_binding.created":
-      return { icon: "key", title: "OIDC sign-in added", segments: ["let ", who(r.identityId, names), " sign in with OIDC", ...(str(m.issuer) ? [" from ", { kind: "mono" as const, text: str(m.issuer)! }] : [])] };
+      return { icon: "key", title: "OIDC sign-in added", segments: ["let ", who(r.identityId, names), m.exerciseOnly === true ? " use capabilities, and nothing else, with OIDC" : " sign in with OIDC", ...(str(m.issuer) ? [" from ", { kind: "mono" as const, text: str(m.issuer)! }] : [])] };
     case "oidc_binding.revoked":
       return { icon: "trash", title: "OIDC sign-in removed", segments: ["removed an OIDC sign-in from ", who(r.identityId, names)] };
 
@@ -507,12 +593,14 @@ export function describeEvent(event: AuditEventLike, names: NameResolver = empty
 
     // ---- integrations
     case "sync.connection_created":
+      if (m.connection === "oauth") return oauthEvent("plug", "OAuth connection connected", "connected ", oauthHosts);
       return {
         icon: "plug",
         title: "Connection created",
         segments: ["connected ", PLATFORM_LABELS[str(m.platform) ?? ""] ?? "a platform", ...(str(m.baseIdentity) ? [" ", { kind: "mono" as const, text: str(m.baseIdentity)! }] : [])],
       };
     case "sync.connection_checked": {
+      if (m.connection === "oauth") return oauthChecked();
       const status = str(m.status);
       const where = str(m.destination) ?? str(m.baseIdentity);
       return {
@@ -546,8 +634,13 @@ export function describeEvent(event: AuditEventLike, names: NameResolver = empty
       };
     }
     case "sync.connection_credential_replaced":
+      if (m.connection === "oauth")
+        return str(m.outcome) === "refreshed"
+          ? oauthEvent("rotate", "OAuth access token refreshed", "refreshed ")
+          : oauthEvent("plug", "OAuth connection connected again", "connected ", `${m.accountChanged === true ? " to another account" : " again"}${oauthHosts}`);
       return { icon: "key", title: "Credential replaced", segments: ["replaced the credential of ", { kind: "name", text: names.connection(str(r.connectionId)) ?? "a connection" }] };
     case "sync.connection_revoked":
+      if (m.connection === "oauth") return oauthEvent("trash", "OAuth connection disconnected", "disconnected ", str(m.atProvider) === "revoked" ? ", and revoked its tokens" : "");
       return { icon: "trash", title: "Connection revoked", segments: ["revoked connection ", { kind: "name", text: names.connection(str(r.connectionId)) ?? "a connection" }] };
     case "sync.github_app_registered": {
       const imported = str(m.via) === "import";

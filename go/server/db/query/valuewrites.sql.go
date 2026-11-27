@@ -52,7 +52,8 @@ func (q *Queries) CompleteValueRotation(ctx context.Context, id string) error {
 const deleteLiveValue = `-- name: DeleteLiveValue :execrows
 UPDATE env_values SET deleted_at = ?, current_version_id = NULL,
   retiring_version_id = NULL, rotation_deadline = NULL, rotation_started_at = NULL
-WHERE environment_id = ? AND item_name = ? AND deleted_at IS NULL
+WHERE environment_id = ? AND item_name = ? AND (deleted_at IS NULL OR
+  EXISTS (SELECT 1 FROM value_versions s WHERE s.id = env_values.current_version_id AND (json_type(s.payload, '$.totp') = 'object' OR json_type(s.payload, '$.oauth') = 'object')))
 `
 
 type DeleteLiveValueParams struct {
@@ -135,7 +136,8 @@ func (q *Queries) InsertValueVersion(ctx context.Context, arg InsertValueVersion
 }
 
 const liveValueCount = `-- name: LiveValueCount :one
-SELECT count(*) FROM env_values WHERE environment_id = ? AND item_name = ? AND deleted_at IS NULL
+SELECT count(*) FROM env_values WHERE environment_id = ? AND item_name = ? AND (deleted_at IS NULL OR
+  EXISTS (SELECT 1 FROM value_versions s WHERE s.id = env_values.current_version_id AND (json_type(s.payload, '$.totp') = 'object' OR json_type(s.payload, '$.oauth') = 'object')))
 `
 
 type LiveValueCountParams struct {
@@ -148,6 +150,25 @@ func (q *Queries) LiveValueCount(ctx context.Context, arg LiveValueCountParams) 
 	var count int64
 	err := row.Scan(&count)
 	return count, err
+}
+
+const setCurrentSeedVersion = `-- name: SetCurrentSeedVersion :exec
+UPDATE env_values SET current_version_id = ?1, deleted_at = ?2,
+  retiring_version_id = NULL, rotation_deadline = NULL, rotation_started_at = NULL
+WHERE id = ?3
+`
+
+type SetCurrentSeedVersionParams struct {
+	Version sql.NullString
+	Now     sql.NullInt64
+	ID      string
+}
+
+// As SetCurrentValueVersion, for a seed of one-time codes (ADR-0061): the
+// row reads as deleted to whoever does not know seeds.
+func (q *Queries) SetCurrentSeedVersion(ctx context.Context, arg SetCurrentSeedVersionParams) error {
+	_, err := q.db.ExecContext(ctx, setCurrentSeedVersion, arg.Version, arg.Now, arg.ID)
+	return err
 }
 
 const setCurrentValueVersion = `-- name: SetCurrentValueVersion :exec
@@ -168,7 +189,9 @@ func (q *Queries) SetCurrentValueVersion(ctx context.Context, arg SetCurrentValu
 }
 
 const valueRotationOf = `-- name: ValueRotationOf :many
-SELECT id, current_version_id, retiring_version_id, rotation_deadline, deleted_at FROM env_values
+SELECT id, current_version_id, retiring_version_id, rotation_deadline, deleted_at,
+  CAST(coalesce((SELECT CASE WHEN json_type(s.payload, '$.totp') = 'object' THEN 1 WHEN json_type(s.payload, '$.oauth') = 'object' THEN 2 END FROM value_versions s WHERE s.id = env_values.current_version_id AND env_values.deleted_at IS NOT NULL), 0) AS INTEGER) AS seed
+FROM env_values
 WHERE environment_id = ? AND item_name = ?
 `
 
@@ -183,10 +206,11 @@ type ValueRotationOfRow struct {
 	RetiringVersionID sql.NullString
 	RotationDeadline  sql.NullInt64
 	DeletedAt         sql.NullInt64
+	Seed              int64
 }
 
 // beginRotation and completeRotation: the item's value row with its
-// rotation, deleted or not.
+// rotation, deleted or not (seed as in ValueRowsOfItems).
 func (q *Queries) ValueRotationOf(ctx context.Context, arg ValueRotationOfParams) ([]ValueRotationOfRow, error) {
 	rows, err := q.db.QueryContext(ctx, valueRotationOf, arg.EnvironmentID, arg.ItemName)
 	if err != nil {
@@ -202,6 +226,7 @@ func (q *Queries) ValueRotationOf(ctx context.Context, arg ValueRotationOfParams
 			&i.RetiringVersionID,
 			&i.RotationDeadline,
 			&i.DeletedAt,
+			&i.Seed,
 		); err != nil {
 			return nil, err
 		}
@@ -218,7 +243,9 @@ func (q *Queries) ValueRotationOf(ctx context.Context, arg ValueRotationOfParams
 
 const valueRowsOfItems = `-- name: ValueRowsOfItems :many
 
-SELECT id, item_name, current_version_id, deleted_at FROM env_values
+SELECT id, item_name, current_version_id, deleted_at,
+  CAST(coalesce((SELECT CASE WHEN json_type(s.payload, '$.totp') = 'object' THEN 1 WHEN json_type(s.payload, '$.oauth') = 'object' THEN 2 END FROM value_versions s WHERE s.id = env_values.current_version_id AND env_values.deleted_at IS NOT NULL), 0) AS INTEGER) AS seed
+FROM env_values
 WHERE environment_id = ?1 AND item_name IN (/*SLICE:item_names*/?) ORDER BY id
 `
 
@@ -232,13 +259,16 @@ type ValueRowsOfItemsRow struct {
 	ItemName         string
 	CurrentVersionID sql.NullString
 	DeletedAt        sql.NullInt64
+	Seed             int64
 }
 
 // The writes of values (domain/values.ts setValue, deleteValue and
 // applyChangeSet; ADR-0059 step 4.1d). The read path's queries are
 // values.sql's.
 // lockValueRows: an environment's value rows for these names, deleted ones
-// included, in id order.
+// included, in id order. seed is 1 for one that holds a seed of one-time
+// codes (ADR-0061) and 2 for an OAuth connection (ADR-0062): its deleted_at
+// does not mean deleted.
 func (q *Queries) ValueRowsOfItems(ctx context.Context, arg ValueRowsOfItemsParams) ([]ValueRowsOfItemsRow, error) {
 	query := valueRowsOfItems
 	var queryParams []interface{}
@@ -264,6 +294,7 @@ func (q *Queries) ValueRowsOfItems(ctx context.Context, arg ValueRowsOfItemsPara
 			&i.ItemName,
 			&i.CurrentVersionID,
 			&i.DeletedAt,
+			&i.Seed,
 		); err != nil {
 			return nil, err
 		}

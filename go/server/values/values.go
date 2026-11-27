@@ -40,6 +40,7 @@ import (
 
 	"github.com/varlatch/varlatch/go/lib/envelope"
 	"github.com/varlatch/varlatch/go/lib/storage"
+	"github.com/varlatch/varlatch/go/lib/totp"
 	"github.com/varlatch/varlatch/go/server/audit"
 	"github.com/varlatch/varlatch/go/server/auth"
 	"github.com/varlatch/varlatch/go/server/authz"
@@ -69,6 +70,7 @@ type Service struct {
 	approvals *auth.Service
 	gates     *write.Gates
 	admit     func() (func(), bool)
+	tokens    Tokens
 }
 
 // Options configures New.
@@ -86,6 +88,9 @@ type Options struct {
 	// runs after its response, so it enters on its own: it is dropped
 	// while a gate is open, and counted until its write ends.
 	Admit func() (leave func(), ok bool)
+	// Tokens refreshes OAuth connections (ADR-0062); without it an exercise
+	// gives the access tokens there are.
+	Tokens Tokens
 }
 
 // maxQueuedCounts is ACCESS_COUNTS.maxQueued: counts beyond it are dropped.
@@ -100,7 +105,7 @@ func New(store *storage.DB, rootKEK []byte, opts Options) *Service {
 		opts.Now = time.Now
 	}
 	return &Service{store: store, rootKEK: rootKEK, log: opts.Log, now: opts.Now, pending: make(chan struct{}, maxQueuedCounts),
-		approvals: opts.Approvals, gates: opts.Gates, admit: opts.Admit}
+		approvals: opts.Approvals, gates: opts.Gates, admit: opts.Admit, tokens: opts.Tokens}
 }
 
 // Settled waits until every queued report count has run (tests, and a stop).
@@ -139,12 +144,31 @@ type Item struct {
 	// RetiringVersionID is set while a rotation's window is open at the
 	// snapshot's time.
 	RetiringVersionID string
+	// Code is set for a seed of one-time codes (ADR-0061): what people may
+	// read of it. Such an item is in State.Codes, never in State.Items, and
+	// is always Sensitive.
+	Code *totp.Params
+	// Connection is set for an OAuth connection (ADR-0062). Such an item is
+	// in State.Connections, never in State.Items, and is always Sensitive.
+	Connection *Connection
 }
+
+// special is whether the item is used without its value: a seed of one-time
+// codes, an OAuth connection.
+func (it Item) special() bool { return it.Code != nil || it.Connection != nil }
 
 type ciphertext struct {
 	valueRowID string
 	payload    envelope.Envelope
 	wrappedDEK envelope.Envelope
+	// seed is whether the stored version says it is a seed of one-time codes
+	// (decrypt refuses one, openSeeds refuses anything else), with what it
+	// says of it.
+	seed   bool
+	params totp.Params
+	// other is whether it says it is something else that is no value
+	// (decrypt refuses it).
+	other bool
 }
 
 type contractDoc struct {
@@ -164,8 +188,33 @@ type State struct {
 	Env        query.LiveEnvironmentRow
 	revision   *query.ProjectContractRevisionRow
 	contract   *contractDoc
-	Items      []Item
+	// Items are the values. Every path that delivers values reads them from
+	// here, so none of them can deliver a seed.
+	Items []Item
+	// Codes are the seeds of one-time codes (ADR-0061, seeds.go).
+	Codes []Item
+	// Connections are the OAuth connections (ADR-0062, connections.go).
+	Connections []Item
+	// wantsToken selects the connections whose access token is captured
+	// (none when nil), set by the exercise alone.
+	wantsToken func(Item) bool
+	tokens     map[string]sealedToken
+	// wantsCode selects the seeds whose ciphertext is captured (none when
+	// nil), set by the two paths that open one before they capture.
+	wantsCode  func(Item) bool
 	ciphertext map[string]ciphertext
+}
+
+// all is the values, the seeds and the connections, by name: what exists,
+// for listings and the state manifest.
+func (s *State) all() []Item {
+	if len(s.Codes) == 0 && len(s.Connections) == 0 {
+		return s.Items
+	}
+	out := append(slices.Clone(s.Items), s.Codes...)
+	out = append(out, s.Connections...)
+	sort.SliceStable(out, func(i, j int) bool { return utf16Less(out[i].Name, out[j].Name) })
+	return out
 }
 
 func (s *State) resource() authz.Resource {
@@ -342,16 +391,25 @@ func capture(ctx context.Context, db query.DBTX, st *State, now int64, wants fun
 		}
 		st.revision, st.contract = &rev, &c
 	}
-	items, err := resolveItems(ctx, q, st, now)
+	r, err := resolve(ctx, q, st, now)
 	if err != nil {
 		return err
 	}
-	st.Items = items
+	st.Items, st.Codes, st.Connections = r.items, r.codes, r.connections
+	st.tokens = map[string]sealedToken{}
+	for _, it := range st.Connections {
+		if st.wantsToken != nil && st.wantsToken(it) {
+			if st.tokens[it.Name], err = captureToken(ctx, q, it); err != nil {
+				return err
+			}
+		}
+	}
 
 	rowOf := map[string]string{}
 	var ids []string
-	for _, it := range items {
-		if !wants(it) {
+	for _, it := range st.all() {
+		// Of a connection nothing is captured here: not the client secret.
+		if it.Connection != nil || it.Code != nil && (st.wantsCode == nil || !st.wantsCode(it)) || it.Code == nil && !wants(it) {
 			continue
 		}
 		for _, v := range []string{it.VersionID, it.RetiringVersionID} {
@@ -377,6 +435,8 @@ func capture(ctx context.Context, db query.DBTX, st *State, now int64, wants fun
 		if err := json.Unmarshal([]byte(r.Payload.String), &c.payload); err != nil {
 			return fmt.Errorf("values: the payload of %s is not an envelope: %w", r.ID, err)
 		}
+		c.params, c.seed = seedParams(r.Payload.String)
+		c.other = !c.seed && marked(r.Payload.String)
 		if err := json.Unmarshal([]byte(r.WrappedDek.String), &c.wrappedDEK); err != nil {
 			return fmt.Errorf("values: the wrapped DEK of %s is not an envelope: %w", r.ID, err)
 		}
@@ -386,20 +446,26 @@ func capture(ctx context.Context, db query.DBTX, st *State, now int64, wants fun
 	return nil
 }
 
-// resolveItems is resolveItems: the environment's own current values,
-// then its parent's for names it does not set, each with the version a
-// rotation retires while its window is open at now, sorted by name as
-// JavaScript sorts strings.
-func resolveItems(ctx context.Context, q *query.Queries, st *State, now int64) ([]Item, error) {
+// resolved are an environment's items, by what their use gives.
+type resolved struct{ items, codes, connections []Item }
+
+// resolve is resolveItems: the environment's own current values, then its
+// parent's for names it does not set, each with the version a rotation
+// retires while its window is open at now, sorted by name as JavaScript
+// sorts strings. codes are the seeds of one-time codes and connections the
+// OAuth connections, resolved the same way: a name is one of them, the
+// environment's own first.
+func resolve(ctx context.Context, q *query.Queries, st *State, now int64) (resolved, error) {
+	var out resolved
 	byName := map[string]int{}
-	var items []Item
+	special := map[string]bool{}
 	load := func(environmentID, source string) error {
 		rows, err := q.CurrentValuesOfEnvironment(ctx, environmentID)
 		if err != nil {
 			return err
 		}
 		for _, r := range rows {
-			if _, seen := byName[r.ItemName]; source == "parent" && seen {
+			if _, seen := byName[r.ItemName]; source == "parent" && (seen || special[r.ItemName]) {
 				continue
 			}
 			it := Item{
@@ -410,25 +476,53 @@ func resolveItems(ctx context.Context, q *query.Queries, st *State, now int64) (
 				it.RetiringVersionID = r.RetiringVersionID.String
 			}
 			if i, seen := byName[r.ItemName]; seen {
-				items[i] = it
+				out.items[i] = it
 			} else {
-				byName[r.ItemName] = len(items)
-				items = append(items, it)
+				byName[r.ItemName] = len(out.items)
+				out.items = append(out.items, it)
+			}
+		}
+		seeds, err := q.SeedsOfEnvironment(ctx, environmentID)
+		if err != nil {
+			return err
+		}
+		for _, r := range seeds {
+			if _, seen := byName[r.ItemName]; seen || special[r.ItemName] {
+				continue
+			}
+			special[r.ItemName] = true
+			if it, ok := seedItem(r, source, now); ok {
+				out.codes = append(out.codes, it)
+			}
+		}
+		connections, err := q.ConnectionsOfEnvironment(ctx, environmentID)
+		if err != nil {
+			return err
+		}
+		for _, r := range connections {
+			if _, seen := byName[r.ItemName]; seen || special[r.ItemName] {
+				continue
+			}
+			special[r.ItemName] = true
+			if it, ok := connectionItem(r, source, now); ok {
+				out.connections = append(out.connections, it)
 			}
 		}
 		return nil
 	}
 	if err := load(st.Env.ID, "self"); err != nil {
-		return nil, err
+		return resolved{}, err
 	}
 	readHook(ctx, "between the environment's values and its parent's")
 	if st.Env.ParentEnvironmentID.Valid {
 		if err := load(st.Env.ParentEnvironmentID.String, "parent"); err != nil {
-			return nil, err
+			return resolved{}, err
 		}
 	}
-	sort.SliceStable(items, func(i, j int) bool { return utf16Less(items[i].Name, items[j].Name) })
-	return items, nil
+	for _, list := range [][]Item{out.items, out.codes, out.connections} {
+		sort.SliceStable(list, func(i, j int) bool { return utf16Less(list[i].Name, list[j].Name) })
+	}
+	return out, nil
 }
 
 // expired is assertNotExpired.
@@ -465,7 +559,7 @@ func (st *State) Manifest() (jsvalue.Object, string, error) {
 	}
 	items := make([]any, 0, len(st.Items))
 	canonItems := make([]any, 0, len(st.Items))
-	for _, it := range st.Items {
+	for _, it := range st.all() {
 		o := jsvalue.Object{{Key: "name", Value: it.Name}, {Key: "source", Value: it.Source}, {Key: "valueRowId", Value: it.ValueRowID}, {Key: "versionId", Value: it.VersionID}}
 		c := map[string]any{"name": it.Name, "source": it.Source, "valueRowId": it.ValueRowID, "versionId": it.VersionID}
 		if it.RetiringVersionID != "" {
@@ -572,6 +666,9 @@ func (s *Service) decrypt(st *State, versionIDs []string) (map[string]string, er
 		c, ok := st.ciphertext[v]
 		if !ok {
 			return nil, domainerr.New("INTERNAL", "A value version was not captured in the retrieval snapshot")
+		}
+		if c.seed || c.other {
+			return nil, errSeed
 		}
 		plain, err := envelope.DecryptValue(kek, st.Org.ID, c.valueRowID, v, envelope.EncryptedValue{Payload: c.payload, WrappedDEK: c.wrappedDEK})
 		if err != nil {

@@ -72,32 +72,37 @@ func (e AccessCheckWhere) Valid() bool {
 
 // Defines values for Action.
 const (
-	ActionAuditRead          Action = "audit.read"
-	ActionConfigMetadataRead Action = "config.metadata.read"
-	ActionConfigSyncManage   Action = "config.sync.manage"
-	ActionConfigValueRead    Action = "config.value.read"
-	ActionConfigValueWrite   Action = "config.value.write"
-	ActionContractActivate   Action = "contract.activate"
-	ActionContractRead       Action = "contract.read"
-	ActionContractSubmit     Action = "contract.submit"
-	ActionEnvironmentManage  Action = "environment.manage"
-	ActionEnvironmentRead    Action = "environment.read"
-	ActionIdentityManage     Action = "identity.manage"
-	ActionIdentityRead       Action = "identity.read"
-	ActionOrganizationManage Action = "organization.manage"
-	ActionOrganizationRead   Action = "organization.read"
-	ActionPolicyManage       Action = "policy.manage"
-	ActionPolicyRead         Action = "policy.read"
-	ActionProjectManage      Action = "project.manage"
-	ActionProjectRead        Action = "project.read"
-	ActionSecretReveal       Action = "secret.reveal"
-	ActionSecretUse          Action = "secret.use"
+	ActionAuditRead           Action = "audit.read"
+	ActionCapabilityIssue     Action = "capability.issue"
+	ActionConfigMetadataRead  Action = "config.metadata.read"
+	ActionConfigSyncManage    Action = "config.sync.manage"
+	ActionConfigValueRead     Action = "config.value.read"
+	ActionConfigValueWrite    Action = "config.value.write"
+	ActionContractActivate    Action = "contract.activate"
+	ActionContractRead        Action = "contract.read"
+	ActionContractSubmit      Action = "contract.submit"
+	ActionEntryLinkCreate     Action = "entry-link.create"
+	ActionEntryLinkCreateOpen Action = "entry-link.create-open"
+	ActionEnvironmentManage   Action = "environment.manage"
+	ActionEnvironmentRead     Action = "environment.read"
+	ActionIdentityManage      Action = "identity.manage"
+	ActionIdentityRead        Action = "identity.read"
+	ActionOrganizationManage  Action = "organization.manage"
+	ActionOrganizationRead    Action = "organization.read"
+	ActionPolicyManage        Action = "policy.manage"
+	ActionPolicyRead          Action = "policy.read"
+	ActionProjectManage       Action = "project.manage"
+	ActionProjectRead         Action = "project.read"
+	ActionSecretReveal        Action = "secret.reveal"
+	ActionSecretUse           Action = "secret.use"
 )
 
 // Valid indicates whether the value is a known member of the Action enum.
 func (e Action) Valid() bool {
 	switch e {
 	case ActionAuditRead:
+		return true
+	case ActionCapabilityIssue:
 		return true
 	case ActionConfigMetadataRead:
 		return true
@@ -112,6 +117,10 @@ func (e Action) Valid() bool {
 	case ActionContractRead:
 		return true
 	case ActionContractSubmit:
+		return true
+	case ActionEntryLinkCreate:
+		return true
+	case ActionEntryLinkCreateOpen:
 		return true
 	case ActionEnvironmentManage:
 		return true
@@ -582,13 +591,19 @@ func (e AuditExportRetentionMode) Valid() bool {
 
 // Defines values for CallerViewWithheldReason.
 const (
-	CallerViewWithheldReasonPermission  CallerViewWithheldReason = "permission"
-	CallerViewWithheldReasonRequirement CallerViewWithheldReason = "requirement"
+	CallerViewWithheldReasonOauthConnection CallerViewWithheldReason = "oauth-connection"
+	CallerViewWithheldReasonOneTimeCode     CallerViewWithheldReason = "one-time-code"
+	CallerViewWithheldReasonPermission      CallerViewWithheldReason = "permission"
+	CallerViewWithheldReasonRequirement     CallerViewWithheldReason = "requirement"
 )
 
 // Valid indicates whether the value is a known member of the CallerViewWithheldReason enum.
 func (e CallerViewWithheldReason) Valid() bool {
 	switch e {
+	case CallerViewWithheldReasonOauthConnection:
+		return true
+	case CallerViewWithheldReasonOneTimeCode:
+		return true
 	case CallerViewWithheldReasonPermission:
 		return true
 	case CallerViewWithheldReasonRequirement:
@@ -602,6 +617,7 @@ func (e CallerViewWithheldReason) Valid() bool {
 const (
 	CallerViewWithheldRequiresConfigValueRead CallerViewWithheldRequires = "config.value.read"
 	CallerViewWithheldRequiresSecretReveal    CallerViewWithheldRequires = "secret.reveal"
+	CallerViewWithheldRequiresSecretUse       CallerViewWithheldRequires = "secret.use"
 )
 
 // Valid indicates whether the value is a known member of the CallerViewWithheldRequires enum.
@@ -610,6 +626,26 @@ func (e CallerViewWithheldRequires) Valid() bool {
 	case CallerViewWithheldRequiresConfigValueRead:
 		return true
 	case CallerViewWithheldRequiresSecretReveal:
+		return true
+	case CallerViewWithheldRequiresSecretUse:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CapabilityExerciseItemsKind.
+const (
+	Oauth CapabilityExerciseItemsKind = "oauth"
+	Totp  CapabilityExerciseItemsKind = "totp"
+)
+
+// Valid indicates whether the value is a known member of the CapabilityExerciseItemsKind enum.
+func (e CapabilityExerciseItemsKind) Valid() bool {
+	switch e {
+	case Oauth:
+		return true
+	case Totp:
 		return true
 	default:
 		return false
@@ -754,6 +790,198 @@ func (e EffectiveConfigurationItemSource) Valid() bool {
 	case EffectiveConfigurationItemSourceParent:
 		return true
 	case EffectiveConfigurationItemSourceSelf:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EntryLinkAccepts.
+const (
+	EntryLinkAcceptsOtpauth EntryLinkAccepts = "otpauth"
+	EntryLinkAcceptsValue   EntryLinkAccepts = "value"
+)
+
+// Valid indicates whether the value is a known member of the EntryLinkAccepts enum.
+func (e EntryLinkAccepts) Valid() bool {
+	switch e {
+	case EntryLinkAcceptsOtpauth:
+		return true
+	case EntryLinkAcceptsValue:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EntryLinkReason.
+const (
+	EntryLinkReasonCancelled       EntryLinkReason = "cancelled"
+	EntryLinkReasonCredentialEnded EntryLinkReason = "credential-ended"
+	EntryLinkReasonValueChanged    EntryLinkReason = "value-changed"
+)
+
+// Valid indicates whether the value is a known member of the EntryLinkReason enum.
+func (e EntryLinkReason) Valid() bool {
+	switch e {
+	case EntryLinkReasonCancelled:
+		return true
+	case EntryLinkReasonCredentialEnded:
+		return true
+	case EntryLinkReasonValueChanged:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EntryLinkRestrictedTo.
+const (
+	EntryLinkRestrictedToAnyone   EntryLinkRestrictedTo = "anyone"
+	EntryLinkRestrictedToIdentity EntryLinkRestrictedTo = "identity"
+	EntryLinkRestrictedToMember   EntryLinkRestrictedTo = "member"
+)
+
+// Valid indicates whether the value is a known member of the EntryLinkRestrictedTo enum.
+func (e EntryLinkRestrictedTo) Valid() bool {
+	switch e {
+	case EntryLinkRestrictedToAnyone:
+		return true
+	case EntryLinkRestrictedToIdentity:
+		return true
+	case EntryLinkRestrictedToMember:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EntryLinkInputAccepts.
+const (
+	EntryLinkInputAcceptsOtpauth EntryLinkInputAccepts = "otpauth"
+	EntryLinkInputAcceptsValue   EntryLinkInputAccepts = "value"
+)
+
+// Valid indicates whether the value is a known member of the EntryLinkInputAccepts enum.
+func (e EntryLinkInputAccepts) Valid() bool {
+	switch e {
+	case EntryLinkInputAcceptsOtpauth:
+		return true
+	case EntryLinkInputAcceptsValue:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EntryLinkInputRestrictedTo.
+const (
+	EntryLinkInputRestrictedToAnyone   EntryLinkInputRestrictedTo = "anyone"
+	EntryLinkInputRestrictedToIdentity EntryLinkInputRestrictedTo = "identity"
+	EntryLinkInputRestrictedToMember   EntryLinkInputRestrictedTo = "member"
+)
+
+// Valid indicates whether the value is a known member of the EntryLinkInputRestrictedTo enum.
+func (e EntryLinkInputRestrictedTo) Valid() bool {
+	switch e {
+	case EntryLinkInputRestrictedToAnyone:
+		return true
+	case EntryLinkInputRestrictedToIdentity:
+		return true
+	case EntryLinkInputRestrictedToMember:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EntryLinkStatus.
+const (
+	EntryLinkStatusCancelled EntryLinkStatus = "cancelled"
+	EntryLinkStatusEntered   EntryLinkStatus = "entered"
+	EntryLinkStatusExpired   EntryLinkStatus = "expired"
+	EntryLinkStatusPending   EntryLinkStatus = "pending"
+)
+
+// Valid indicates whether the value is a known member of the EntryLinkStatus enum.
+func (e EntryLinkStatus) Valid() bool {
+	switch e {
+	case EntryLinkStatusCancelled:
+		return true
+	case EntryLinkStatusEntered:
+		return true
+	case EntryLinkStatusExpired:
+		return true
+	case EntryLinkStatusPending:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EntryLinkViewAccepts.
+const (
+	EntryLinkViewAcceptsOtpauth EntryLinkViewAccepts = "otpauth"
+	EntryLinkViewAcceptsValue   EntryLinkViewAccepts = "value"
+)
+
+// Valid indicates whether the value is a known member of the EntryLinkViewAccepts enum.
+func (e EntryLinkViewAccepts) Valid() bool {
+	switch e {
+	case EntryLinkViewAcceptsOtpauth:
+		return true
+	case EntryLinkViewAcceptsValue:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EntryLinkViewRequestedByKind.
+const (
+	EntryLinkViewRequestedByKindAgent    EntryLinkViewRequestedByKind = "agent"
+	EntryLinkViewRequestedByKindBroker   EntryLinkViewRequestedByKind = "broker"
+	EntryLinkViewRequestedByKindCi       EntryLinkViewRequestedByKind = "ci"
+	EntryLinkViewRequestedByKindHuman    EntryLinkViewRequestedByKind = "human"
+	EntryLinkViewRequestedByKindService  EntryLinkViewRequestedByKind = "service"
+	EntryLinkViewRequestedByKindWorkload EntryLinkViewRequestedByKind = "workload"
+)
+
+// Valid indicates whether the value is a known member of the EntryLinkViewRequestedByKind enum.
+func (e EntryLinkViewRequestedByKind) Valid() bool {
+	switch e {
+	case EntryLinkViewRequestedByKindAgent:
+		return true
+	case EntryLinkViewRequestedByKindBroker:
+		return true
+	case EntryLinkViewRequestedByKindCi:
+		return true
+	case EntryLinkViewRequestedByKindHuman:
+		return true
+	case EntryLinkViewRequestedByKindService:
+		return true
+	case EntryLinkViewRequestedByKindWorkload:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EntryLinkViewRestrictedTo.
+const (
+	EntryLinkViewRestrictedToAnyone   EntryLinkViewRestrictedTo = "anyone"
+	EntryLinkViewRestrictedToIdentity EntryLinkViewRestrictedTo = "identity"
+	EntryLinkViewRestrictedToMember   EntryLinkViewRestrictedTo = "member"
+)
+
+// Valid indicates whether the value is a known member of the EntryLinkViewRestrictedTo enum.
+func (e EntryLinkViewRestrictedTo) Valid() bool {
+	switch e {
+	case EntryLinkViewRestrictedToAnyone:
+		return true
+	case EntryLinkViewRestrictedToIdentity:
+		return true
+	case EntryLinkViewRestrictedToMember:
 		return true
 	default:
 		return false
@@ -1254,13 +1482,13 @@ func (e GitHubAppRegistrationFailedOutcome) Valid() bool {
 
 // Defines values for GitHubAppRegistrationRefusedOutcome.
 const (
-	Refused GitHubAppRegistrationRefusedOutcome = "refused"
+	GitHubAppRegistrationRefusedOutcomeRefused GitHubAppRegistrationRefusedOutcome = "refused"
 )
 
 // Valid indicates whether the value is a known member of the GitHubAppRegistrationRefusedOutcome enum.
 func (e GitHubAppRegistrationRefusedOutcome) Valid() bool {
 	switch e {
-	case Refused:
+	case GitHubAppRegistrationRefusedOutcomeRefused:
 		return true
 	default:
 		return false
@@ -1792,6 +2020,144 @@ func (e MemberReviewSyncTargetsState) Valid() bool {
 	}
 }
 
+// Defines values for OAuthAuthMethod.
+const (
+	ClientSecretBasic OAuthAuthMethod = "client_secret_basic"
+	ClientSecretPost  OAuthAuthMethod = "client_secret_post"
+	None              OAuthAuthMethod = "none"
+)
+
+// Valid indicates whether the value is a known member of the OAuthAuthMethod enum.
+func (e OAuthAuthMethod) Valid() bool {
+	switch e {
+	case ClientSecretBasic:
+		return true
+	case ClientSecretPost:
+		return true
+	case None:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OAuthAuthorizationOutcomeOutcome.
+const (
+	OAuthAuthorizationOutcomeOutcomeConnected OAuthAuthorizationOutcomeOutcome = "connected"
+	OAuthAuthorizationOutcomeOutcomeFailed    OAuthAuthorizationOutcomeOutcome = "failed"
+	OAuthAuthorizationOutcomeOutcomeRefused   OAuthAuthorizationOutcomeOutcome = "refused"
+)
+
+// Valid indicates whether the value is a known member of the OAuthAuthorizationOutcomeOutcome enum.
+func (e OAuthAuthorizationOutcomeOutcome) Valid() bool {
+	switch e {
+	case OAuthAuthorizationOutcomeOutcomeConnected:
+		return true
+	case OAuthAuthorizationOutcomeOutcomeFailed:
+		return true
+	case OAuthAuthorizationOutcomeOutcomeRefused:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OAuthDisconnectionAtProvider.
+const (
+	OAuthDisconnectionAtProviderFailed          OAuthDisconnectionAtProvider = "failed"
+	OAuthDisconnectionAtProviderLeft            OAuthDisconnectionAtProvider = "left"
+	OAuthDisconnectionAtProviderNotSupported    OAuthDisconnectionAtProvider = "not-supported"
+	OAuthDisconnectionAtProviderNothingToRevoke OAuthDisconnectionAtProvider = "nothing-to-revoke"
+	OAuthDisconnectionAtProviderRevoked         OAuthDisconnectionAtProvider = "revoked"
+)
+
+// Valid indicates whether the value is a known member of the OAuthDisconnectionAtProvider enum.
+func (e OAuthDisconnectionAtProvider) Valid() bool {
+	switch e {
+	case OAuthDisconnectionAtProviderFailed:
+		return true
+	case OAuthDisconnectionAtProviderLeft:
+		return true
+	case OAuthDisconnectionAtProviderNotSupported:
+		return true
+	case OAuthDisconnectionAtProviderNothingToRevoke:
+		return true
+	case OAuthDisconnectionAtProviderRevoked:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OAuthGrant.
+const (
+	AuthorizationCode OAuthGrant = "authorization_code"
+	ClientCredentials OAuthGrant = "client_credentials"
+)
+
+// Valid indicates whether the value is a known member of the OAuthGrant enum.
+func (e OAuthGrant) Valid() bool {
+	switch e {
+	case AuthorizationCode:
+		return true
+	case ClientCredentials:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OAuthProviderInputPreset.
+const (
+	Generic   OAuthProviderInputPreset = "generic"
+	Google    OAuthProviderInputPreset = "google"
+	Microsoft OAuthProviderInputPreset = "microsoft"
+)
+
+// Valid indicates whether the value is a known member of the OAuthProviderInputPreset enum.
+func (e OAuthProviderInputPreset) Valid() bool {
+	switch e {
+	case Generic:
+		return true
+	case Google:
+		return true
+	case Microsoft:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OAuthStatus.
+const (
+	OAuthStatusConnected      OAuthStatus = "connected"
+	OAuthStatusFailing        OAuthStatus = "failing"
+	OAuthStatusNeedsReconnect OAuthStatus = "needs_reconnect"
+	OAuthStatusNotConnected   OAuthStatus = "not_connected"
+	OAuthStatusRefreshing     OAuthStatus = "refreshing"
+	OAuthStatusRevoked        OAuthStatus = "revoked"
+)
+
+// Valid indicates whether the value is a known member of the OAuthStatus enum.
+func (e OAuthStatus) Valid() bool {
+	switch e {
+	case OAuthStatusConnected:
+		return true
+	case OAuthStatusFailing:
+		return true
+	case OAuthStatusNeedsReconnect:
+		return true
+	case OAuthStatusNotConnected:
+		return true
+	case OAuthStatusRefreshing:
+		return true
+	case OAuthStatusRevoked:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ObservedCheckReason.
 const (
 	LOCALAPIUNAVAILABLE ObservedCheckReason = "LOCALAPI_UNAVAILABLE"
@@ -1843,6 +2209,63 @@ func (e ObservedCheckStatus) Valid() bool {
 	case ObservedCheckStatusPass:
 		return true
 	case ObservedCheckStatusUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OneTimeCodeAlgorithm.
+const (
+	SHA1   OneTimeCodeAlgorithm = "SHA1"
+	SHA256 OneTimeCodeAlgorithm = "SHA256"
+	SHA512 OneTimeCodeAlgorithm = "SHA512"
+)
+
+// Valid indicates whether the value is a known member of the OneTimeCodeAlgorithm enum.
+func (e OneTimeCodeAlgorithm) Valid() bool {
+	switch e {
+	case SHA1:
+		return true
+	case SHA256:
+		return true
+	case SHA512:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OneTimeCodeDigits.
+const (
+	N6 OneTimeCodeDigits = 6
+	N8 OneTimeCodeDigits = 8
+)
+
+// Valid indicates whether the value is a known member of the OneTimeCodeDigits enum.
+func (e OneTimeCodeDigits) Valid() bool {
+	switch e {
+	case N6:
+		return true
+	case N8:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OneTimeCodePeriodSeconds.
+const (
+	N30 OneTimeCodePeriodSeconds = 30
+	N60 OneTimeCodePeriodSeconds = 60
+)
+
+// Valid indicates whether the value is a known member of the OneTimeCodePeriodSeconds enum.
+func (e OneTimeCodePeriodSeconds) Valid() bool {
+	switch e {
+	case N30:
+		return true
+	case N60:
 		return true
 	default:
 		return false
@@ -2821,6 +3244,21 @@ func (e DecideDeviceSignIn200JSONResponseBodyDecision) Valid() bool {
 	}
 }
 
+// Defines values for SubmitEntryLink200JSONResponseBodyStatus.
+const (
+	SubmitEntryLink200JSONResponseBodyStatusEntered SubmitEntryLink200JSONResponseBodyStatus = "entered"
+)
+
+// Valid indicates whether the value is a known member of the SubmitEntryLink200JSONResponseBodyStatus enum.
+func (e SubmitEntryLink200JSONResponseBodyStatus) Valid() bool {
+	switch e {
+	case SubmitEntryLink200JSONResponseBodyStatusEntered:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ListAuditEventsParamsDecision.
 const (
 	ListAuditEventsParamsDecisionAllow ListAuditEventsParamsDecision = "allow"
@@ -3658,13 +4096,15 @@ type CallerView struct {
 		References []string `json:"references"`
 	} `json:"unexpanded"`
 	Withheld []struct {
-		Name     string                     `json:"name"`
+		Name string `json:"name"`
+
+		// Reason one-time-code (strict retrieval): the item holds the seed of one-time codes, which is delivered to nobody; its code is used through a Capability (requires secret.use).
 		Reason   CallerViewWithheldReason   `json:"reason"`
 		Requires CallerViewWithheldRequires `json:"requires"`
 	} `json:"withheld"`
 }
 
-// CallerViewWithheldReason defines model for CallerView.Withheld.Reason.
+// CallerViewWithheldReason one-time-code (strict retrieval): the item holds the seed of one-time codes, which is delivered to nobody; its code is used through a Capability (requires secret.use).
 type CallerViewWithheldReason string
 
 // CallerViewWithheldRequires defines model for CallerView.Withheld.Requires.
@@ -3672,28 +4112,64 @@ type CallerViewWithheldRequires string
 
 // Capability defines model for Capability.
 type Capability struct {
-	AgentIdentityId  string                       `json:"agentIdentityId"`
-	BrokerIdentityId string                       `json:"brokerIdentityId"`
-	CreatedAt        time.Time                    `json:"createdAt"`
-	Destinations     []string                     `json:"destinations"`
-	EnvironmentId    string                       `json:"environmentId"`
-	ExpiresAt        time.Time                    `json:"expiresAt"`
-	Id               string                       `json:"id"`
-	Items            []string                     `json:"items"`
-	RevokedAt        nullable.Nullable[time.Time] `json:"revokedAt"`
-	RunId            nullable.Nullable[string]    `json:"runId"`
+	AgentIdentityId  string    `json:"agentIdentityId"`
+	BrokerIdentityId string    `json:"brokerIdentityId"`
+	CreatedAt        time.Time `json:"createdAt"`
+	Destinations     []string  `json:"destinations"`
+	EnvironmentId    string    `json:"environmentId"`
+	ExpiresAt        time.Time `json:"expiresAt"`
+	Id               string    `json:"id"`
+
+	// IssuedByIdentityId Who issued it, when that is not its Broker (ADR-0060).
+	IssuedByIdentityId *string                      `json:"issuedByIdentityId,omitempty"`
+	Items              []string                     `json:"items"`
+	RevokedAt          nullable.Nullable[time.Time] `json:"revokedAt"`
+	RunId              nullable.Nullable[string]    `json:"runId"`
+
+	// SingleUse Present (true) for one that may be exercised once.
+	SingleUse *bool `json:"singleUse,omitempty"`
+
+	// Used With singleUse, whether it was.
+	Used *bool `json:"used,omitempty"`
 }
 
 // CapabilityExercise defines model for CapabilityExercise.
 type CapabilityExercise struct {
 	Items []struct {
-		Name string `json:"name"`
+		// ExpiresAt Of a code: when its period ends. Of an access token: when it expires, absent when the provider does not say. As the server's clock has it.
+		ExpiresAt *time.Time `json:"expiresAt,omitempty"`
 
-		// Retiring The previous value during a dual-phase rotation (ADR-0027), injected as-is so the consumer accepts either during the window. Absent when the item is stable.
+		// ExpiresInSeconds Present with expiresAt: whole seconds from this answer until then.
+		ExpiresInSeconds *int `json:"expiresInSeconds,omitempty"`
+
+		// Kind Present for a one-time code (capability values.totp) and for an OAuth connection's access token (capability oauth.connections).
+		Kind *CapabilityExerciseItemsKind `json:"kind,omitempty"`
+		Name string                       `json:"name"`
+
+		// NotBefore Present while the code's period has not started, as the server's clock has it.
+		NotBefore *time.Time `json:"notBefore,omitempty"`
+
+		// Retiring The previous value during a dual-phase rotation (ADR-0027), injected as-is so the consumer accepts either during the window; of a one-time code, the previous seed's code for the same conditions. Absent when the item is stable.
 		Retiring *struct {
-			Value     string `json:"value"`
-			VersionId string `json:"versionId"`
+			// ExpiresAt Of a code. When its period ends
+			ExpiresAt *time.Time `json:"expiresAt,omitempty"`
+
+			// ExpiresInSeconds Of a code: whole seconds from this answer until its period ends.
+			ExpiresInSeconds *int `json:"expiresInSeconds,omitempty"`
+
+			// NotBefore Present while the code's period has not started, as the server's clock has it.
+			NotBefore *time.Time `json:"notBefore,omitempty"`
+
+			// StartsInSeconds Present with notBefore. How long to wait from this answer.
+			StartsInSeconds *int   `json:"startsInSeconds,omitempty"`
+			Value           string `json:"value"`
+			VersionId       string `json:"versionId"`
 		} `json:"retiring,omitempty"`
+
+		// StartsInSeconds Present with notBefore. How long to wait from this answer.
+		StartsInSeconds *int `json:"startsInSeconds,omitempty"`
+
+		// Value The value or, with kind totp, the one-time code or, with kind oauth, the access token (to send as a Bearer token).
 		Value     string `json:"value"`
 		VersionId string `json:"versionId"`
 	} `json:"items"`
@@ -3702,6 +4178,9 @@ type CapabilityExercise struct {
 	Targets  map[string][]string `json:"targets"`
 	Withheld []string            `json:"withheld"`
 }
+
+// CapabilityExerciseItemsKind Present for a one-time code (capability values.totp) and for an OAuth connection's access token (capability oauth.connections).
+type CapabilityExerciseItemsKind string
 
 // ConfigItemSearchResult One (project, item name) search hit (ADR-0030). Metadata only — never Values, version history, or value-derived fields. The environments list contains only authorized, navigable Environments in which the name is effectively present; it is bounded and its truncation flag never reveals hidden-candidate counts.
 type ConfigItemSearchResult struct {
@@ -3741,6 +4220,14 @@ type ContractRevision struct {
 
 	// SemanticsVersion The Contract Semantics version this revision is evaluated with. Fixed when the revision is created, and part of its content hash unless it is 1.
 	SemanticsVersion int `json:"semanticsVersion"`
+}
+
+// CreatedEntryLink defines model for CreatedEntryLink.
+type CreatedEntryLink struct {
+	Link EntryLink `json:"link"`
+
+	// Url The page's address, on this installation's public URL. What follows the # is the link's secret, which a browser sends to no server and to no proxy; Varlatch keeps its hash only.
+	Url string `json:"url"`
 }
 
 // CreatedIdentity The new machine identity and its first credential. Not an Identity: it carries no createdAt, lastSeenAt or member fields.
@@ -3799,16 +4286,22 @@ type CredentialLifetimeConfig struct {
 // CredentialMetadata Credential metadata (ADR-0034 §2). Never includes token material — tokens are stored hashed and unrecoverable (ADR-0007).
 type CredentialMetadata struct {
 	// Client A short, readable summary of the client that requested a browser session or CLI login credential, such as "Firefox on Linux" or "varlatch CLI 0.14.0 on Linux". Only this summary is stored, never the User-Agent itself. Null when the client was not recognized, for every other kind, and for credentials issued before 0.14.0; absent from older servers.
-	Client    nullable.Nullable[string]    `json:"client,omitempty"`
-	CreatedAt time.Time                    `json:"createdAt"`
-	ExpiresAt nullable.Nullable[time.Time] `json:"expiresAt"`
-	Id        string                       `json:"id"`
-	Kind      CredentialMetadataKind       `json:"kind"`
+	Client    nullable.Nullable[string] `json:"client,omitempty"`
+	CreatedAt time.Time                 `json:"createdAt"`
+
+	// ExerciseOnly Present (true) for an exercise-only credential (ADR-0060).
+	ExerciseOnly *bool                        `json:"exerciseOnly,omitempty"`
+	ExpiresAt    nullable.Nullable[time.Time] `json:"expiresAt"`
+	Id           string                       `json:"id"`
+	Kind         CredentialMetadataKind       `json:"kind"`
 
 	// LastUsedAt Last successful authentication, throttled to ~60s granularity. An operational signal, never evidence of what was accessed.
 	LastUsedAt nullable.Nullable[time.Time] `json:"lastUsedAt"`
 	Name       nullable.Nullable[string]    `json:"name"`
 	RevokedAt  nullable.Nullable[time.Time] `json:"revokedAt"`
+
+	// RunId The run whose Capabilities it exercises. Present when it is tied to one.
+	RunId *string `json:"runId,omitempty"`
 }
 
 // CredentialMetadataKind defines model for CredentialMetadata.Kind.
@@ -3920,6 +4413,9 @@ type EffectiveConfiguration struct {
 type EffectiveConfigurationItem struct {
 	Name string `json:"name"`
 
+	// Oauth Present when the item is an OAuth connection (capability oauth.connections, ADR-0062). Such an item is always sensitive and has no value that is delivered: exercising a Capability that names it gives its access token.
+	Oauth *OAuthItem `json:"oauth,omitempty"`
+
 	// RawValue Present only when the stored value contains ${NAME} references that were expanded in `value` (capability values.references): the literal stored text. Editors must write this back — writing the expanded `value` would destroy the reference.
 	RawValue *string `json:"rawValue,omitempty"`
 
@@ -3927,6 +4423,9 @@ type EffectiveConfigurationItem struct {
 	Rotating  *bool                            `json:"rotating,omitempty"`
 	Sensitive bool                             `json:"sensitive"`
 	Source    EffectiveConfigurationItemSource `json:"source"`
+
+	// Totp Present when the item holds the seed of one-time codes (capability values.totp, ADR-0061): what may be read of it. Such an item is always sensitive and its value is never delivered: exercising a Capability that names it gives the code.
+	Totp *OneTimeCode `json:"totp,omitempty"`
 
 	// Value Present only when include=values and the caller is authorized; null for items the caller may know exist but not read.
 	Value     nullable.Nullable[string] `json:"value,omitempty"`
@@ -3938,6 +4437,107 @@ type EffectiveConfigurationItemSource string
 
 // EntityVersion Monotonic version of an editable entity's configuration (ADR-0029); starts at 1. Join mutations (membership, project ownership) and delivery progress never increment it. Supplied back as expectedVersion on PATCH; a stale value fails with VERSION_CONFLICT.
 type EntityVersion = int
+
+// EntryLink defines model for EntryLink.
+type EntryLink struct {
+	// Accepts A value, or the seed of a one-time code (capability values.totp).
+	Accepts     EntryLinkAccepts          `json:"accepts"`
+	CreatedAt   time.Time                 `json:"createdAt"`
+	Description nullable.Nullable[string] `json:"description"`
+
+	// EndedAt When the value was entered, or the link cancelled. Null also for a link that ended with its credential at a time not known.
+	EndedAt       nullable.Nullable[time.Time] `json:"endedAt"`
+	EnvironmentId string                       `json:"environmentId"`
+	ExpiresAt     time.Time                    `json:"expiresAt"`
+	Id            string                       `json:"id"`
+
+	// IdentityId Present when restrictedTo is identity.
+	IdentityId *string `json:"identityId,omitempty"`
+	Item       string  `json:"item"`
+
+	// Reason Present when the status is cancelled: somebody cancelled it, the item's value changed before a value was entered, or the link ended with the credential that made it (createEntryLink).
+	Reason *EntryLinkReason `json:"reason,omitempty"`
+
+	// Replace It replaces the value there was when it was made.
+	Replace               bool   `json:"replace"`
+	RequestedByIdentityId string `json:"requestedByIdentityId"`
+
+	// RestrictedTo Who may enter the value: whoever holds the link, a signed-in member of the Organization, or the one person in identityId.
+	RestrictedTo EntryLinkRestrictedTo `json:"restrictedTo"`
+
+	// Status pending until the value is entered, the link expires, or it is cancelled (reason says by what).
+	Status EntryLinkStatus `json:"status"`
+}
+
+// EntryLinkAccepts A value, or the seed of a one-time code (capability values.totp).
+type EntryLinkAccepts string
+
+// EntryLinkReason Present when the status is cancelled: somebody cancelled it, the item's value changed before a value was entered, or the link ended with the credential that made it (createEntryLink).
+type EntryLinkReason string
+
+// EntryLinkRestrictedTo Who may enter the value: whoever holds the link, a signed-in member of the Organization, or the one person in identityId.
+type EntryLinkRestrictedTo string
+
+// EntryLinkInput defines model for EntryLinkInput.
+type EntryLinkInput struct {
+	// Accepts value when absent.
+	Accepts *EntryLinkInputAccepts `json:"accepts,omitempty"`
+
+	// Description A few words for the person, shown on the page as the caller's own: plain text in one line, with no link, address or markup (VALIDATION_FAILED otherwise). In the audit log.
+	Description *string `json:"description,omitempty"`
+
+	// IdentityId With restrictedTo identity, the person, a member of the Organization.
+	IdentityId *string `json:"identityId,omitempty"`
+	Item       string  `json:"item"`
+
+	// Replace Replace the value there is now. Entering is refused when it is another one by then.
+	Replace *bool `json:"replace,omitempty"`
+
+	// RestrictedTo member when absent.
+	RestrictedTo *EntryLinkInputRestrictedTo `json:"restrictedTo,omitempty"`
+
+	// TtlSeconds 900 when absent.
+	TtlSeconds *int `json:"ttlSeconds,omitempty"`
+}
+
+// EntryLinkInputAccepts value when absent.
+type EntryLinkInputAccepts string
+
+// EntryLinkInputRestrictedTo member when absent.
+type EntryLinkInputRestrictedTo string
+
+// EntryLinkStatus pending until the value is entered, the link expires, or it is cancelled (reason says by what).
+type EntryLinkStatus string
+
+// EntryLinkView defines model for EntryLinkView.
+type EntryLinkView struct {
+	Accepts          *EntryLinkViewAccepts     `json:"accepts,omitempty"`
+	Description      nullable.Nullable[string] `json:"description,omitempty"`
+	Environment      *string                   `json:"environment,omitempty"`
+	ExpiresAt        *time.Time                `json:"expiresAt,omitempty"`
+	ExpiresInSeconds *int                      `json:"expiresInSeconds,omitempty"`
+	Item             *string                   `json:"item,omitempty"`
+	Organization     *string                   `json:"organization,omitempty"`
+	Project          *string                   `json:"project,omitempty"`
+	Replace          *bool                     `json:"replace,omitempty"`
+	RequestedBy      *struct {
+		Kind EntryLinkViewRequestedByKind `json:"kind"`
+		Name string                       `json:"name"`
+	} `json:"requestedBy,omitempty"`
+	RestrictedTo EntryLinkViewRestrictedTo `json:"restrictedTo"`
+
+	// SignInRequired Whether a person has to sign in first; then nothing below is there.
+	SignInRequired bool `json:"signInRequired"`
+}
+
+// EntryLinkViewAccepts defines model for EntryLinkView.Accepts.
+type EntryLinkViewAccepts string
+
+// EntryLinkViewRequestedByKind defines model for EntryLinkView.RequestedBy.Kind.
+type EntryLinkViewRequestedByKind string
+
+// EntryLinkViewRestrictedTo defines model for EntryLinkView.RestrictedTo.
+type EntryLinkViewRestrictedTo string
 
 // Environment defines model for Environment.
 type Environment struct {
@@ -4542,12 +5142,15 @@ type IssuedAgentCredential struct {
 
 // IssuedCapability defines model for IssuedCapability.
 type IssuedCapability struct {
-	AgentIdentityId string    `json:"agentIdentityId"`
-	Destinations    []string  `json:"destinations"`
-	EnvironmentId   string    `json:"environmentId"`
-	ExpiresAt       time.Time `json:"expiresAt"`
-	Id              string    `json:"id"`
-	Items           []string  `json:"items"`
+	AgentIdentityId string `json:"agentIdentityId"`
+
+	// BrokerIdentityId The Broker it was issued for. Present when the request named one.
+	BrokerIdentityId *string   `json:"brokerIdentityId,omitempty"`
+	Destinations     []string  `json:"destinations"`
+	EnvironmentId    string    `json:"environmentId"`
+	ExpiresAt        time.Time `json:"expiresAt"`
+	Id               string    `json:"id"`
+	Items            []string  `json:"items"`
 
 	// Preflight Advisory current-authority check; exercise re-evaluates regardless.
 	Preflight IssuedCapabilityPreflight `json:"preflight"`
@@ -4563,6 +5166,9 @@ type IssuedCapability struct {
 
 	// Secret Returned exactly once; stored hashed; required to exercise.
 	Secret string `json:"secret"`
+
+	// SingleUse Present (true) for one that may be exercised once.
+	SingleUse *bool `json:"singleUse,omitempty"`
 
 	// Targets The substitution targets as recorded, canonical and sorted; the only ones the Broker may enforce.
 	Targets map[string][]string `json:"targets"`
@@ -4603,9 +5209,14 @@ type IssuedMachineCredentialKind string
 
 // IssuedOidcCredential defines model for IssuedOidcCredential.
 type IssuedOidcCredential struct {
-	ExpiresAt  time.Time `json:"expiresAt"`
-	Id         string    `json:"id"`
-	IdentityId string    `json:"identityId"`
+	// ExerciseOnly Present (true) for an exercise-only credential (ADR-0060).
+	ExerciseOnly *bool     `json:"exerciseOnly,omitempty"`
+	ExpiresAt    time.Time `json:"expiresAt"`
+	Id           string    `json:"id"`
+	IdentityId   string    `json:"identityId"`
+
+	// RunId The run whose Capabilities it exercises. Present when its binding names a claim.
+	RunId *string `json:"runId,omitempty"`
 
 	// Token Returned exactly once; never retrievable again.
 	Token string `json:"token"`
@@ -4790,6 +5401,270 @@ type Meta struct {
 // NextCursor Opaque; null when no further pages exist.
 type NextCursor = string
 
+// OAuthAccount defines model for OAuthAccount.
+type OAuthAccount struct {
+	// Id The provider's own ID of it.
+	Id string `json:"id"`
+
+	// Label What the provider calls it: an email address, a name.
+	Label string `json:"label"`
+}
+
+// OAuthAuthMethod defines model for OAuthAuthMethod.
+type OAuthAuthMethod string
+
+// OAuthAuthorization defines model for OAuthAuthorization.
+type OAuthAuthorization struct {
+	AuthorizationUrl string    `json:"authorizationUrl"`
+	ExpiresAt        time.Time `json:"expiresAt"`
+	RedirectUri      string    `json:"redirectUri"`
+	State            string    `json:"state"`
+}
+
+// OAuthAuthorizationAnswer defines model for OAuthAuthorizationAnswer.
+type OAuthAuthorizationAnswer struct {
+	Code  *string `json:"code,omitempty"`
+	Error *string `json:"error,omitempty"`
+	Iss   *string `json:"iss,omitempty"`
+
+	// RedirectUri The address the browser came back to, without its query.
+	RedirectUri string `json:"redirectUri"`
+	State       string `json:"state"`
+}
+
+// OAuthAuthorizationInput defines model for OAuthAuthorizationInput.
+type OAuthAuthorizationInput struct {
+	// ConfirmAccountChange Another account than the one it was connected to may connect it.
+	ConfirmAccountChange *bool `json:"confirmAccountChange,omitempty"`
+
+	// ExpectedVersionId The version the person was shown. Another one is refused with VERSION_CONFLICT.
+	ExpectedVersionId *string `json:"expectedVersionId,omitempty"`
+}
+
+// OAuthAuthorizationOutcome defines model for OAuthAuthorizationOutcome.
+type OAuthAuthorizationOutcome struct {
+	Account *OAuthAccount `json:"account,omitempty"`
+
+	// Connection An OAuth connection. No secret and no token, nor anything derived from one.
+	Connection *OAuthConnection `json:"connection,omitempty"`
+	Message    *string          `json:"message,omitempty"`
+
+	// Outcome refused: the answer does not fit what was asked for, and nothing was kept. failed: the provider refused, or did not answer.
+	Outcome         OAuthAuthorizationOutcomeOutcome `json:"outcome"`
+	PreviousAccount *OAuthAccount                    `json:"previousAccount,omitempty"`
+	Reason          *string                          `json:"reason,omitempty"`
+}
+
+// OAuthAuthorizationOutcomeOutcome refused: the answer does not fit what was asked for, and nothing was kept. failed: the provider refused, or did not answer.
+type OAuthAuthorizationOutcomeOutcome string
+
+// OAuthConnection An OAuth connection. No secret and no token, nor anything derived from one.
+type OAuthConnection struct {
+	AccessTokenExpiresAt nullable.Nullable[time.Time] `json:"accessTokenExpiresAt"`
+
+	// Account Whose account it is or, disconnected or after a change of its provider or client, was. Null when the provider does not say.
+	Account     nullable.Nullable[OAuthAccount] `json:"account"`
+	ClientId    string                          `json:"clientId"`
+	ConnectedAt nullable.Nullable[time.Time]    `json:"connectedAt"`
+
+	// ConnectedBy The person who connected it.
+	ConnectedBy nullable.Nullable[string] `json:"connectedBy"`
+	CreatedAt   time.Time                 `json:"createdAt"`
+
+	// CreatedBy Who wrote its parameters as they are now.
+	CreatedBy     nullable.Nullable[string] `json:"createdBy"`
+	EnvironmentId string                    `json:"environmentId"`
+
+	// Grant authorization_code: a person consents, in the browser. client_credentials: the client's own access, nobody's account.
+	Grant OAuthGrant `json:"grant"`
+
+	// GrantedScopes As the provider named them; null when it did not.
+	GrantedScopes   nullable.Nullable[[]string] `json:"grantedScopes"`
+	HasClientSecret bool                        `json:"hasClientSecret"`
+	HasRefreshToken bool                        `json:"hasRefreshToken"`
+	Hosts           []string                    `json:"hosts"`
+	Item            string                      `json:"item"`
+
+	// MissingScopes The scopes asked for that the provider did not grant, as far as it says.
+	MissingScopes []string `json:"missingScopes"`
+	Paused        bool     `json:"paused"`
+
+	// Provider A provider as a connection pinned it.
+	Provider OAuthProvider `json:"provider"`
+
+	// Reason Why it is failing or needs to be connected again: a word of Varlatch's (unreachable, timeout, refresh-answer-lost, no-refresh-token, refused-by-provider) or the provider's error code (invalid_client). Never text of the provider's.
+	Reason nullable.Nullable[string] `json:"reason"`
+
+	// RedirectUri To register at the provider. Present for authorization_code when this installation has a public URL.
+	RedirectUri           *string                      `json:"redirectUri,omitempty"`
+	RefreshTokenExpiresAt nullable.Nullable[time.Time] `json:"refreshTokenExpiresAt"`
+	RefreshedAt           nullable.Nullable[time.Time] `json:"refreshedAt"`
+
+	// RetryAt When a failed refresh is tried again
+	RetryAt nullable.Nullable[time.Time] `json:"retryAt"`
+	Scopes  []string                     `json:"scopes"`
+
+	// Status not_connected: nobody connected it yet. connected: it has tokens. refreshing: a refresh is in progress. failing: the last refresh failed for now, and is tried again; an access token that still lasts is used. needs_reconnect: the provider refuses its refresh token (or there is none), and a person has to connect it again. revoked: it was disconnected here.
+	Status OAuthStatus `json:"status"`
+
+	// VersionId Changes with its parameters and its client secret
+	VersionId string `json:"versionId"`
+}
+
+// OAuthConnectionChange defines model for OAuthConnectionChange.
+type OAuthConnectionChange struct {
+	ClientId     *string `json:"clientId,omitempty"`
+	ClientSecret *string `json:"clientSecret,omitempty"`
+
+	// ExpectedVersionId Rejects a stale change with VERSION_CONFLICT.
+	ExpectedVersionId *string   `json:"expectedVersionId,omitempty"`
+	Hosts             *[]string `json:"hosts,omitempty"`
+	Paused            *bool     `json:"paused,omitempty"`
+
+	// Provider A provider: a preset (google; microsoft with the tenant's ID), or generic with an issuer, whose metadata is read (OpenID Connect Discovery, RFC 8414), or with its endpoints. Every URL is https.
+	Provider *OAuthProviderInput `json:"provider,omitempty"`
+	Scopes   *[]string           `json:"scopes,omitempty"`
+}
+
+// OAuthConnectionInput defines model for OAuthConnectionInput.
+type OAuthConnectionInput struct {
+	ClientId string `json:"clientId"`
+
+	// ClientSecret Stored sealed. No operation answers it, to anyone.
+	ClientSecret *string `json:"clientSecret,omitempty"`
+
+	// Grant authorization_code: a person consents, in the browser. client_credentials: the client's own access, nobody's account.
+	Grant *OAuthGrant `json:"grant,omitempty"`
+
+	// Hosts The destinations its access token may go to, as a Capability's: a Capability that names the connection may name only these, and an exercise for another is refused. None, whatever the Capability names.
+	Hosts *[]string `json:"hosts,omitempty"`
+	Item  string    `json:"item"`
+
+	// Provider A provider: a preset (google; microsoft with the tenant's ID), or generic with an issuer, whose metadata is read (OpenID Connect Discovery, RFC 8414), or with its endpoints. Every URL is https.
+	Provider OAuthProviderInput `json:"provider"`
+
+	// Scopes What to ask for; a preset adds what it needs to know the account and to get a refresh token.
+	Scopes *[]string `json:"scopes,omitempty"`
+}
+
+// OAuthDisconnectInput defines model for OAuthDisconnectInput.
+type OAuthDisconnectInput struct {
+	RevokeAtProvider *bool `json:"revokeAtProvider,omitempty"`
+}
+
+// OAuthDisconnection defines model for OAuthDisconnection.
+type OAuthDisconnection struct {
+	// AtProvider What became of the tokens at the provider; here they are forgotten in every case. left: not asked.
+	AtProvider OAuthDisconnectionAtProvider `json:"atProvider"`
+
+	// Connection An OAuth connection. No secret and no token, nor anything derived from one.
+	Connection OAuthConnection `json:"connection"`
+
+	// Reason Of failed.
+	Reason *string `json:"reason,omitempty"`
+}
+
+// OAuthDisconnectionAtProvider What became of the tokens at the provider; here they are forgotten in every case. left: not asked.
+type OAuthDisconnectionAtProvider string
+
+// OAuthDiscovery defines model for OAuthDiscovery.
+type OAuthDiscovery struct {
+	// Provider A provider as a connection pinned it.
+	Provider OAuthProvider `json:"provider"`
+
+	// RedirectUri Of an authorization_code connection, when this installation has a public URL.
+	RedirectUri *string `json:"redirectUri,omitempty"`
+}
+
+// OAuthDiscoveryInput defines model for OAuthDiscoveryInput.
+type OAuthDiscoveryInput struct {
+	// Grant authorization_code: a person consents, in the browser. client_credentials: the client's own access, nobody's account.
+	Grant *OAuthGrant `json:"grant,omitempty"`
+
+	// Provider A provider: a preset (google; microsoft with the tenant's ID), or generic with an issuer, whose metadata is read (OpenID Connect Discovery, RFC 8414), or with its endpoints. Every URL is https.
+	Provider OAuthProviderInput `json:"provider"`
+}
+
+// OAuthGrant authorization_code: a person consents, in the browser. client_credentials: the client's own access, nobody's account.
+type OAuthGrant string
+
+// OAuthItem Present when the item is an OAuth connection (capability oauth.connections, ADR-0062). Such an item is always sensitive and has no value that is delivered: exercising a Capability that names it gives its access token.
+type OAuthItem struct {
+	// Account Whose account it is
+	Account *string `json:"account,omitempty"`
+
+	// Grant authorization_code: a person consents, in the browser. client_credentials: the client's own access, nobody's account.
+	Grant  OAuthGrant `json:"grant"`
+	Paused bool       `json:"paused"`
+	Preset string     `json:"preset"`
+
+	// Status not_connected: nobody connected it yet. connected: it has tokens. refreshing: a refresh is in progress. failing: the last refresh failed for now, and is tried again; an access token that still lasts is used. needs_reconnect: the provider refuses its refresh token (or there is none), and a person has to connect it again. revoked: it was disconnected here.
+	Status OAuthStatus `json:"status"`
+}
+
+// OAuthProvider A provider as a connection pinned it.
+type OAuthProvider struct {
+	AccessTokenLifetimeSeconds *int               `json:"accessTokenLifetimeSeconds,omitempty"`
+	AuthorizationEndpoint      *string            `json:"authorizationEndpoint,omitempty"`
+	AuthorizationParams        *map[string]string `json:"authorizationParams,omitempty"`
+
+	// EndpointHosts The hosts of every address of the provider's here, the token endpoint's first: the client secret, codes and tokens are sent to no other, and neither is the browser.
+	EndpointHosts           []string        `json:"endpointHosts"`
+	Issuer                  *string         `json:"issuer,omitempty"`
+	JwksUri                 *string         `json:"jwksUri,omitempty"`
+	Preset                  string          `json:"preset"`
+	RefreshTokenIdleDays    *int            `json:"refreshTokenIdleDays,omitempty"`
+	RevocationEndpoint      *string         `json:"revocationEndpoint,omitempty"`
+	Tenant                  *string         `json:"tenant,omitempty"`
+	TokenEndpoint           string          `json:"tokenEndpoint"`
+	TokenEndpointAuthMethod OAuthAuthMethod `json:"tokenEndpointAuthMethod"`
+	UserinfoEndpoint        *string         `json:"userinfoEndpoint,omitempty"`
+}
+
+// OAuthProviderInput A provider: a preset (google; microsoft with the tenant's ID), or generic with an issuer, whose metadata is read (OpenID Connect Discovery, RFC 8414), or with its endpoints. Every URL is https.
+type OAuthProviderInput struct {
+	// AccessTokenLifetimeSeconds How long an access token lasts where the provider does not say.
+	AccessTokenLifetimeSeconds *int    `json:"accessTokenLifetimeSeconds,omitempty"`
+	AuthorizationEndpoint      *string `json:"authorizationEndpoint,omitempty"`
+
+	// AuthorizationParams More parameters of the authorization request, at most 10; none of the request's own.
+	AuthorizationParams *map[string]string `json:"authorizationParams,omitempty"`
+
+	// EndpointHosts generic, authorization_code only: the hosts the provider's addresses may be on beside the issuer's (or, with its endpoints given, the token endpoint's), each with its port when that is not 443. The ones they are on are in the redirect URI.
+	EndpointHosts *[]string                `json:"endpointHosts,omitempty"`
+	Issuer        *string                  `json:"issuer,omitempty"`
+	Preset        OAuthProviderInputPreset `json:"preset"`
+
+	// RefreshTokenIdleDays After how many days without use the provider drops a refresh token: Varlatch then refreshes after two thirds of them, used or not.
+	RefreshTokenIdleDays *int    `json:"refreshTokenIdleDays,omitempty"`
+	RevocationEndpoint   *string `json:"revocationEndpoint,omitempty"`
+
+	// Tenant microsoft only: the tenant's ID (a UUID). common, organizations and consumers are refused.
+	Tenant                  *string          `json:"tenant,omitempty"`
+	TokenEndpoint           *string          `json:"tokenEndpoint,omitempty"`
+	TokenEndpointAuthMethod *OAuthAuthMethod `json:"tokenEndpointAuthMethod,omitempty"`
+
+	// UserinfoEndpoint Asked once at each connection, with the access token, for whose account it is (sub or id).
+	UserinfoEndpoint *string `json:"userinfoEndpoint,omitempty"`
+}
+
+// OAuthProviderInputPreset defines model for OAuthProviderInput.Preset.
+type OAuthProviderInputPreset string
+
+// OAuthRefresh defines model for OAuthRefresh.
+type OAuthRefresh struct {
+	// Connection An OAuth connection. No secret and no token, nor anything derived from one.
+	Connection OAuthConnection `json:"connection"`
+
+	// Reason Why not.
+	Reason            *string `json:"reason,omitempty"`
+	Refreshed         bool    `json:"refreshed"`
+	RetryAfterSeconds *int    `json:"retryAfterSeconds,omitempty"`
+}
+
+// OAuthStatus not_connected: nobody connected it yet. connected: it has tokens. refreshing: a refresh is in progress. failing: the last refresh failed for now, and is tried again; an access token that still lasts is used. needs_reconnect: the provider refuses its refresh token (or there is none), and a person has to connect it again. revoked: it was disconnected here.
+type OAuthStatus string
+
 // ObservedCheck defines model for ObservedCheck.
 type ObservedCheck struct {
 	// CertificateNotAfter browserTls only, when the certificate in use expires.
@@ -4829,14 +5704,44 @@ type ObservedNode struct {
 
 // OidcBinding defines model for OidcBinding.
 type OidcBinding struct {
-	Audience   string                               `json:"audience"`
-	Claims     nullable.Nullable[map[string]string] `json:"claims"`
-	CreatedAt  time.Time                            `json:"createdAt"`
-	Id         string                               `json:"id"`
-	IdentityId string                               `json:"identityId"`
-	Issuer     string                               `json:"issuer"`
-	Subject    string                               `json:"subject"`
+	Audience  string                               `json:"audience"`
+	Claims    nullable.Nullable[map[string]string] `json:"claims"`
+	CreatedAt time.Time                            `json:"createdAt"`
+
+	// ExerciseOnly Present (true) when the binding has this limit (ADR-0060).
+	ExerciseOnly *bool  `json:"exerciseOnly,omitempty"`
+	Id           string `json:"id"`
+	IdentityId   string `json:"identityId"`
+	Issuer       string `json:"issuer"`
+
+	// RunIdClaim Present when the binding has this limit.
+	RunIdClaim *string `json:"runIdClaim,omitempty"`
+
+	// SingleExchange Present (true) when the binding has this limit.
+	SingleExchange *bool  `json:"singleExchange,omitempty"`
+	Subject        string `json:"subject"`
 }
+
+// OneTimeCode Present when the item holds the seed of one-time codes (capability values.totp, ADR-0061): what may be read of it. Such an item is always sensitive and its value is never delivered: exercising a Capability that names it gives the code.
+type OneTimeCode struct {
+	// Account The account there; may be empty.
+	Account   string               `json:"account"`
+	Algorithm OneTimeCodeAlgorithm `json:"algorithm"`
+	Digits    OneTimeCodeDigits    `json:"digits"`
+
+	// Issuer Who the code is for; may be empty.
+	Issuer        string                   `json:"issuer"`
+	PeriodSeconds OneTimeCodePeriodSeconds `json:"periodSeconds"`
+}
+
+// OneTimeCodeAlgorithm defines model for OneTimeCode.Algorithm.
+type OneTimeCodeAlgorithm string
+
+// OneTimeCodeDigits defines model for OneTimeCode.Digits.
+type OneTimeCodeDigits int
+
+// OneTimeCodePeriodSeconds defines model for OneTimeCode.PeriodSeconds.
+type OneTimeCodePeriodSeconds int
 
 // Organization defines model for Organization.
 type Organization struct {
@@ -4876,6 +5781,9 @@ type OrganizationPermissionsActions string
 
 // OrganizationPermissionsRole The caller's role; null for a machine identity.
 type OrganizationPermissionsRole string
+
+// OtpauthURI The seed of one-time codes (RFC 6238) as an otpauth://totp/ URI, what an authenticator's QR code holds: a base32 secret of 80 bits or more, SHA1 (the default), SHA256, or SHA512, 6 (the default) or 8 digits, a period of 30 (the default) or 60 seconds. It goes where a value would (capability values.totp): a server without the capability refuses the request for want of a value. Refused with VALIDATION_FAILED, which never repeats any of it.
+type OtpauthURI = string
 
 // OutboundDestinationKind defines model for OutboundDestinationKind.
 type OutboundDestinationKind string
@@ -5378,6 +6286,9 @@ type StrictRetrieval struct {
 	Items         []struct {
 		Name string `json:"name"`
 
+		// Oauth Present when the item is an OAuth connection (capability oauth.connections, ADR-0062). Such an item is always sensitive and has no value that is delivered: exercising a Capability that names it gives its access token.
+		Oauth *OAuthItem `json:"oauth,omitempty"`
+
 		// RawValue The stored text, present only when expansion changed `value`.
 		RawValue *string `json:"rawValue,omitempty"`
 
@@ -5389,6 +6300,9 @@ type StrictRetrieval struct {
 		Rotating  *bool                      `json:"rotating,omitempty"`
 		Sensitive bool                       `json:"sensitive"`
 		Source    StrictRetrievalItemsSource `json:"source"`
+
+		// Totp Present when the item holds the seed of one-time codes (capability values.totp, ADR-0061): what may be read of it. Such an item is always sensitive and its value is never delivered: exercising a Capability that names it gives the code.
+		Totp *OneTimeCode `json:"totp,omitempty"`
 
 		// Value The delivered value, references expanded; null when withheld.
 		Value     nullable.Nullable[string] `json:"value"`
@@ -5679,7 +6593,10 @@ type ValueVersion struct {
 	ItemName          string                    `json:"itemName"`
 	PreviousVersionId nullable.Nullable[string] `json:"previousVersionId,omitempty"`
 	Sensitive         bool                      `json:"sensitive"`
-	VersionId         string                    `json:"versionId"`
+
+	// Totp Present when the item holds the seed of one-time codes (capability values.totp, ADR-0061): what may be read of it. Such an item is always sensitive and its value is never delivered: exercising a Capability that names it gives the code.
+	Totp      *OneTimeCode `json:"totp,omitempty"`
+	VersionId string       `json:"versionId"`
 }
 
 // Webhook defines model for Webhook.
@@ -5768,6 +6685,9 @@ type AuditUntil = time.Time
 // Cursor defines model for cursor.
 type Cursor = string
 
+// EntryLinkParameter defines model for entryLink.
+type EntryLinkParameter = string
+
 // EnvironmentParameter defines model for environment.
 type EnvironmentParameter = string
 
@@ -5835,6 +6755,24 @@ type ListDeletedOrganizationAuditEventsParams struct {
 	// Cursor Opaque cursor from a previous response; never parse.
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
+
+// LookupEntryLinkJSONBody defines parameters for LookupEntryLink.
+type LookupEntryLinkJSONBody struct {
+	Token string `json:"token"`
+}
+
+// SubmitEntryLinkJSONBody defines parameters for SubmitEntryLink.
+type SubmitEntryLinkJSONBody struct {
+	// Otpauth For a link that accepts the seed of a one-time code, an otpauth://totp/ URI.
+	Otpauth *string `json:"otpauth,omitempty"`
+	Token   string  `json:"token"`
+
+	// Value For a link that accepts a value.
+	Value *string `json:"value,omitempty"`
+}
+
+// SubmitEntryLink200JSONResponseBodyStatus defines parameters for SubmitEntryLink.
+type SubmitEntryLink200JSONResponseBodyStatus string
 
 // ApproveApprovalJSONBody defines parameters for ApproveApproval.
 type ApproveApprovalJSONBody struct {
@@ -5910,7 +6848,7 @@ type ListAuditEventsParams struct {
 	// ActorIdentityId Only events whose actor is this identity ID (capability audit.filters).
 	ActorIdentityId *AuditActorIdentityId `form:"actorIdentityId,omitempty" json:"actorIdentityId,omitempty"`
 
-	// Actor varlatch: only Varlatch's own events, those with no actor identity (sync delivery, webhooks, operator commands), except authentication.* events, whose missing actor is an unknown caller (capability audit.attribution). Given with actorIdentityId it is refused with VALIDATION_FAILED.
+	// Actor varlatch: only Varlatch's own events, those with no actor identity (sync delivery, webhooks, operator commands), except authentication.* events, whose missing actor is an unknown caller, and what somebody did with an entry link open to anyone (capability audit.attribution). Given with actorIdentityId it is refused with VALIDATION_FAILED.
 	Actor *ListAuditEventsParamsActor `form:"actor,omitempty" json:"actor,omitempty"`
 
 	// ProjectId Only events whose resource names this project ID (capability audit.filters).
@@ -5946,7 +6884,7 @@ type ExportAuditEventsParams struct {
 	// ActorIdentityId Only events whose actor is this identity ID (capability audit.filters).
 	ActorIdentityId *AuditActorIdentityId `form:"actorIdentityId,omitempty" json:"actorIdentityId,omitempty"`
 
-	// Actor varlatch: only Varlatch's own events, those with no actor identity (sync delivery, webhooks, operator commands), except authentication.* events, whose missing actor is an unknown caller (capability audit.attribution). Given with actorIdentityId it is refused with VALIDATION_FAILED.
+	// Actor varlatch: only Varlatch's own events, those with no actor identity (sync delivery, webhooks, operator commands), except authentication.* events, whose missing actor is an unknown caller, and what somebody did with an entry link open to anyone (capability audit.attribution). Given with actorIdentityId it is refused with VALIDATION_FAILED.
 	Actor *ExportAuditEventsParamsActor `form:"actor,omitempty" json:"actor,omitempty"`
 
 	// ProjectId Only events whose resource names this project ID (capability audit.filters).
@@ -6247,10 +7185,19 @@ type IssueIdentityCredential201JSONResponseBody struct {
 type CreateOidcBindingJSONBody struct {
 	Audience string `json:"audience"`
 
-	// Claims Additional token claims that must match exactly.
-	Claims  *map[string]string `json:"claims,omitempty"`
-	Issuer  string             `json:"issuer"`
-	Subject string             `json:"subject"`
+	// Claims Additional token claims that must match exactly. Names that start with varlatch: are reserved.
+	Claims *map[string]string `json:"claims,omitempty"`
+
+	// ExerciseOnly The exchanged credential exercises Capabilities issued for the binding's identity, a Broker, and nothing else: every other operation, reads included, is refused with PERMISSION_DENIED. Turns singleExchange on.
+	ExerciseOnly *bool  `json:"exerciseOnly,omitempty"`
+	Issuer       string `json:"issuer"`
+
+	// RunIdClaim With exerciseOnly: only Capabilities whose runId equals this claim of the exchanged token. A token without it (a string of 1 to 200 characters) exchanges nothing.
+	RunIdClaim *string `json:"runIdClaim,omitempty"`
+
+	// SingleExchange A token exchanges once within its lifetime, by its issuer and jti, or by the token itself when it has no jti. A token that stays valid for more than a day exchanges nothing. Off by default, always on with exerciseOnly.
+	SingleExchange *bool  `json:"singleExchange,omitempty"`
+	Subject        string `json:"subject"`
 }
 
 // CreateOidcBindingParams defines parameters for CreateOidcBinding.
@@ -6486,9 +7433,14 @@ type CreateEnvironmentJSONBody struct {
 
 // IssueCapabilityJSONBody defines parameters for IssueCapability.
 type IssueCapabilityJSONBody struct {
-	AgentIdentityId string   `json:"agentIdentityId"`
-	Destinations    []string `json:"destinations"`
-	Items           []string `json:"items"`
+	AgentIdentityId string `json:"agentIdentityId"`
+
+	// BrokerIdentityId The Broker the Capability is issued for (capability capabilities.delegate): a broker identity of the Organization that is not retired. Naming any but the caller itself needs capability.issue. Required when the caller is not a Broker. While the Capability lives, every exercise also needs its issuer to be live and to hold capability.issue here.
+	BrokerIdentityId *string `json:"brokerIdentityId,omitempty"`
+
+	// Destinations Hosts: host, host:port, *.suffix, an IP address; no port is 443. Or, for a Broker that types (capability capabilities.destination-kinds, ADR-0064), pages, web:<http or https>://<host or *.suffix>[:port][/path], the path a prefix of whole segments (an http page is allowed when it is written out, and not encrypted: whoever is on the network reads what is typed there), and desktop applications on the Broker's machine, app:<name>@<the Broker's identity ID>. Not hosts and the others in one Capability (VALIDATION_FAILED, reason mixed-destinations), nor an application of another machine (app-machine). A server without the capability refuses the last two kinds.
+	Destinations []string `json:"destinations"`
+	Items        []string `json:"items"`
 
 	// Precondition Agent-safe strict preflight (capability retrieval.preflight): the state a preflight strict retrieval saw. Issuance compares it in its own snapshot, without decrypting anything, and refuses with STATE_CHANGED (details.categories names only what changed) when it differs. It confers no authority.
 	Precondition *struct {
@@ -6503,7 +7455,10 @@ type IssueCapabilityJSONBody struct {
 	} `json:"precondition,omitempty"`
 	RunId *string `json:"runId,omitempty"`
 
-	// Targets Required (capability capabilities.targets). For every item, 1 to 4 substitution targets: header:<name> (never a transport-owned header such as Host, Content-Length, Transfer-Encoding, Content-Type, or connection and proxy headers), query:<name>, json:<RFC 6901 pointer>, or form:<name>. Recorded immutably on the Capability; the Broker substitutes a Placeholder only at its targets.
+	// SingleUse Exercised once (capability capabilities.single-use). A granted exercise uses it up, even when its response is lost or the server fails after recording it; a refused one, or one whose items have no value, does not. A server without the capability ignores this member: check it, or that the answer says singleUse.
+	SingleUse *bool `json:"singleUse,omitempty"`
+
+	// Targets Required (capability capabilities.targets). For every item, 1 to 4 substitution targets: header:<name> (never a transport-owned header such as Host, Content-Length, Transfer-Encoding, Content-Type, or connection and proxy headers), query:<name>, json:<RFC 6901 pointer>, or form:<name>, in a request; or (capability capabilities.target-kinds, ADR-0064) pipe:<RFC 6901 pointer>, in a JSON document handed to a process over a pipe, or field:<name>, typed into a field (both without ; and = and characters that do not show). A field goes with pages and applications, a pipe with hosts and applications, the others with hosts: a target no destination takes is refused (VALIDATION_FAILED, reason target-without-destination). A server without the capability refuses pipe and field. Recorded immutably on the Capability; the Broker substitutes a Placeholder only at its targets.
 	Targets    map[string][]string `json:"targets"`
 	TtlSeconds int                 `json:"ttlSeconds"`
 }
@@ -6511,12 +7466,28 @@ type IssueCapabilityJSONBody struct {
 // ExerciseCapabilityJSONBody defines parameters for ExerciseCapability.
 type ExerciseCapabilityJSONBody struct {
 	CapabilitySecret string `json:"capabilitySecret"`
-	Destination      struct {
-		Host string `json:"host"`
-		Port int    `json:"port"`
+
+	// Destination Where the values go, as the Broker says: host and port; or (capability capabilities.destination-kinds, ADR-0064) the page, url with topUrl, or the application, app, on the Broker's own machine. The audit log has the page's path, without query, fragment, credentials and path parameters, and the application's name; never a window's title, which is no part of a report. One of the three; a server without the capability refuses the last two for want of host and port. None of the Capability's destinations: PERMISSION_DENIED, reason destination-mismatch, recorded with what was reported.
+	Destination struct {
+		// App The application's name, compared exactly, and recorded. Never its window's title.
+		App  *string `json:"app,omitempty"`
+		Host *string `json:"host,omitempty"`
+		Port *int    `json:"port,omitempty"`
+
+		// TopUrl The address of the page around it, when that is another one: a destination has to name it too.
+		TopUrl *string `json:"topUrl,omitempty"`
+
+		// Url The address of the page whose field it is, as the browser has it (a frame's own). Compared by scheme, host, port and path; its query and fragment are not compared nor recorded. One that cannot be read, or could be read two ways, is none of any.
+		Url *string `json:"url,omitempty"`
 	} `json:"destination"`
 
-	// Placements Each substitution the Broker will make, as an item and one of its recorded targets. Only these items are returned; references inside them still resolve against the other Secrets on the Capability, each dependency audited before it is decrypted. A Capability without targets (issued before they were required) is refused with reason capability-without-targets; a placement the Capability does not hold with placement-not-targeted.
+	// Fresh Only codes of a later period than any this server has given (capability values.totp): the current period's, else the next one's. Once one of the next period or a later one was given (minValiditySeconds may have skipped the current one), the exercise is refused with RATE_LIMITED (429, Retry-After), reason no-fresh-code and retryAfterSeconds, and uses up nothing. Every code given counts, asked for as fresh or not; one made from a copy of the seed elsewhere is not known here. Other items are not affected.
+	Fresh *bool `json:"fresh,omitempty"`
+
+	// MinValiditySeconds How long the one-time codes (capability values.totp) and the access tokens (capability oauth.connections) among the items must still be valid. When the current code ends sooner, the next one is answered, with the time it starts (notBefore, startsInSeconds): the caller waits for it, the server does not. When an access token ends sooner, it is refreshed first. More than an item's period, or than the provider's access tokens last, is refused with VALIDATION_FAILED, reason min-validity-too-long, and uses up nothing. Other items are not affected.
+	MinValiditySeconds *int `json:"minValiditySeconds,omitempty"`
+
+	// Placements Each substitution the Broker will make, as an item and one of its recorded targets. Only these items are returned; references inside them still resolve against the other Secrets on the Capability, each dependency audited before it is decrypted. A Capability without targets (issued before they were required) is refused with reason capability-without-targets; a placement the Capability does not hold with placement-not-targeted, and one whose target is none of the destination's kind with placement-not-for-destination. A single-use Capability exercised before is refused with already-used, and one whose issuer may no longer issue here with issuer-not-allowed.
 	Placements *[]struct {
 		Item   string `json:"item"`
 		Target string `json:"target"`
@@ -6539,7 +7510,10 @@ type ApplyChangeSetJSONBodyChanges0 struct {
 	ExpectedVersionId *string                          `json:"expectedVersionId,omitempty"`
 	Item              string                           `json:"item"`
 	Op                ApplyChangeSetJSONBodyChanges0Op `json:"op"`
-	Value             string                           `json:"value"`
+
+	// Otpauth The seed of one-time codes (RFC 6238) as an otpauth://totp/ URI, what an authenticator's QR code holds: a base32 secret of 80 bits or more, SHA1 (the default), SHA256, or SHA512, 6 (the default) or 8 digits, a period of 30 (the default) or 60 seconds. It goes where a value would (capability values.totp): a server without the capability refuses the request for want of a value. Refused with VALIDATION_FAILED, which never repeats any of it.
+	Otpauth *OtpauthURI `json:"otpauth,omitempty"`
+	Value   *string     `json:"value,omitempty"`
 }
 
 // ApplyChangeSetJSONBodyChanges0Op defines parameters for ApplyChangeSet.
@@ -6580,6 +7554,9 @@ type DiscloseSecretsJSONBody0 struct {
 
 	// Purpose Why the caller asks for a disclosure, recorded as `purpose` in the disclosure's `secret.disclosed` audit event and in any reference-expansion `value.disclosed` events it causes. `scan`: a local secret scan (`varlatch scan`). `export`: read for an env file (capability `disclosure.purpose.export`, ADR-0053); it proves neither that a file was saved nor which values went into it. Any other value is refused with VALIDATION_FAILED.
 	Purpose *DisclosurePurpose `json:"purpose,omitempty"`
+
+	// TotpSeeds Disclose the seeds of one-time codes among items too (capability values.totp), each as its otpauth:// URI. Refused with a purpose or with the all-authorized scope.
+	TotpSeeds *bool `json:"totpSeeds,omitempty"`
 }
 
 // DiscloseSecretsJSONBody1 defines parameters for DiscloseSecrets.
@@ -6658,7 +7635,10 @@ type PauseSyncTargetParamsWait string
 type SetValueJSONBody struct {
 	// ExpectedVersionId Optimistic concurrency; rejects stale writes with VERSION_CONFLICT.
 	ExpectedVersionId *string `json:"expectedVersionId,omitempty"`
-	Value             string  `json:"value"`
+
+	// Otpauth The seed of one-time codes (RFC 6238) as an otpauth://totp/ URI, what an authenticator's QR code holds: a base32 secret of 80 bits or more, SHA1 (the default), SHA256, or SHA512, 6 (the default) or 8 digits, a period of 30 (the default) or 60 seconds. It goes where a value would (capability values.totp): a server without the capability refuses the request for want of a value. Refused with VALIDATION_FAILED, which never repeats any of it.
+	Otpauth *OtpauthURI `json:"otpauth,omitempty"`
+	Value   *string     `json:"value,omitempty"`
 }
 
 // SetValueParams defines parameters for SetValue.
@@ -6673,8 +7653,11 @@ type BeginRotationJSONBody struct {
 	ExpectedVersionId *string `json:"expectedVersionId,omitempty"`
 
 	// GraceSeconds Overlap window; clamped to [1, 2592000] and defaulted from the contract's per-item rotationGraceSeconds, else 24h.
-	GraceSeconds *int   `json:"graceSeconds,omitempty"`
-	Value        string `json:"value"`
+	GraceSeconds *int `json:"graceSeconds,omitempty"`
+
+	// Otpauth The seed of one-time codes (RFC 6238) as an otpauth://totp/ URI, what an authenticator's QR code holds: a base32 secret of 80 bits or more, SHA1 (the default), SHA256, or SHA512, 6 (the default) or 8 digits, a period of 30 (the default) or 60 seconds. It goes where a value would (capability values.totp): a server without the capability refuses the request for want of a value. Refused with VALIDATION_FAILED, which never repeats any of it.
+	Otpauth *OtpauthURI `json:"otpauth,omitempty"`
+	Value   *string     `json:"value,omitempty"`
 }
 
 // ListRequirementsParams defines parameters for ListRequirements.
@@ -6886,6 +7869,12 @@ type LookupDeviceSignInJSONRequestBody LookupDeviceSignInJSONBody
 // CollectDeviceSignInJSONRequestBody defines body for CollectDeviceSignIn for application/json ContentType.
 type CollectDeviceSignInJSONRequestBody CollectDeviceSignInJSONBody
 
+// LookupEntryLinkJSONRequestBody defines body for LookupEntryLink for application/json ContentType.
+type LookupEntryLinkJSONRequestBody LookupEntryLinkJSONBody
+
+// SubmitEntryLinkJSONRequestBody defines body for SubmitEntryLink for application/json ContentType.
+type SubmitEntryLinkJSONRequestBody SubmitEntryLinkJSONBody
+
 // ApproveApprovalJSONRequestBody defines body for ApproveApproval for application/json ContentType.
 type ApproveApprovalJSONRequestBody ApproveApprovalJSONBody
 
@@ -7008,6 +7997,27 @@ type ApplyChangeSetJSONRequestBody ApplyChangeSetJSONBody
 
 // DiscloseSecretsJSONRequestBody defines body for DiscloseSecrets for application/json ContentType.
 type DiscloseSecretsJSONRequestBody DiscloseSecretsJSONBody
+
+// CreateEntryLinkJSONRequestBody defines body for CreateEntryLink for application/json ContentType.
+type CreateEntryLinkJSONRequestBody = EntryLinkInput
+
+// CreateOAuthConnectionJSONRequestBody defines body for CreateOAuthConnection for application/json ContentType.
+type CreateOAuthConnectionJSONRequestBody = OAuthConnectionInput
+
+// DiscoverOAuthProviderJSONRequestBody defines body for DiscoverOAuthProvider for application/json ContentType.
+type DiscoverOAuthProviderJSONRequestBody = OAuthDiscoveryInput
+
+// UpdateOAuthConnectionJSONRequestBody defines body for UpdateOAuthConnection for application/json ContentType.
+type UpdateOAuthConnectionJSONRequestBody = OAuthConnectionChange
+
+// StartOAuthAuthorizationJSONRequestBody defines body for StartOAuthAuthorization for application/json ContentType.
+type StartOAuthAuthorizationJSONRequestBody = OAuthAuthorizationInput
+
+// CompleteOAuthAuthorizationJSONRequestBody defines body for CompleteOAuthAuthorization for application/json ContentType.
+type CompleteOAuthAuthorizationJSONRequestBody = OAuthAuthorizationAnswer
+
+// DisconnectOAuthConnectionJSONRequestBody defines body for DisconnectOAuthConnection for application/json ContentType.
+type DisconnectOAuthConnectionJSONRequestBody = OAuthDisconnectInput
 
 // StrictRetrievalJSONRequestBody defines body for StrictRetrieval for application/json ContentType.
 type StrictRetrievalJSONRequestBody StrictRetrievalJSONBody
@@ -7873,6 +8883,12 @@ type ServerInterface interface {
 	// ExportDeletedOrganizationAuditEvents Stream a deleted Organization's audit log as NDJSON, oldest first, for the same readers as the listing (ADR-0051 Decision 8). Anyone else gets RESOURCE_NOT_FOUND.
 	// (GET /deleted-organizations/{organization}/audit-events/export)
 	ExportDeletedOrganizationAuditEvents(w http.ResponseWriter, r *http.Request, organization string)
+	// LookupEntryLink What an entry link's page shows before a value is entered. The token in the body is what is asked for; a link made for a member, or for one person, also needs that person's bearer credential, and without one answers signInRequired and no names. Nothing is used up and nothing recorded, however often it is asked. RESOURCE_NOT_FOUND for a token there is no link of; CONSUMED (410) after the value was entered, EXPIRED (410) once expired or cancelled (details.status), with no word on whether it was cancelled or ended with its credential; PERMISSION_DENIED for another person (reason not-for-you), or when whoever made the link may no longer (requester-not-allowed). RATE_LIMITED for an unknown token after 20 of them from one address in ten minutes; a link that there is is answered all the same. Never cacheable.
+	// (POST /entry-links/lookup)
+	LookupEntryLink(w http.ResponseWriter, r *http.Request)
+	// SubmitEntryLink Enter the value of an entry link, once. Authenticated as lookupEntryLink, with the same refusals, and the passkey-verification checkpoint of a value write for a signed-in person. One request of several at once enters it. Refused (STATE_CHANGED), and the link cancelled, when the item's value changed since the link was made. The credential that made the link is looked at in the job that writes the value. A refusal does not use the link up otherwise: a value that holds a ${NAME} reference is refused (VALIDATION_FAILED, reason reference). The answer holds nothing of the value. Never cacheable.
+	// (POST /entry-links/submit)
+	SubmitEntryLink(w http.ResponseWriter, r *http.Request)
 	// GetInstallationBackups Installation Admin only, per-archive backup checks and delivery status
 	// (GET /installation/backups)
 	GetInstallationBackups(w http.ResponseWriter, r *http.Request)
@@ -8075,7 +9091,7 @@ type ServerInterface interface {
 	// ListOidcBindings List a machine identity's active OIDC bindings
 	// (GET /organizations/{org}/identities/{identity}/oidc-bindings)
 	ListOidcBindings(w http.ResponseWriter, r *http.Request, org Org, identity string)
-	// CreateOidcBinding Bind an external OIDC issuer + audience + subject (and optional exact-match claims) to a machine identity (capability auth.oidc). A binding is an Authentication Method: exchanging a matching verified token establishes identity only — authority remains the identity's Grants, evaluated per request. Subject matches exactly, or by prefix when it ends with '*'.
+	// CreateOidcBinding Bind an external OIDC issuer + audience + subject (and optional exact-match claims) to a machine identity (capability auth.oidc). A binding is an Authentication Method: exchanging a matching verified token establishes identity only — authority remains the identity's Grants, evaluated per request. Subject matches exactly, or by prefix when it ends with '*'. exerciseOnly, runIdClaim, and singleExchange limit what its exchanges give (capability auth.oidc.limits, ADR-0060); an identity's live bindings for one issuer are either all limited or all unlimited, and a token that matches several limited bindings gets the limits of all of them.
 	// (POST /organizations/{org}/identities/{identity}/oidc-bindings)
 	CreateOidcBinding(w http.ResponseWriter, r *http.Request, org Org, identity string, params CreateOidcBindingParams)
 	// RevokeOidcBinding Revoke an OIDC binding; matching tokens stop exchanging immediately
@@ -8186,27 +9202,67 @@ type ServerInterface interface {
 
 	// (GET /organizations/{org}/projects/{project}/environments/{environment})
 	GetEnvironment(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter)
-	// ListCapabilities List Capabilities for this environment. Brokers see their own; callers with policy.read see all.
+	// ListCapabilities List Capabilities for this environment. Brokers see their own (issued for them or by them); callers with policy.read see all; an identity holding capability.issue here sees what it issued.
 	// (GET /organizations/{org}/projects/{project}/environments/{environment}/capabilities)
 	ListCapabilities(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter)
-	// IssueCapability Issue a Capability (capability capabilities.broker, ADR-0022). Broker identities only. Issuance narrows potential future use and never expands the Agent's Grants; the capability secret is returned exactly once. Responses are never cacheable.
+	// IssueCapability Issue a Capability (capability capabilities.broker, ADR-0022). A Broker identity issues one for itself. With capability.issue on the Environment (capability capabilities.delegate, ADR-0060), a service, workload, ci, or broker identity issues one for the Broker it names in brokerIdentityId: only that Broker can exercise it, the issuer cannot. Anyone else gets RESOURCE_NOT_FOUND. Issuance narrows potential future use and never expands the Agent's Grants; the capability secret is returned exactly once. Responses are never cacheable.
 	// (POST /organizations/{org}/projects/{project}/environments/{environment}/capabilities)
 	IssueCapability(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter)
-	// RevokeCapability Revoke a Capability. The issuing Broker may revoke its own; callers with policy.manage may revoke any. Takes effect on the next exercise.
+	// RevokeCapability Revoke a Capability. Its Broker and the identity that issued it may revoke it; callers with policy.manage may revoke any. Takes effect on the next exercise.
 	// (DELETE /organizations/{org}/projects/{project}/environments/{environment}/capabilities/{capability})
 	RevokeCapability(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter, capability string)
-	// ExerciseCapability Exercise a Capability (ADR-0022). Requires the issuing Broker's bearer plus the capability secret; the Agent's secret.use is evaluated against current state (including Tailnet Requirements on this request), current Value versions are resolved, and the exercise is audited before decryption. ${NAME} references inside exercised material are expanded strictly (ADR-0026): referenced Secrets must be named in the Capability, non-sensitive references require the Agent's config.value.read (audited), and any unresolvable reference denies the exercise (reason unresolved-reference) rather than injecting literal ${NAME} upstream — $${NAME} escapes. Responses are never cacheable and go to the Broker only.
+	// ExerciseCapability Exercise a Capability (ADR-0022). Requires the bearer of the Broker it was issued for (an exercise-only credential too, ADR-0060) plus the capability secret; the Agent's secret.use is evaluated against current state (including Tailnet Requirements on this request), current Value versions are resolved, and the exercise is audited before decryption. ${NAME} references inside exercised material are expanded strictly (ADR-0026): referenced Secrets must be named in the Capability, non-sensitive references require the Agent's config.value.read (audited), and any unresolvable reference denies the exercise (reason unresolved-reference) rather than injecting literal ${NAME} upstream — $${NAME} escapes. Responses are never cacheable and go to the Broker only.
+	// An OAuth connection (capability oauth.connections, ADR-0062) gives its access token, refreshed first when it has ended, ends within a minute, or ends before minValiditySeconds. When there is none now the exercise is refused with RATE_LIMITED (429, Retry-After), reason connection-unavailable and retryAfterSeconds; when a person has to act, with PERMISSION_DENIED, reason connection-needs-reconnect, connection-not-connected, connection-revoked or connection-paused; when the connection's own hosts do not name the destination, with PERMISSION_DENIED, reason destination-mismatch. Neither uses up anything.
 	// (POST /organizations/{org}/projects/{project}/environments/{environment}/capabilities/{capability}/exercises)
 	ExerciseCapability(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter, capability string)
 	// ApplyChangeSet Atomic value change set (capability values.changeset): all expected-version guards validate before mutation; any conflict rejects the entire set with VERSION_CONFLICT. Supports Idempotency-Key.
 	// (POST /organizations/{org}/projects/{project}/environments/{environment}/changes)
 	ApplyChangeSet(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter, params ApplyChangeSetParams)
-	// DiscloseSecrets Explicit Secret disclosure (capability secrets.requested-disclosure). The request declares its items or an intentional all-authorized scope; one audit event enumerates exactly what was returned. Responses are never cacheable. ${NAME} references inside disclosed Secrets are expanded server-side (capability values.references) from other Secrets disclosed in the same call and — only when the caller also holds config.value.read — from the environment's non-sensitive values, each such expansion audited; unauthorized or unknown references stay literal. An optional purpose (capability secrets.disclosure-purpose) is recorded in the disclosure's audit events and changes nothing else.
+	// DiscloseSecrets Explicit Secret disclosure (capability secrets.requested-disclosure). The request declares its items or an intentional all-authorized scope; one audit event enumerates exactly what was returned. Responses are never cacheable. ${NAME} references inside disclosed Secrets are expanded server-side (capability values.references) from other Secrets disclosed in the same call and — only when the caller also holds config.value.read — from the environment's non-sensitive values, each such expansion audited; unauthorized or unknown references stay literal. An optional purpose (capability secrets.disclosure-purpose) is recorded in the disclosure's audit events and changes nothing else. A seed of one-time codes is disclosed only to a request that names its item and says totpSeeds (capability values.totp): otherwise it is withheld, and the all-authorized scope leaves it out.
 	// (POST /organizations/{org}/projects/{project}/environments/{environment}/disclosures)
 	DiscloseSecrets(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter, params DiscloseSecretsParams)
 	// GetEffectiveConfiguration Bulk-resolve the Effective Configuration (child overrides over parent values). With include=values, plaintext is returned for items the caller is authorized for (config.value.read for non-sensitive, secret.reveal for Secrets) and every disclosure is audited before material is returned. Values may reference sibling items as ${NAME} (capability values.references): references are expanded server-side using only values the caller receives in the same response; anything else stays a literal ${NAME}. $${NAME} escapes to a literal ${NAME}.
 	// (GET /organizations/{org}/projects/{project}/environments/{environment}/effective-configuration)
 	GetEffectiveConfiguration(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter, params GetEffectiveConfigurationParams)
+	// ListEntryLinks The environment's entry links (capability values.entry-links, ADR-0063), newest first, at most 200, kept until a day after they expire. A person holding config.value.write sees all of them; a machine identity, and a person without it, see what they asked for. Never a link's address, and nothing of a value.
+	// (GET /organizations/{org}/projects/{project}/environments/{environment}/entry-links)
+	ListEntryLinks(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter)
+	// CreateEntryLink Make a link a person enters one Secret's value with, once, on Varlatch's own page. A service, workload, ci or broker identity needs entry-link.create here (entry-link.create-open when restrictedTo is anyone), which no built-in role holds; a person needs config.value.write. Replacing a value needs config.value.write of either. Whoever makes the link gets no value by it, and their right is decided again when the value is entered. The item must have no value here, inherited ones included (VERSION_CONFLICT otherwise), unless replace; it must be sensitive, and no OAuth connection (VALIDATION_FAILED, reason not-sensitive or oauth-connection), and one the active Contract names when the caller has no config.value.write (not-in-contract). Under passkey-verification's enforce a link open to anyone is refused (PERMISSION_DENIED, reason passkey-verification). RATE_LIMITED beyond 100 pending links, or 300 an hour, of one identity. The link ends with the credential of this request: when a machine's is revoked or its identity retired, or a service credential expires (the link's expiresAt is never later), or an OIDC binding of the identity is revoked after an exchanged one was issued (its own expiry ends no link); when a person revokes it, or another browser session, from elsewhere, or is no member any more (signing out ends no link). PERMISSION_DENIED, reason credential-ended, for an exchanged credential whose identity's binding was revoked already. The address is in this answer only; it is never cacheable, and an Idempotency-Key is not read.
+	// (POST /organizations/{org}/projects/{project}/environments/{environment}/entry-links)
+	CreateEntryLink(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter)
+	// CancelEntryLink Cancel a pending entry link: who asked for it, with or without its right still, or a person holding config.value.write. Works while the Organization is frozen. A link that has ended is RESOURCE_NOT_FOUND.
+	// (DELETE /organizations/{org}/projects/{project}/environments/{environment}/entry-links/{entryLink})
+	CancelEntryLink(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter, entryLink EntryLinkParameter)
+	// GetEntryLink One entry link, as listEntryLinks shows it: its status says whether the value was entered.
+	// (GET /organizations/{org}/projects/{project}/environments/{environment}/entry-links/{entryLink})
+	GetEntryLink(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter, entryLink EntryLinkParameter)
+	// ListOAuthConnections The environment's own OAuth connections (capability oauth.connections, ADR-0062), without the ones it inherits. Needs config.metadata.read. No secret and no token, nor anything derived from one.
+	// (GET /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections)
+	ListOAuthConnections(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter)
+	// CreateOAuthConnection Make an OAuth connection, not connected yet. Needs config.value.write; one to a person's account (authorization_code) is made by a person (PERMISSION_DENIED, reason person-required). Its endpoints are pinned: the provider's metadata is read now and never again, and nothing but these endpoints is ever sent the client secret or a token. They are all on the host that was given, or on hosts the request names (VALIDATION_FAILED, reason endpoint-hosts, with the others in details.endpointHosts). The item has no value in this environment (VERSION_CONFLICT otherwise) and is sensitive.
+	// (POST /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections)
+	CreateOAuthConnection(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter)
+	// DiscoverOAuthProvider What a connection to this provider would pin, the hosts its endpoints are on (named or not), and the redirect URI to register there, without making one. Needs config.value.write.
+	// (POST /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/discovery)
+	DiscoverOAuthProvider(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter)
+	// GetOAuthConnection One of the environment's own OAuth connections. Needs config.metadata.read. An item is deleted as any item is (deleteValue), which forgets its tokens without revoking them: disconnect it first for that. One a person has connected is deleted by a person (PERMISSION_DENIED, reason person-required).
+	// (GET /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item})
+	GetOAuthConnection(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter, item Item)
+	// UpdateOAuthConnection Change an OAuth connection. Needs config.value.write; its provider, client ID, scopes and hosts are changed by a person (PERMISSION_DENIED, reason person-required). Its provider and client ID can change only while it holds no tokens (VALIDATION_FAILED, reason connected: disconnect it first), and need the client secret again. A new client secret or new hosts leave it connected; new scopes are asked for at the next connection. Paused, it is neither used nor refreshed, and its tokens stay.
+	// (PATCH /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item})
+	UpdateOAuthConnection(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter, item Item)
+	// StartOAuthAuthorization Begin connecting an OAuth connection: the authorization endpoint's URL to send the browser to, with a state, a nonce and a PKCE challenge (S256) bound to this person and this session, good for ten minutes and once. A person in their dashboard session only (PERMISSION_DENIED, reason browser-session-required), with config.value.write.
+	// (POST /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}/authorizations)
+	StartOAuthAuthorization(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter, item Item)
+	// CompleteOAuthAuthorization Connect with what the provider sent the browser back with. The state is taken, once, by the person and the session that began it (RESOURCE_NOT_FOUND for anyone else, EXPIRED after ten minutes), and then the redirect URI, the issuer (RFC 9207), the ID token and the account are checked: another account than the one before is refused unless the change was confirmed when it was begun.
+	// (POST /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}/authorizations/complete)
+	CompleteOAuthAuthorization(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter, item Item)
+	// DisconnectOAuthConnection Disconnect an OAuth connection: its tokens revoked at the provider where it has an endpoint for that (RFC 7009), unless revokeAtProvider is false, and forgotten here whatever it answers. Needs config.value.write; also while the Organization is frozen. Many providers revoke the whole grant of that client for that account, other connections' tokens included.
+	// (POST /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}/disconnect)
+	DisconnectOAuthConnection(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter, item Item)
+	// RefreshOAuthConnection Refresh an OAuth connection's access token now, or get the first one of a client's own connection. Needs config.value.write. The answer says whether there is a new one, never the token.
+	// (POST /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}/refresh)
+	RefreshOAuthConnection(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter, item Item)
 	// StrictRetrieval Strict retrieval (capability retrieval.strict): the non-sensitive values (config.value.read) and every Secret (secret.reveal) this caller may receive, the state manifest and its digest, the caller view, the active Contract (contract.read), and the validation of exactly the values returned, all from one database snapshot, in one response. Requires config.metadata.read. Each class is authorized separately: a denied class is reported in callerView.withheld, not an error. Every decryption follows an audit commit naming its version. Any failure after the snapshot returns an error and no values. Never cacheable.
 	// (POST /organizations/{org}/projects/{project}/environments/{environment}/retrievals)
 	StrictRetrieval(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter)
@@ -8240,10 +9296,10 @@ type ServerInterface interface {
 	// DeleteValue Remove the Config Item's value from this environment (versions retained per audit rules)
 	// (DELETE /organizations/{org}/projects/{project}/environments/{environment}/values/{item})
 	DeleteValue(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter, item Item)
-	// SetValue Create a new immutable Value version for a Config Item in this environment
+	// SetValue Create a new immutable Value version for a Config Item in this environment: a value, or the seed of one-time codes (otpauth, capability values.totp, ADR-0061), never both. A seed's use is its code: no retrieval delivers it. A value is refused where a seed is (delete it first), and a seed for an item the Contract marks not sensitive, both with VALIDATION_FAILED.
 	// (PUT /organizations/{org}/projects/{project}/environments/{environment}/values/{item})
 	SetValue(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter, item Item, params SetValueParams)
-	// BeginRotation Begin a dual-phase rotation (capability values.rotation, ADR-0027): write a new primary version and keep the prior value retrievable alongside it for a bounded grace window, so running consumers migrate without an outage. Reads resolve the primary; the retiring value is exposed only through explicit disclosure and capability exercise. Rejected with ROTATION_IN_PROGRESS if one is already active.
+	// BeginRotation Begin a dual-phase rotation (capability values.rotation, ADR-0027): write a new primary version and keep the prior value retrievable alongside it for a bounded grace window, so running consumers migrate without an outage. Reads resolve the primary; the retiring value is exposed only through explicit disclosure and capability exercise. Rejected with ROTATION_IN_PROGRESS if one is already active. A seed of one-time codes rotates to another seed (otpauth, capability values.totp): until the rotation ends an exercise gives the codes of both. A value never rotates to a seed, nor a seed to a value.
 	// (POST /organizations/{org}/projects/{project}/environments/{environment}/values/{item}/rotations)
 	BeginRotation(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter, item Item)
 	// CompleteRotation Complete a rotation early (ADR-0027): drop the retiring value so the old upstream credential can be revoked. Idempotent — a no-op success when the item is not rotating (an elapsed deadline already retired it).
@@ -8481,6 +9537,34 @@ func (siw *ServerInterfaceWrapper) ExportDeletedOrganizationAuditEvents(w http.R
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ExportDeletedOrganizationAuditEvents(w, r, organization)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// LookupEntryLink operation middleware
+func (siw *ServerInterfaceWrapper) LookupEntryLink(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.LookupEntryLink(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SubmitEntryLink operation middleware
+func (siw *ServerInterfaceWrapper) SubmitEntryLink(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SubmitEntryLink(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -13137,6 +14221,650 @@ func (siw *ServerInterfaceWrapper) GetEffectiveConfiguration(w http.ResponseWrit
 	handler.ServeHTTP(w, r)
 }
 
+// ListEntryLinks operation middleware
+func (siw *ServerInterfaceWrapper) ListEntryLinks(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "org" -------------
+	var org Org
+
+	err = runtime.BindStyledParameterWithOptions("simple", "org", r.PathValue("org"), &org, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "org", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "project" -------------
+	var project ProjectParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project", r.PathValue("project"), &project, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "environment" -------------
+	var environment EnvironmentParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "environment", r.PathValue("environment"), &environment, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "environment", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListEntryLinks(w, r, org, project, environment)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateEntryLink operation middleware
+func (siw *ServerInterfaceWrapper) CreateEntryLink(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "org" -------------
+	var org Org
+
+	err = runtime.BindStyledParameterWithOptions("simple", "org", r.PathValue("org"), &org, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "org", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "project" -------------
+	var project ProjectParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project", r.PathValue("project"), &project, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "environment" -------------
+	var environment EnvironmentParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "environment", r.PathValue("environment"), &environment, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "environment", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateEntryLink(w, r, org, project, environment)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CancelEntryLink operation middleware
+func (siw *ServerInterfaceWrapper) CancelEntryLink(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "org" -------------
+	var org Org
+
+	err = runtime.BindStyledParameterWithOptions("simple", "org", r.PathValue("org"), &org, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "org", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "project" -------------
+	var project ProjectParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project", r.PathValue("project"), &project, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "environment" -------------
+	var environment EnvironmentParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "environment", r.PathValue("environment"), &environment, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "environment", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "entryLink" -------------
+	var entryLink EntryLinkParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "entryLink", r.PathValue("entryLink"), &entryLink, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "entryLink", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CancelEntryLink(w, r, org, project, environment, entryLink)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetEntryLink operation middleware
+func (siw *ServerInterfaceWrapper) GetEntryLink(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "org" -------------
+	var org Org
+
+	err = runtime.BindStyledParameterWithOptions("simple", "org", r.PathValue("org"), &org, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "org", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "project" -------------
+	var project ProjectParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project", r.PathValue("project"), &project, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "environment" -------------
+	var environment EnvironmentParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "environment", r.PathValue("environment"), &environment, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "environment", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "entryLink" -------------
+	var entryLink EntryLinkParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "entryLink", r.PathValue("entryLink"), &entryLink, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "entryLink", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetEntryLink(w, r, org, project, environment, entryLink)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListOAuthConnections operation middleware
+func (siw *ServerInterfaceWrapper) ListOAuthConnections(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "org" -------------
+	var org Org
+
+	err = runtime.BindStyledParameterWithOptions("simple", "org", r.PathValue("org"), &org, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "org", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "project" -------------
+	var project ProjectParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project", r.PathValue("project"), &project, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "environment" -------------
+	var environment EnvironmentParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "environment", r.PathValue("environment"), &environment, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "environment", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListOAuthConnections(w, r, org, project, environment)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateOAuthConnection operation middleware
+func (siw *ServerInterfaceWrapper) CreateOAuthConnection(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "org" -------------
+	var org Org
+
+	err = runtime.BindStyledParameterWithOptions("simple", "org", r.PathValue("org"), &org, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "org", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "project" -------------
+	var project ProjectParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project", r.PathValue("project"), &project, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "environment" -------------
+	var environment EnvironmentParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "environment", r.PathValue("environment"), &environment, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "environment", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateOAuthConnection(w, r, org, project, environment)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DiscoverOAuthProvider operation middleware
+func (siw *ServerInterfaceWrapper) DiscoverOAuthProvider(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "org" -------------
+	var org Org
+
+	err = runtime.BindStyledParameterWithOptions("simple", "org", r.PathValue("org"), &org, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "org", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "project" -------------
+	var project ProjectParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project", r.PathValue("project"), &project, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "environment" -------------
+	var environment EnvironmentParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "environment", r.PathValue("environment"), &environment, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "environment", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DiscoverOAuthProvider(w, r, org, project, environment)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetOAuthConnection operation middleware
+func (siw *ServerInterfaceWrapper) GetOAuthConnection(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "org" -------------
+	var org Org
+
+	err = runtime.BindStyledParameterWithOptions("simple", "org", r.PathValue("org"), &org, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "org", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "project" -------------
+	var project ProjectParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project", r.PathValue("project"), &project, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "environment" -------------
+	var environment EnvironmentParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "environment", r.PathValue("environment"), &environment, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "environment", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "item" -------------
+	var item Item
+
+	err = runtime.BindStyledParameterWithOptions("simple", "item", r.PathValue("item"), &item, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "item", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetOAuthConnection(w, r, org, project, environment, item)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateOAuthConnection operation middleware
+func (siw *ServerInterfaceWrapper) UpdateOAuthConnection(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "org" -------------
+	var org Org
+
+	err = runtime.BindStyledParameterWithOptions("simple", "org", r.PathValue("org"), &org, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "org", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "project" -------------
+	var project ProjectParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project", r.PathValue("project"), &project, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "environment" -------------
+	var environment EnvironmentParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "environment", r.PathValue("environment"), &environment, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "environment", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "item" -------------
+	var item Item
+
+	err = runtime.BindStyledParameterWithOptions("simple", "item", r.PathValue("item"), &item, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "item", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateOAuthConnection(w, r, org, project, environment, item)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StartOAuthAuthorization operation middleware
+func (siw *ServerInterfaceWrapper) StartOAuthAuthorization(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "org" -------------
+	var org Org
+
+	err = runtime.BindStyledParameterWithOptions("simple", "org", r.PathValue("org"), &org, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "org", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "project" -------------
+	var project ProjectParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project", r.PathValue("project"), &project, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "environment" -------------
+	var environment EnvironmentParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "environment", r.PathValue("environment"), &environment, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "environment", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "item" -------------
+	var item Item
+
+	err = runtime.BindStyledParameterWithOptions("simple", "item", r.PathValue("item"), &item, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "item", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StartOAuthAuthorization(w, r, org, project, environment, item)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CompleteOAuthAuthorization operation middleware
+func (siw *ServerInterfaceWrapper) CompleteOAuthAuthorization(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "org" -------------
+	var org Org
+
+	err = runtime.BindStyledParameterWithOptions("simple", "org", r.PathValue("org"), &org, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "org", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "project" -------------
+	var project ProjectParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project", r.PathValue("project"), &project, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "environment" -------------
+	var environment EnvironmentParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "environment", r.PathValue("environment"), &environment, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "environment", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "item" -------------
+	var item Item
+
+	err = runtime.BindStyledParameterWithOptions("simple", "item", r.PathValue("item"), &item, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "item", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CompleteOAuthAuthorization(w, r, org, project, environment, item)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DisconnectOAuthConnection operation middleware
+func (siw *ServerInterfaceWrapper) DisconnectOAuthConnection(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "org" -------------
+	var org Org
+
+	err = runtime.BindStyledParameterWithOptions("simple", "org", r.PathValue("org"), &org, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "org", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "project" -------------
+	var project ProjectParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project", r.PathValue("project"), &project, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "environment" -------------
+	var environment EnvironmentParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "environment", r.PathValue("environment"), &environment, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "environment", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "item" -------------
+	var item Item
+
+	err = runtime.BindStyledParameterWithOptions("simple", "item", r.PathValue("item"), &item, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "item", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DisconnectOAuthConnection(w, r, org, project, environment, item)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RefreshOAuthConnection operation middleware
+func (siw *ServerInterfaceWrapper) RefreshOAuthConnection(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "org" -------------
+	var org Org
+
+	err = runtime.BindStyledParameterWithOptions("simple", "org", r.PathValue("org"), &org, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "org", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "project" -------------
+	var project ProjectParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "project", r.PathValue("project"), &project, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "project", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "environment" -------------
+	var environment EnvironmentParameter
+
+	err = runtime.BindStyledParameterWithOptions("simple", "environment", r.PathValue("environment"), &environment, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "environment", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "item" -------------
+	var item Item
+
+	err = runtime.BindStyledParameterWithOptions("simple", "item", r.PathValue("item"), &item, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "item", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RefreshOAuthConnection(w, r, org, project, environment, item)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // StrictRetrieval operation middleware
 func (siw *ServerInterfaceWrapper) StrictRetrieval(w http.ResponseWriter, r *http.Request) {
 
@@ -15475,6 +17203,21 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/organizations/{org}/projects/{project}/environments/{environment}/capabilities", wrapper.IssueCapability)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/organizations/{org}/projects/{project}/environments/{environment}/capabilities/{capability}", wrapper.RevokeCapability)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/organizations/{org}/projects/{project}/environments/{environment}/capabilities/{capability}/exercises", wrapper.ExerciseCapability)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/organizations/{org}/projects/{project}/environments/{environment}/oauth-connections", wrapper.ListOAuthConnections)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/organizations/{org}/projects/{project}/environments/{environment}/oauth-connections", wrapper.CreateOAuthConnection)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/discovery", wrapper.DiscoverOAuthProvider)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}", wrapper.GetOAuthConnection)
+	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}", wrapper.UpdateOAuthConnection)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}/authorizations", wrapper.StartOAuthAuthorization)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}/authorizations/complete", wrapper.CompleteOAuthAuthorization)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}/refresh", wrapper.RefreshOAuthConnection)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}/disconnect", wrapper.DisconnectOAuthConnection)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/organizations/{org}/projects/{project}/environments/{environment}/entry-links", wrapper.ListEntryLinks)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/organizations/{org}/projects/{project}/environments/{environment}/entry-links", wrapper.CreateEntryLink)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/organizations/{org}/projects/{project}/environments/{environment}/entry-links/{entryLink}", wrapper.CancelEntryLink)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/organizations/{org}/projects/{project}/environments/{environment}/entry-links/{entryLink}", wrapper.GetEntryLink)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/entry-links/lookup", wrapper.LookupEntryLink)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/entry-links/submit", wrapper.SubmitEntryLink)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/organizations/{org}/projects/{project}/environments/{environment}/changes", wrapper.ApplyChangeSet)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/organizations/{org}/projects/{project}/environments/{environment}/validate", wrapper.ValidateEnvironment)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/organizations/{org}/projects/{project}/contract", wrapper.GetActiveContract)
@@ -15982,6 +17725,120 @@ type ExportDeletedOrganizationAuditEventsdefaultJSONResponse struct {
 }
 
 func (response ExportDeletedOrganizationAuditEventsdefaultJSONResponse) VisitExportDeletedOrganizationAuditEventsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type LookupEntryLinkRequestObject struct {
+	Body *LookupEntryLinkJSONRequestBody
+}
+
+type LookupEntryLinkResponseObject interface {
+	VisitLookupEntryLinkResponse(w http.ResponseWriter) error
+}
+
+type LookupEntryLink200JSONResponse EntryLinkView
+
+func (response LookupEntryLink200JSONResponse) VisitLookupEntryLinkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type LookupEntryLink429JSONResponse struct{ RequestWindowJSONResponse }
+
+func (response LookupEntryLink429JSONResponse) VisitLookupEntryLinkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type LookupEntryLinkdefaultJSONResponse struct {
+	Body       ApiError
+	StatusCode int
+}
+
+func (response LookupEntryLinkdefaultJSONResponse) VisitLookupEntryLinkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SubmitEntryLinkRequestObject struct {
+	Body *SubmitEntryLinkJSONRequestBody
+}
+
+type SubmitEntryLinkResponseObject interface {
+	VisitSubmitEntryLinkResponse(w http.ResponseWriter) error
+}
+
+type SubmitEntryLink200JSONResponse struct {
+	Status SubmitEntryLink200JSONResponseBodyStatus `json:"status"`
+}
+
+func (response SubmitEntryLink200JSONResponse) VisitSubmitEntryLinkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SubmitEntryLink429JSONResponse struct{ RequestWindowJSONResponse }
+
+func (response SubmitEntryLink429JSONResponse) VisitSubmitEntryLinkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SubmitEntryLinkdefaultJSONResponse struct {
+	Body       ApiError
+	StatusCode int
+}
+
+func (response SubmitEntryLinkdefaultJSONResponse) VisitSubmitEntryLinkResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -22936,8 +24793,11 @@ type DiscloseSecrets200JSONResponse struct {
 			Value     string `json:"value"`
 			VersionId string `json:"versionId"`
 		} `json:"retiring,omitempty"`
-		Value     string `json:"value"`
-		VersionId string `json:"versionId"`
+
+		// Totp Present when the item holds the seed of one-time codes (capability values.totp, ADR-0061): what may be read of it. Such an item is always sensitive and its value is never delivered: exercising a Capability that names it gives the code.
+		Totp      *OneTimeCode `json:"totp,omitempty"`
+		Value     string       `json:"value"`
+		VersionId string       `json:"versionId"`
 	} `json:"items"`
 
 	// Manifest Present when the caller also holds config.metadata.read.
@@ -23056,6 +24916,782 @@ type GetEffectiveConfigurationdefaultJSONResponse struct {
 }
 
 func (response GetEffectiveConfigurationdefaultJSONResponse) VisitGetEffectiveConfigurationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListEntryLinksRequestObject struct {
+	Org         Org                  `json:"org"`
+	Project     ProjectParameter     `json:"project"`
+	Environment EnvironmentParameter `json:"environment"`
+}
+
+type ListEntryLinksResponseObject interface {
+	VisitListEntryLinksResponse(w http.ResponseWriter) error
+}
+
+type ListEntryLinks200JSONResponse struct {
+	Items []EntryLink `json:"items"`
+
+	// NextCursor Opaque; null when no further pages exist.
+	NextCursor nullable.Nullable[NextCursor] `json:"nextCursor"`
+}
+
+func (response ListEntryLinks200JSONResponse) VisitListEntryLinksResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListEntryLinks429JSONResponse struct{ RequestWindowJSONResponse }
+
+func (response ListEntryLinks429JSONResponse) VisitListEntryLinksResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListEntryLinksdefaultJSONResponse struct {
+	Body       ApiError
+	StatusCode int
+}
+
+func (response ListEntryLinksdefaultJSONResponse) VisitListEntryLinksResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateEntryLinkRequestObject struct {
+	Org         Org                  `json:"org"`
+	Project     ProjectParameter     `json:"project"`
+	Environment EnvironmentParameter `json:"environment"`
+	Body        *CreateEntryLinkJSONRequestBody
+}
+
+type CreateEntryLinkResponseObject interface {
+	VisitCreateEntryLinkResponse(w http.ResponseWriter) error
+}
+
+type CreateEntryLink201JSONResponse CreatedEntryLink
+
+func (response CreateEntryLink201JSONResponse) VisitCreateEntryLinkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateEntryLink429JSONResponse struct{ RequestWindowJSONResponse }
+
+func (response CreateEntryLink429JSONResponse) VisitCreateEntryLinkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateEntryLinkdefaultJSONResponse struct {
+	Body       ApiError
+	StatusCode int
+}
+
+func (response CreateEntryLinkdefaultJSONResponse) VisitCreateEntryLinkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CancelEntryLinkRequestObject struct {
+	Org         Org                  `json:"org"`
+	Project     ProjectParameter     `json:"project"`
+	Environment EnvironmentParameter `json:"environment"`
+	EntryLink   EntryLinkParameter   `json:"entryLink"`
+}
+
+type CancelEntryLinkResponseObject interface {
+	VisitCancelEntryLinkResponse(w http.ResponseWriter) error
+}
+
+type CancelEntryLink204Response struct {
+}
+
+func (response CancelEntryLink204Response) VisitCancelEntryLinkResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type CancelEntryLink429JSONResponse struct{ RequestWindowJSONResponse }
+
+func (response CancelEntryLink429JSONResponse) VisitCancelEntryLinkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CancelEntryLinkdefaultJSONResponse struct {
+	Body       ApiError
+	StatusCode int
+}
+
+func (response CancelEntryLinkdefaultJSONResponse) VisitCancelEntryLinkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetEntryLinkRequestObject struct {
+	Org         Org                  `json:"org"`
+	Project     ProjectParameter     `json:"project"`
+	Environment EnvironmentParameter `json:"environment"`
+	EntryLink   EntryLinkParameter   `json:"entryLink"`
+}
+
+type GetEntryLinkResponseObject interface {
+	VisitGetEntryLinkResponse(w http.ResponseWriter) error
+}
+
+type GetEntryLink200JSONResponse EntryLink
+
+func (response GetEntryLink200JSONResponse) VisitGetEntryLinkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetEntryLink429JSONResponse struct{ RequestWindowJSONResponse }
+
+func (response GetEntryLink429JSONResponse) VisitGetEntryLinkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetEntryLinkdefaultJSONResponse struct {
+	Body       ApiError
+	StatusCode int
+}
+
+func (response GetEntryLinkdefaultJSONResponse) VisitGetEntryLinkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListOAuthConnectionsRequestObject struct {
+	Org         Org                  `json:"org"`
+	Project     ProjectParameter     `json:"project"`
+	Environment EnvironmentParameter `json:"environment"`
+}
+
+type ListOAuthConnectionsResponseObject interface {
+	VisitListOAuthConnectionsResponse(w http.ResponseWriter) error
+}
+
+type ListOAuthConnections200JSONResponse struct {
+	Items []OAuthConnection `json:"items"`
+
+	// NextCursor Opaque; null when no further pages exist.
+	NextCursor nullable.Nullable[NextCursor] `json:"nextCursor"`
+
+	// RedirectBase What a connection's redirect URI starts with; the token endpoint's host (and port, when it is not 443) follows, and for a generic provider its other endpointHosts, in order, each after a "~". Null when this installation has no public URL over HTTPS (or on a loopback host).
+	RedirectBase nullable.Nullable[string] `json:"redirectBase,omitempty"`
+}
+
+func (response ListOAuthConnections200JSONResponse) VisitListOAuthConnectionsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListOAuthConnections429JSONResponse struct{ RequestWindowJSONResponse }
+
+func (response ListOAuthConnections429JSONResponse) VisitListOAuthConnectionsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListOAuthConnectionsdefaultJSONResponse struct {
+	Body       ApiError
+	StatusCode int
+}
+
+func (response ListOAuthConnectionsdefaultJSONResponse) VisitListOAuthConnectionsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateOAuthConnectionRequestObject struct {
+	Org         Org                  `json:"org"`
+	Project     ProjectParameter     `json:"project"`
+	Environment EnvironmentParameter `json:"environment"`
+	Body        *CreateOAuthConnectionJSONRequestBody
+}
+
+type CreateOAuthConnectionResponseObject interface {
+	VisitCreateOAuthConnectionResponse(w http.ResponseWriter) error
+}
+
+type CreateOAuthConnection201JSONResponse OAuthConnection
+
+func (response CreateOAuthConnection201JSONResponse) VisitCreateOAuthConnectionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateOAuthConnection429JSONResponse struct{ RequestWindowJSONResponse }
+
+func (response CreateOAuthConnection429JSONResponse) VisitCreateOAuthConnectionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateOAuthConnectiondefaultJSONResponse struct {
+	Body       ApiError
+	StatusCode int
+}
+
+func (response CreateOAuthConnectiondefaultJSONResponse) VisitCreateOAuthConnectionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DiscoverOAuthProviderRequestObject struct {
+	Org         Org                  `json:"org"`
+	Project     ProjectParameter     `json:"project"`
+	Environment EnvironmentParameter `json:"environment"`
+	Body        *DiscoverOAuthProviderJSONRequestBody
+}
+
+type DiscoverOAuthProviderResponseObject interface {
+	VisitDiscoverOAuthProviderResponse(w http.ResponseWriter) error
+}
+
+type DiscoverOAuthProvider200JSONResponse OAuthDiscovery
+
+func (response DiscoverOAuthProvider200JSONResponse) VisitDiscoverOAuthProviderResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DiscoverOAuthProvider429JSONResponse struct{ RequestWindowJSONResponse }
+
+func (response DiscoverOAuthProvider429JSONResponse) VisitDiscoverOAuthProviderResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DiscoverOAuthProviderdefaultJSONResponse struct {
+	Body       ApiError
+	StatusCode int
+}
+
+func (response DiscoverOAuthProviderdefaultJSONResponse) VisitDiscoverOAuthProviderResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetOAuthConnectionRequestObject struct {
+	Org         Org                  `json:"org"`
+	Project     ProjectParameter     `json:"project"`
+	Environment EnvironmentParameter `json:"environment"`
+	Item        Item                 `json:"item"`
+}
+
+type GetOAuthConnectionResponseObject interface {
+	VisitGetOAuthConnectionResponse(w http.ResponseWriter) error
+}
+
+type GetOAuthConnection200JSONResponse OAuthConnection
+
+func (response GetOAuthConnection200JSONResponse) VisitGetOAuthConnectionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetOAuthConnection429JSONResponse struct{ RequestWindowJSONResponse }
+
+func (response GetOAuthConnection429JSONResponse) VisitGetOAuthConnectionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetOAuthConnectiondefaultJSONResponse struct {
+	Body       ApiError
+	StatusCode int
+}
+
+func (response GetOAuthConnectiondefaultJSONResponse) VisitGetOAuthConnectionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateOAuthConnectionRequestObject struct {
+	Org         Org                  `json:"org"`
+	Project     ProjectParameter     `json:"project"`
+	Environment EnvironmentParameter `json:"environment"`
+	Item        Item                 `json:"item"`
+	Body        *UpdateOAuthConnectionJSONRequestBody
+}
+
+type UpdateOAuthConnectionResponseObject interface {
+	VisitUpdateOAuthConnectionResponse(w http.ResponseWriter) error
+}
+
+type UpdateOAuthConnection200JSONResponse OAuthConnection
+
+func (response UpdateOAuthConnection200JSONResponse) VisitUpdateOAuthConnectionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateOAuthConnection429JSONResponse struct{ RequestWindowJSONResponse }
+
+func (response UpdateOAuthConnection429JSONResponse) VisitUpdateOAuthConnectionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateOAuthConnectiondefaultJSONResponse struct {
+	Body       ApiError
+	StatusCode int
+}
+
+func (response UpdateOAuthConnectiondefaultJSONResponse) VisitUpdateOAuthConnectionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartOAuthAuthorizationRequestObject struct {
+	Org         Org                  `json:"org"`
+	Project     ProjectParameter     `json:"project"`
+	Environment EnvironmentParameter `json:"environment"`
+	Item        Item                 `json:"item"`
+	Body        *StartOAuthAuthorizationJSONRequestBody
+}
+
+type StartOAuthAuthorizationResponseObject interface {
+	VisitStartOAuthAuthorizationResponse(w http.ResponseWriter) error
+}
+
+type StartOAuthAuthorization201JSONResponse OAuthAuthorization
+
+func (response StartOAuthAuthorization201JSONResponse) VisitStartOAuthAuthorizationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartOAuthAuthorization429JSONResponse struct{ RequestWindowJSONResponse }
+
+func (response StartOAuthAuthorization429JSONResponse) VisitStartOAuthAuthorizationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartOAuthAuthorizationdefaultJSONResponse struct {
+	Body       ApiError
+	StatusCode int
+}
+
+func (response StartOAuthAuthorizationdefaultJSONResponse) VisitStartOAuthAuthorizationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CompleteOAuthAuthorizationRequestObject struct {
+	Org         Org                  `json:"org"`
+	Project     ProjectParameter     `json:"project"`
+	Environment EnvironmentParameter `json:"environment"`
+	Item        Item                 `json:"item"`
+	Body        *CompleteOAuthAuthorizationJSONRequestBody
+}
+
+type CompleteOAuthAuthorizationResponseObject interface {
+	VisitCompleteOAuthAuthorizationResponse(w http.ResponseWriter) error
+}
+
+type CompleteOAuthAuthorization200JSONResponse OAuthAuthorizationOutcome
+
+func (response CompleteOAuthAuthorization200JSONResponse) VisitCompleteOAuthAuthorizationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CompleteOAuthAuthorization429JSONResponse struct{ RequestWindowJSONResponse }
+
+func (response CompleteOAuthAuthorization429JSONResponse) VisitCompleteOAuthAuthorizationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CompleteOAuthAuthorizationdefaultJSONResponse struct {
+	Body       ApiError
+	StatusCode int
+}
+
+func (response CompleteOAuthAuthorizationdefaultJSONResponse) VisitCompleteOAuthAuthorizationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DisconnectOAuthConnectionRequestObject struct {
+	Org         Org                  `json:"org"`
+	Project     ProjectParameter     `json:"project"`
+	Environment EnvironmentParameter `json:"environment"`
+	Item        Item                 `json:"item"`
+	Body        *DisconnectOAuthConnectionJSONRequestBody
+}
+
+type DisconnectOAuthConnectionResponseObject interface {
+	VisitDisconnectOAuthConnectionResponse(w http.ResponseWriter) error
+}
+
+type DisconnectOAuthConnection200JSONResponse OAuthDisconnection
+
+func (response DisconnectOAuthConnection200JSONResponse) VisitDisconnectOAuthConnectionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DisconnectOAuthConnection429JSONResponse struct{ RequestWindowJSONResponse }
+
+func (response DisconnectOAuthConnection429JSONResponse) VisitDisconnectOAuthConnectionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DisconnectOAuthConnectiondefaultJSONResponse struct {
+	Body       ApiError
+	StatusCode int
+}
+
+func (response DisconnectOAuthConnectiondefaultJSONResponse) VisitDisconnectOAuthConnectionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RefreshOAuthConnectionRequestObject struct {
+	Org         Org                  `json:"org"`
+	Project     ProjectParameter     `json:"project"`
+	Environment EnvironmentParameter `json:"environment"`
+	Item        Item                 `json:"item"`
+}
+
+type RefreshOAuthConnectionResponseObject interface {
+	VisitRefreshOAuthConnectionResponse(w http.ResponseWriter) error
+}
+
+type RefreshOAuthConnection200JSONResponse OAuthRefresh
+
+func (response RefreshOAuthConnection200JSONResponse) VisitRefreshOAuthConnectionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RefreshOAuthConnection429JSONResponse struct{ RequestWindowJSONResponse }
+
+func (response RefreshOAuthConnection429JSONResponse) VisitRefreshOAuthConnectionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RefreshOAuthConnectiondefaultJSONResponse struct {
+	Body       ApiError
+	StatusCode int
+}
+
+func (response RefreshOAuthConnectiondefaultJSONResponse) VisitRefreshOAuthConnectionResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -25986,6 +28622,12 @@ type StrictServerInterface interface {
 	// ExportDeletedOrganizationAuditEvents Stream a deleted Organization's audit log as NDJSON, oldest first, for the same readers as the listing (ADR-0051 Decision 8). Anyone else gets RESOURCE_NOT_FOUND.
 	// (GET /deleted-organizations/{organization}/audit-events/export)
 	ExportDeletedOrganizationAuditEvents(ctx context.Context, request ExportDeletedOrganizationAuditEventsRequestObject) (ExportDeletedOrganizationAuditEventsResponseObject, error)
+	// LookupEntryLink What an entry link's page shows before a value is entered. The token in the body is what is asked for; a link made for a member, or for one person, also needs that person's bearer credential, and without one answers signInRequired and no names. Nothing is used up and nothing recorded, however often it is asked. RESOURCE_NOT_FOUND for a token there is no link of; CONSUMED (410) after the value was entered, EXPIRED (410) once expired or cancelled (details.status), with no word on whether it was cancelled or ended with its credential; PERMISSION_DENIED for another person (reason not-for-you), or when whoever made the link may no longer (requester-not-allowed). RATE_LIMITED for an unknown token after 20 of them from one address in ten minutes; a link that there is is answered all the same. Never cacheable.
+	// (POST /entry-links/lookup)
+	LookupEntryLink(ctx context.Context, request LookupEntryLinkRequestObject) (LookupEntryLinkResponseObject, error)
+	// SubmitEntryLink Enter the value of an entry link, once. Authenticated as lookupEntryLink, with the same refusals, and the passkey-verification checkpoint of a value write for a signed-in person. One request of several at once enters it. Refused (STATE_CHANGED), and the link cancelled, when the item's value changed since the link was made. The credential that made the link is looked at in the job that writes the value. A refusal does not use the link up otherwise: a value that holds a ${NAME} reference is refused (VALIDATION_FAILED, reason reference). The answer holds nothing of the value. Never cacheable.
+	// (POST /entry-links/submit)
+	SubmitEntryLink(ctx context.Context, request SubmitEntryLinkRequestObject) (SubmitEntryLinkResponseObject, error)
 	// GetInstallationBackups Installation Admin only, per-archive backup checks and delivery status
 	// (GET /installation/backups)
 	GetInstallationBackups(ctx context.Context, request GetInstallationBackupsRequestObject) (GetInstallationBackupsResponseObject, error)
@@ -26188,7 +28830,7 @@ type StrictServerInterface interface {
 	// ListOidcBindings List a machine identity's active OIDC bindings
 	// (GET /organizations/{org}/identities/{identity}/oidc-bindings)
 	ListOidcBindings(ctx context.Context, request ListOidcBindingsRequestObject) (ListOidcBindingsResponseObject, error)
-	// CreateOidcBinding Bind an external OIDC issuer + audience + subject (and optional exact-match claims) to a machine identity (capability auth.oidc). A binding is an Authentication Method: exchanging a matching verified token establishes identity only — authority remains the identity's Grants, evaluated per request. Subject matches exactly, or by prefix when it ends with '*'.
+	// CreateOidcBinding Bind an external OIDC issuer + audience + subject (and optional exact-match claims) to a machine identity (capability auth.oidc). A binding is an Authentication Method: exchanging a matching verified token establishes identity only — authority remains the identity's Grants, evaluated per request. Subject matches exactly, or by prefix when it ends with '*'. exerciseOnly, runIdClaim, and singleExchange limit what its exchanges give (capability auth.oidc.limits, ADR-0060); an identity's live bindings for one issuer are either all limited or all unlimited, and a token that matches several limited bindings gets the limits of all of them.
 	// (POST /organizations/{org}/identities/{identity}/oidc-bindings)
 	CreateOidcBinding(ctx context.Context, request CreateOidcBindingRequestObject) (CreateOidcBindingResponseObject, error)
 	// RevokeOidcBinding Revoke an OIDC binding; matching tokens stop exchanging immediately
@@ -26299,27 +28941,67 @@ type StrictServerInterface interface {
 
 	// (GET /organizations/{org}/projects/{project}/environments/{environment})
 	GetEnvironment(ctx context.Context, request GetEnvironmentRequestObject) (GetEnvironmentResponseObject, error)
-	// ListCapabilities List Capabilities for this environment. Brokers see their own; callers with policy.read see all.
+	// ListCapabilities List Capabilities for this environment. Brokers see their own (issued for them or by them); callers with policy.read see all; an identity holding capability.issue here sees what it issued.
 	// (GET /organizations/{org}/projects/{project}/environments/{environment}/capabilities)
 	ListCapabilities(ctx context.Context, request ListCapabilitiesRequestObject) (ListCapabilitiesResponseObject, error)
-	// IssueCapability Issue a Capability (capability capabilities.broker, ADR-0022). Broker identities only. Issuance narrows potential future use and never expands the Agent's Grants; the capability secret is returned exactly once. Responses are never cacheable.
+	// IssueCapability Issue a Capability (capability capabilities.broker, ADR-0022). A Broker identity issues one for itself. With capability.issue on the Environment (capability capabilities.delegate, ADR-0060), a service, workload, ci, or broker identity issues one for the Broker it names in brokerIdentityId: only that Broker can exercise it, the issuer cannot. Anyone else gets RESOURCE_NOT_FOUND. Issuance narrows potential future use and never expands the Agent's Grants; the capability secret is returned exactly once. Responses are never cacheable.
 	// (POST /organizations/{org}/projects/{project}/environments/{environment}/capabilities)
 	IssueCapability(ctx context.Context, request IssueCapabilityRequestObject) (IssueCapabilityResponseObject, error)
-	// RevokeCapability Revoke a Capability. The issuing Broker may revoke its own; callers with policy.manage may revoke any. Takes effect on the next exercise.
+	// RevokeCapability Revoke a Capability. Its Broker and the identity that issued it may revoke it; callers with policy.manage may revoke any. Takes effect on the next exercise.
 	// (DELETE /organizations/{org}/projects/{project}/environments/{environment}/capabilities/{capability})
 	RevokeCapability(ctx context.Context, request RevokeCapabilityRequestObject) (RevokeCapabilityResponseObject, error)
-	// ExerciseCapability Exercise a Capability (ADR-0022). Requires the issuing Broker's bearer plus the capability secret; the Agent's secret.use is evaluated against current state (including Tailnet Requirements on this request), current Value versions are resolved, and the exercise is audited before decryption. ${NAME} references inside exercised material are expanded strictly (ADR-0026): referenced Secrets must be named in the Capability, non-sensitive references require the Agent's config.value.read (audited), and any unresolvable reference denies the exercise (reason unresolved-reference) rather than injecting literal ${NAME} upstream — $${NAME} escapes. Responses are never cacheable and go to the Broker only.
+	// ExerciseCapability Exercise a Capability (ADR-0022). Requires the bearer of the Broker it was issued for (an exercise-only credential too, ADR-0060) plus the capability secret; the Agent's secret.use is evaluated against current state (including Tailnet Requirements on this request), current Value versions are resolved, and the exercise is audited before decryption. ${NAME} references inside exercised material are expanded strictly (ADR-0026): referenced Secrets must be named in the Capability, non-sensitive references require the Agent's config.value.read (audited), and any unresolvable reference denies the exercise (reason unresolved-reference) rather than injecting literal ${NAME} upstream — $${NAME} escapes. Responses are never cacheable and go to the Broker only.
+	// An OAuth connection (capability oauth.connections, ADR-0062) gives its access token, refreshed first when it has ended, ends within a minute, or ends before minValiditySeconds. When there is none now the exercise is refused with RATE_LIMITED (429, Retry-After), reason connection-unavailable and retryAfterSeconds; when a person has to act, with PERMISSION_DENIED, reason connection-needs-reconnect, connection-not-connected, connection-revoked or connection-paused; when the connection's own hosts do not name the destination, with PERMISSION_DENIED, reason destination-mismatch. Neither uses up anything.
 	// (POST /organizations/{org}/projects/{project}/environments/{environment}/capabilities/{capability}/exercises)
 	ExerciseCapability(ctx context.Context, request ExerciseCapabilityRequestObject) (ExerciseCapabilityResponseObject, error)
 	// ApplyChangeSet Atomic value change set (capability values.changeset): all expected-version guards validate before mutation; any conflict rejects the entire set with VERSION_CONFLICT. Supports Idempotency-Key.
 	// (POST /organizations/{org}/projects/{project}/environments/{environment}/changes)
 	ApplyChangeSet(ctx context.Context, request ApplyChangeSetRequestObject) (ApplyChangeSetResponseObject, error)
-	// DiscloseSecrets Explicit Secret disclosure (capability secrets.requested-disclosure). The request declares its items or an intentional all-authorized scope; one audit event enumerates exactly what was returned. Responses are never cacheable. ${NAME} references inside disclosed Secrets are expanded server-side (capability values.references) from other Secrets disclosed in the same call and — only when the caller also holds config.value.read — from the environment's non-sensitive values, each such expansion audited; unauthorized or unknown references stay literal. An optional purpose (capability secrets.disclosure-purpose) is recorded in the disclosure's audit events and changes nothing else.
+	// DiscloseSecrets Explicit Secret disclosure (capability secrets.requested-disclosure). The request declares its items or an intentional all-authorized scope; one audit event enumerates exactly what was returned. Responses are never cacheable. ${NAME} references inside disclosed Secrets are expanded server-side (capability values.references) from other Secrets disclosed in the same call and — only when the caller also holds config.value.read — from the environment's non-sensitive values, each such expansion audited; unauthorized or unknown references stay literal. An optional purpose (capability secrets.disclosure-purpose) is recorded in the disclosure's audit events and changes nothing else. A seed of one-time codes is disclosed only to a request that names its item and says totpSeeds (capability values.totp): otherwise it is withheld, and the all-authorized scope leaves it out.
 	// (POST /organizations/{org}/projects/{project}/environments/{environment}/disclosures)
 	DiscloseSecrets(ctx context.Context, request DiscloseSecretsRequestObject) (DiscloseSecretsResponseObject, error)
 	// GetEffectiveConfiguration Bulk-resolve the Effective Configuration (child overrides over parent values). With include=values, plaintext is returned for items the caller is authorized for (config.value.read for non-sensitive, secret.reveal for Secrets) and every disclosure is audited before material is returned. Values may reference sibling items as ${NAME} (capability values.references): references are expanded server-side using only values the caller receives in the same response; anything else stays a literal ${NAME}. $${NAME} escapes to a literal ${NAME}.
 	// (GET /organizations/{org}/projects/{project}/environments/{environment}/effective-configuration)
 	GetEffectiveConfiguration(ctx context.Context, request GetEffectiveConfigurationRequestObject) (GetEffectiveConfigurationResponseObject, error)
+	// ListEntryLinks The environment's entry links (capability values.entry-links, ADR-0063), newest first, at most 200, kept until a day after they expire. A person holding config.value.write sees all of them; a machine identity, and a person without it, see what they asked for. Never a link's address, and nothing of a value.
+	// (GET /organizations/{org}/projects/{project}/environments/{environment}/entry-links)
+	ListEntryLinks(ctx context.Context, request ListEntryLinksRequestObject) (ListEntryLinksResponseObject, error)
+	// CreateEntryLink Make a link a person enters one Secret's value with, once, on Varlatch's own page. A service, workload, ci or broker identity needs entry-link.create here (entry-link.create-open when restrictedTo is anyone), which no built-in role holds; a person needs config.value.write. Replacing a value needs config.value.write of either. Whoever makes the link gets no value by it, and their right is decided again when the value is entered. The item must have no value here, inherited ones included (VERSION_CONFLICT otherwise), unless replace; it must be sensitive, and no OAuth connection (VALIDATION_FAILED, reason not-sensitive or oauth-connection), and one the active Contract names when the caller has no config.value.write (not-in-contract). Under passkey-verification's enforce a link open to anyone is refused (PERMISSION_DENIED, reason passkey-verification). RATE_LIMITED beyond 100 pending links, or 300 an hour, of one identity. The link ends with the credential of this request: when a machine's is revoked or its identity retired, or a service credential expires (the link's expiresAt is never later), or an OIDC binding of the identity is revoked after an exchanged one was issued (its own expiry ends no link); when a person revokes it, or another browser session, from elsewhere, or is no member any more (signing out ends no link). PERMISSION_DENIED, reason credential-ended, for an exchanged credential whose identity's binding was revoked already. The address is in this answer only; it is never cacheable, and an Idempotency-Key is not read.
+	// (POST /organizations/{org}/projects/{project}/environments/{environment}/entry-links)
+	CreateEntryLink(ctx context.Context, request CreateEntryLinkRequestObject) (CreateEntryLinkResponseObject, error)
+	// CancelEntryLink Cancel a pending entry link: who asked for it, with or without its right still, or a person holding config.value.write. Works while the Organization is frozen. A link that has ended is RESOURCE_NOT_FOUND.
+	// (DELETE /organizations/{org}/projects/{project}/environments/{environment}/entry-links/{entryLink})
+	CancelEntryLink(ctx context.Context, request CancelEntryLinkRequestObject) (CancelEntryLinkResponseObject, error)
+	// GetEntryLink One entry link, as listEntryLinks shows it: its status says whether the value was entered.
+	// (GET /organizations/{org}/projects/{project}/environments/{environment}/entry-links/{entryLink})
+	GetEntryLink(ctx context.Context, request GetEntryLinkRequestObject) (GetEntryLinkResponseObject, error)
+	// ListOAuthConnections The environment's own OAuth connections (capability oauth.connections, ADR-0062), without the ones it inherits. Needs config.metadata.read. No secret and no token, nor anything derived from one.
+	// (GET /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections)
+	ListOAuthConnections(ctx context.Context, request ListOAuthConnectionsRequestObject) (ListOAuthConnectionsResponseObject, error)
+	// CreateOAuthConnection Make an OAuth connection, not connected yet. Needs config.value.write; one to a person's account (authorization_code) is made by a person (PERMISSION_DENIED, reason person-required). Its endpoints are pinned: the provider's metadata is read now and never again, and nothing but these endpoints is ever sent the client secret or a token. They are all on the host that was given, or on hosts the request names (VALIDATION_FAILED, reason endpoint-hosts, with the others in details.endpointHosts). The item has no value in this environment (VERSION_CONFLICT otherwise) and is sensitive.
+	// (POST /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections)
+	CreateOAuthConnection(ctx context.Context, request CreateOAuthConnectionRequestObject) (CreateOAuthConnectionResponseObject, error)
+	// DiscoverOAuthProvider What a connection to this provider would pin, the hosts its endpoints are on (named or not), and the redirect URI to register there, without making one. Needs config.value.write.
+	// (POST /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/discovery)
+	DiscoverOAuthProvider(ctx context.Context, request DiscoverOAuthProviderRequestObject) (DiscoverOAuthProviderResponseObject, error)
+	// GetOAuthConnection One of the environment's own OAuth connections. Needs config.metadata.read. An item is deleted as any item is (deleteValue), which forgets its tokens without revoking them: disconnect it first for that. One a person has connected is deleted by a person (PERMISSION_DENIED, reason person-required).
+	// (GET /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item})
+	GetOAuthConnection(ctx context.Context, request GetOAuthConnectionRequestObject) (GetOAuthConnectionResponseObject, error)
+	// UpdateOAuthConnection Change an OAuth connection. Needs config.value.write; its provider, client ID, scopes and hosts are changed by a person (PERMISSION_DENIED, reason person-required). Its provider and client ID can change only while it holds no tokens (VALIDATION_FAILED, reason connected: disconnect it first), and need the client secret again. A new client secret or new hosts leave it connected; new scopes are asked for at the next connection. Paused, it is neither used nor refreshed, and its tokens stay.
+	// (PATCH /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item})
+	UpdateOAuthConnection(ctx context.Context, request UpdateOAuthConnectionRequestObject) (UpdateOAuthConnectionResponseObject, error)
+	// StartOAuthAuthorization Begin connecting an OAuth connection: the authorization endpoint's URL to send the browser to, with a state, a nonce and a PKCE challenge (S256) bound to this person and this session, good for ten minutes and once. A person in their dashboard session only (PERMISSION_DENIED, reason browser-session-required), with config.value.write.
+	// (POST /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}/authorizations)
+	StartOAuthAuthorization(ctx context.Context, request StartOAuthAuthorizationRequestObject) (StartOAuthAuthorizationResponseObject, error)
+	// CompleteOAuthAuthorization Connect with what the provider sent the browser back with. The state is taken, once, by the person and the session that began it (RESOURCE_NOT_FOUND for anyone else, EXPIRED after ten minutes), and then the redirect URI, the issuer (RFC 9207), the ID token and the account are checked: another account than the one before is refused unless the change was confirmed when it was begun.
+	// (POST /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}/authorizations/complete)
+	CompleteOAuthAuthorization(ctx context.Context, request CompleteOAuthAuthorizationRequestObject) (CompleteOAuthAuthorizationResponseObject, error)
+	// DisconnectOAuthConnection Disconnect an OAuth connection: its tokens revoked at the provider where it has an endpoint for that (RFC 7009), unless revokeAtProvider is false, and forgotten here whatever it answers. Needs config.value.write; also while the Organization is frozen. Many providers revoke the whole grant of that client for that account, other connections' tokens included.
+	// (POST /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}/disconnect)
+	DisconnectOAuthConnection(ctx context.Context, request DisconnectOAuthConnectionRequestObject) (DisconnectOAuthConnectionResponseObject, error)
+	// RefreshOAuthConnection Refresh an OAuth connection's access token now, or get the first one of a client's own connection. Needs config.value.write. The answer says whether there is a new one, never the token.
+	// (POST /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}/refresh)
+	RefreshOAuthConnection(ctx context.Context, request RefreshOAuthConnectionRequestObject) (RefreshOAuthConnectionResponseObject, error)
 	// StrictRetrieval Strict retrieval (capability retrieval.strict): the non-sensitive values (config.value.read) and every Secret (secret.reveal) this caller may receive, the state manifest and its digest, the caller view, the active Contract (contract.read), and the validation of exactly the values returned, all from one database snapshot, in one response. Requires config.metadata.read. Each class is authorized separately: a denied class is reported in callerView.withheld, not an error. Every decryption follows an audit commit naming its version. Any failure after the snapshot returns an error and no values. Never cacheable.
 	// (POST /organizations/{org}/projects/{project}/environments/{environment}/retrievals)
 	StrictRetrieval(ctx context.Context, request StrictRetrievalRequestObject) (StrictRetrievalResponseObject, error)
@@ -26353,10 +29035,10 @@ type StrictServerInterface interface {
 	// DeleteValue Remove the Config Item's value from this environment (versions retained per audit rules)
 	// (DELETE /organizations/{org}/projects/{project}/environments/{environment}/values/{item})
 	DeleteValue(ctx context.Context, request DeleteValueRequestObject) (DeleteValueResponseObject, error)
-	// SetValue Create a new immutable Value version for a Config Item in this environment
+	// SetValue Create a new immutable Value version for a Config Item in this environment: a value, or the seed of one-time codes (otpauth, capability values.totp, ADR-0061), never both. A seed's use is its code: no retrieval delivers it. A value is refused where a seed is (delete it first), and a seed for an item the Contract marks not sensitive, both with VALIDATION_FAILED.
 	// (PUT /organizations/{org}/projects/{project}/environments/{environment}/values/{item})
 	SetValue(ctx context.Context, request SetValueRequestObject) (SetValueResponseObject, error)
-	// BeginRotation Begin a dual-phase rotation (capability values.rotation, ADR-0027): write a new primary version and keep the prior value retrievable alongside it for a bounded grace window, so running consumers migrate without an outage. Reads resolve the primary; the retiring value is exposed only through explicit disclosure and capability exercise. Rejected with ROTATION_IN_PROGRESS if one is already active.
+	// BeginRotation Begin a dual-phase rotation (capability values.rotation, ADR-0027): write a new primary version and keep the prior value retrievable alongside it for a bounded grace window, so running consumers migrate without an outage. Reads resolve the primary; the retiring value is exposed only through explicit disclosure and capability exercise. Rejected with ROTATION_IN_PROGRESS if one is already active. A seed of one-time codes rotates to another seed (otpauth, capability values.totp): until the rotation ends an exercise gives the codes of both. A value never rotates to a seed, nor a seed to a value.
 	// (POST /organizations/{org}/projects/{project}/environments/{environment}/values/{item}/rotations)
 	BeginRotation(ctx context.Context, request BeginRotationRequestObject) (BeginRotationResponseObject, error)
 	// CompleteRotation Complete a rotation early (ADR-0027): drop the retiring value so the old upstream credential can be revoked. Idempotent — a no-op success when the item is not rotating (an elapsed deadline already retired it).
@@ -26669,6 +29351,68 @@ func (sh *strictHandler) ExportDeletedOrganizationAuditEvents(w http.ResponseWri
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(ExportDeletedOrganizationAuditEventsResponseObject); ok {
 		if err := validResponse.VisitExportDeletedOrganizationAuditEventsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// LookupEntryLink operation middleware
+func (sh *strictHandler) LookupEntryLink(w http.ResponseWriter, r *http.Request) {
+	var request LookupEntryLinkRequestObject
+
+	var body LookupEntryLinkJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.LookupEntryLink(ctx, request.(LookupEntryLinkRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "LookupEntryLink")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(LookupEntryLinkResponseObject); ok {
+		if err := validResponse.VisitLookupEntryLinkResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SubmitEntryLink operation middleware
+func (sh *strictHandler) SubmitEntryLink(w http.ResponseWriter, r *http.Request) {
+	var request SubmitEntryLinkRequestObject
+
+	var body SubmitEntryLinkJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SubmitEntryLink(ctx, request.(SubmitEntryLinkRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SubmitEntryLink")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SubmitEntryLinkResponseObject); ok {
+		if err := validResponse.VisitSubmitEntryLinkResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -29922,6 +32666,427 @@ func (sh *strictHandler) GetEffectiveConfiguration(w http.ResponseWriter, r *htt
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetEffectiveConfigurationResponseObject); ok {
 		if err := validResponse.VisitGetEffectiveConfigurationResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListEntryLinks operation middleware
+func (sh *strictHandler) ListEntryLinks(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter) {
+	var request ListEntryLinksRequestObject
+
+	request.Org = org
+	request.Project = project
+	request.Environment = environment
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListEntryLinks(ctx, request.(ListEntryLinksRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListEntryLinks")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListEntryLinksResponseObject); ok {
+		if err := validResponse.VisitListEntryLinksResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateEntryLink operation middleware
+func (sh *strictHandler) CreateEntryLink(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter) {
+	var request CreateEntryLinkRequestObject
+
+	request.Org = org
+	request.Project = project
+	request.Environment = environment
+
+	var body CreateEntryLinkJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateEntryLink(ctx, request.(CreateEntryLinkRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateEntryLink")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateEntryLinkResponseObject); ok {
+		if err := validResponse.VisitCreateEntryLinkResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CancelEntryLink operation middleware
+func (sh *strictHandler) CancelEntryLink(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter, entryLink EntryLinkParameter) {
+	var request CancelEntryLinkRequestObject
+
+	request.Org = org
+	request.Project = project
+	request.Environment = environment
+	request.EntryLink = entryLink
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CancelEntryLink(ctx, request.(CancelEntryLinkRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CancelEntryLink")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CancelEntryLinkResponseObject); ok {
+		if err := validResponse.VisitCancelEntryLinkResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetEntryLink operation middleware
+func (sh *strictHandler) GetEntryLink(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter, entryLink EntryLinkParameter) {
+	var request GetEntryLinkRequestObject
+
+	request.Org = org
+	request.Project = project
+	request.Environment = environment
+	request.EntryLink = entryLink
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetEntryLink(ctx, request.(GetEntryLinkRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetEntryLink")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetEntryLinkResponseObject); ok {
+		if err := validResponse.VisitGetEntryLinkResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListOAuthConnections operation middleware
+func (sh *strictHandler) ListOAuthConnections(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter) {
+	var request ListOAuthConnectionsRequestObject
+
+	request.Org = org
+	request.Project = project
+	request.Environment = environment
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListOAuthConnections(ctx, request.(ListOAuthConnectionsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListOAuthConnections")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListOAuthConnectionsResponseObject); ok {
+		if err := validResponse.VisitListOAuthConnectionsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateOAuthConnection operation middleware
+func (sh *strictHandler) CreateOAuthConnection(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter) {
+	var request CreateOAuthConnectionRequestObject
+
+	request.Org = org
+	request.Project = project
+	request.Environment = environment
+
+	var body CreateOAuthConnectionJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateOAuthConnection(ctx, request.(CreateOAuthConnectionRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateOAuthConnection")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateOAuthConnectionResponseObject); ok {
+		if err := validResponse.VisitCreateOAuthConnectionResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DiscoverOAuthProvider operation middleware
+func (sh *strictHandler) DiscoverOAuthProvider(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter) {
+	var request DiscoverOAuthProviderRequestObject
+
+	request.Org = org
+	request.Project = project
+	request.Environment = environment
+
+	var body DiscoverOAuthProviderJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DiscoverOAuthProvider(ctx, request.(DiscoverOAuthProviderRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DiscoverOAuthProvider")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DiscoverOAuthProviderResponseObject); ok {
+		if err := validResponse.VisitDiscoverOAuthProviderResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetOAuthConnection operation middleware
+func (sh *strictHandler) GetOAuthConnection(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter, item Item) {
+	var request GetOAuthConnectionRequestObject
+
+	request.Org = org
+	request.Project = project
+	request.Environment = environment
+	request.Item = item
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetOAuthConnection(ctx, request.(GetOAuthConnectionRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetOAuthConnection")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetOAuthConnectionResponseObject); ok {
+		if err := validResponse.VisitGetOAuthConnectionResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateOAuthConnection operation middleware
+func (sh *strictHandler) UpdateOAuthConnection(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter, item Item) {
+	var request UpdateOAuthConnectionRequestObject
+
+	request.Org = org
+	request.Project = project
+	request.Environment = environment
+	request.Item = item
+
+	var body UpdateOAuthConnectionJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateOAuthConnection(ctx, request.(UpdateOAuthConnectionRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateOAuthConnection")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateOAuthConnectionResponseObject); ok {
+		if err := validResponse.VisitUpdateOAuthConnectionResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// StartOAuthAuthorization operation middleware
+func (sh *strictHandler) StartOAuthAuthorization(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter, item Item) {
+	var request StartOAuthAuthorizationRequestObject
+
+	request.Org = org
+	request.Project = project
+	request.Environment = environment
+	request.Item = item
+
+	var body StartOAuthAuthorizationJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.StartOAuthAuthorization(ctx, request.(StartOAuthAuthorizationRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "StartOAuthAuthorization")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(StartOAuthAuthorizationResponseObject); ok {
+		if err := validResponse.VisitStartOAuthAuthorizationResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CompleteOAuthAuthorization operation middleware
+func (sh *strictHandler) CompleteOAuthAuthorization(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter, item Item) {
+	var request CompleteOAuthAuthorizationRequestObject
+
+	request.Org = org
+	request.Project = project
+	request.Environment = environment
+	request.Item = item
+
+	var body CompleteOAuthAuthorizationJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CompleteOAuthAuthorization(ctx, request.(CompleteOAuthAuthorizationRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CompleteOAuthAuthorization")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CompleteOAuthAuthorizationResponseObject); ok {
+		if err := validResponse.VisitCompleteOAuthAuthorizationResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DisconnectOAuthConnection operation middleware
+func (sh *strictHandler) DisconnectOAuthConnection(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter, item Item) {
+	var request DisconnectOAuthConnectionRequestObject
+
+	request.Org = org
+	request.Project = project
+	request.Environment = environment
+	request.Item = item
+
+	var body DisconnectOAuthConnectionJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DisconnectOAuthConnection(ctx, request.(DisconnectOAuthConnectionRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DisconnectOAuthConnection")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DisconnectOAuthConnectionResponseObject); ok {
+		if err := validResponse.VisitDisconnectOAuthConnectionResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// RefreshOAuthConnection operation middleware
+func (sh *strictHandler) RefreshOAuthConnection(w http.ResponseWriter, r *http.Request, org Org, project ProjectParameter, environment EnvironmentParameter, item Item) {
+	var request RefreshOAuthConnectionRequestObject
+
+	request.Org = org
+	request.Project = project
+	request.Environment = environment
+	request.Item = item
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RefreshOAuthConnection(ctx, request.(RefreshOAuthConnectionRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RefreshOAuthConnection")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RefreshOAuthConnectionResponseObject); ok {
+		if err := validResponse.VisitRefreshOAuthConnectionResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

@@ -2,6 +2,8 @@
 
 package envelope
 
+import "encoding/json"
+
 // Context is an envelope's associated data before encoding: a purpose and
 // the identifiers the envelope belongs to. It is encoded with CanonicalJSON,
 // so key order never matters. Values are strings or integers.
@@ -32,6 +34,15 @@ const (
 	// ADR-0056, since TypeScript 0.22.0.
 	PurposeAuditExportCredential = "audit-export-credential"
 	PurposeAuditExportDrain      = "audit-export-drain"
+	// ADR-0061, varlatchd's own: the seed of one-time codes, inside a value.
+	PurposeTOTPSeed = "totp-seed"
+	// ADR-0062, varlatchd's own: an OAuth connection's client secret, inside
+	// a value; its access and refresh token (org KEK); and the PKCE verifier
+	// of an authorization in progress (org KEK).
+	PurposeOAuthClient       = "oauth-client"
+	PurposeOAuthAccessToken  = "oauth-access-token"
+	PurposeOAuthRefreshToken = "oauth-refresh-token"
+	PurposeOAuthVerifier     = "oauth-verifier"
 )
 
 // OrgKEKContext binds an organization's KEK, wrapped by the Root KEK.
@@ -49,6 +60,33 @@ func DEKContext(organizationID, secretID, versionID string) Context {
 // ValueContext binds a value version's payload, encrypted by its DEK.
 func ValueContext(organizationID, secretID, versionID string) Context {
 	return Context{"purpose": PurposeValue, "organizationId": organizationID, "secretId": secretID, "versionId": versionID}
+}
+
+// TOTPSeedContext binds the seed of one-time codes inside a value version,
+// with what may be read of it (params, as stored).
+func TOTPSeedContext(organizationID, secretID, versionID, params string) Context {
+	return Context{"purpose": PurposeTOTPSeed, "organizationId": organizationID, "secretId": secretID, "versionId": versionID, "params": params}
+}
+
+// OAuthClientContext binds an OAuth connection's client secret inside a value
+// version, with what may be read of the connection (params, as stored).
+func OAuthClientContext(organizationID, secretID, versionID, params string) Context {
+	return Context{"purpose": PurposeOAuthClient, "organizationId": organizationID, "secretId": secretID, "versionId": versionID, "params": params}
+}
+
+// OAuthTokenContext binds one of an OAuth connection's tokens (purpose:
+// PurposeOAuthAccessToken or PurposeOAuthRefreshToken) to the connection, to
+// its parameters (the endpoints it may be sent to), to the token set it is
+// of, whose account it is, and when it expires (0: not known).
+func OAuthTokenContext(purpose, organizationID, secretID, versionID, params, account string, generation, expiresAt int64) Context {
+	return Context{"purpose": purpose, "organizationId": organizationID, "secretId": secretID, "versionId": versionID,
+		"params": params, "account": account, "generation": generation, "expiresAt": expiresAt}
+}
+
+// OAuthVerifierContext binds the PKCE verifier of an authorization in
+// progress to its state.
+func OAuthVerifierContext(organizationID, stateHash string) Context {
+	return Context{"purpose": PurposeOAuthVerifier, "organizationId": organizationID, "stateHash": stateHash}
 }
 
 // WebhookSecretContext binds a webhook's signing secret (org KEK).
@@ -136,6 +174,76 @@ func DecryptValue(orgKEK []byte, organizationID, secretID, versionID string, v E
 		return nil, err
 	}
 	return Open(dek, v.Payload, ValueContext(organizationID, secretID, versionID))
+}
+
+// EncryptSeed encrypts the seed of one-time codes as a value version: sealed
+// as a seed under the version's DEK, and that envelope's JSON sealed as the
+// value, as EncryptValue seals one. Whoever opens the version as a value
+// (an older server, the migration's digests, a row made to look like a
+// value's) finds the inner envelope, never the seed; and the seed opens only
+// with the params it was sealed with.
+func EncryptSeed(orgKEK []byte, organizationID, secretID, versionID, params string, seed []byte) (EncryptedValue, error) {
+	return encryptInside(orgKEK, organizationID, secretID, versionID, TOTPSeedContext(organizationID, secretID, versionID, params), seed)
+}
+
+// DecryptSeed opens what EncryptSeed sealed.
+func DecryptSeed(orgKEK []byte, organizationID, secretID, versionID, params string, v EncryptedValue) ([]byte, error) {
+	return decryptInside(orgKEK, organizationID, secretID, versionID, TOTPSeedContext(organizationID, secretID, versionID, params), v)
+}
+
+// EncryptOAuthClient encrypts an OAuth connection's client secret as
+// EncryptSeed encrypts a seed.
+func EncryptOAuthClient(orgKEK []byte, organizationID, secretID, versionID, params string, client []byte) (EncryptedValue, error) {
+	return encryptInside(orgKEK, organizationID, secretID, versionID, OAuthClientContext(organizationID, secretID, versionID, params), client)
+}
+
+// DecryptOAuthClient opens what EncryptOAuthClient sealed.
+func DecryptOAuthClient(orgKEK []byte, organizationID, secretID, versionID, params string, v EncryptedValue) ([]byte, error) {
+	return decryptInside(orgKEK, organizationID, secretID, versionID, OAuthClientContext(organizationID, secretID, versionID, params), v)
+}
+
+// encryptInside seals plaintext as inner under a new DEK, and that envelope's
+// JSON as a value.
+func encryptInside(orgKEK []byte, organizationID, secretID, versionID string, inner Context, plaintext []byte) (EncryptedValue, error) {
+	dek := GenerateKey()
+	defer clear(dek)
+	sealed, err := Seal(dek, plaintext, inner)
+	if err != nil {
+		return EncryptedValue{}, err
+	}
+	value, err := json.Marshal(sealed)
+	if err != nil {
+		return EncryptedValue{}, err
+	}
+	payload, err := Seal(dek, value, ValueContext(organizationID, secretID, versionID))
+	if err != nil {
+		return EncryptedValue{}, err
+	}
+	wrapped, err := Seal(orgKEK, dek, DEKContext(organizationID, secretID, versionID))
+	if err != nil {
+		return EncryptedValue{}, err
+	}
+	return EncryptedValue{Payload: payload, WrappedDEK: wrapped}, nil
+}
+
+// decryptInside opens what encryptInside sealed.
+func decryptInside(orgKEK []byte, organizationID, secretID, versionID string, inner Context, v EncryptedValue) ([]byte, error) {
+	dek, err := Open(orgKEK, v.WrappedDEK, DEKContext(organizationID, secretID, versionID))
+	if err != nil {
+		return nil, err
+	}
+	defer clear(dek)
+	value, err := Open(dek, v.Payload, ValueContext(organizationID, secretID, versionID))
+	if err != nil {
+		return nil, err
+	}
+	var sealed Envelope
+	err = json.Unmarshal(value, &sealed)
+	clear(value)
+	if err != nil {
+		return nil, ErrMalformed
+	}
+	return Open(dek, sealed, inner)
 }
 
 // NewCanary creates the installation's KEK canary: a random value sealed

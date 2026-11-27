@@ -28,6 +28,21 @@ import type {
   TailnetEndpoint,
   ApiError,
   CapabilityExercise,
+  OneTimeCode,
+  CreatedEntryLink,
+  EntryLink,
+  EntryLinkInput,
+  OAuthAuthorization,
+  OAuthAuthorizationAnswer,
+  OAuthAuthorizationOutcome,
+  OAuthConnection,
+  OAuthConnectionChange,
+  OAuthConnectionInput,
+  OAuthDisconnection,
+  OAuthDiscovery,
+  OAuthGrant,
+  OAuthProviderInput,
+  OAuthRefresh,
   CapabilitySummary,
   ConfigItemSearchResult,
   ContractRevision,
@@ -281,6 +296,9 @@ export interface IdentityCredential {
    * or for kinds other than browser and cli, absent from older servers.
    */
   client?: string | null;
+  /** An exercise-only credential (ADR-0060), and the run it is tied to, if any. */
+  exerciseOnly?: boolean;
+  runId?: string;
 }
 
 /**
@@ -659,12 +677,109 @@ export class VarlatchClient {
     );
   }
 
+  /**
+   * Make a link a person enters one Secret's value with, once (capability
+   * values.entry-links, ADR-0063). The address is in this answer only.
+   */
+  createEntryLink(org: string, project: string, environment: string, input: EntryLinkInput): Promise<CreatedEntryLink> {
+    return this.request("POST", `/v1/organizations/${encodeURIComponent(org)}/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(environment)}/entry-links`, input);
+  }
+
+  /** The environment's entry links: a machine's own, a person's all (config.value.write). */
+  listEntryLinks(org: string, project: string, environment: string): Promise<Page<EntryLink>> {
+    return this.request("GET", `/v1/organizations/${encodeURIComponent(org)}/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(environment)}/entry-links`);
+  }
+
+  /** One entry link: its status says whether the value was entered. */
+  getEntryLink(org: string, project: string, environment: string, entryLinkId: string): Promise<EntryLink> {
+    return this.request("GET", `/v1/organizations/${encodeURIComponent(org)}/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(environment)}/entry-links/${encodeURIComponent(entryLinkId)}`);
+  }
+
+  /** Cancel a pending entry link. */
+  cancelEntryLink(org: string, project: string, environment: string, entryLinkId: string): Promise<void> {
+    return this.request("DELETE", `/v1/organizations/${encodeURIComponent(org)}/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(environment)}/entry-links/${encodeURIComponent(entryLinkId)}`);
+  }
+
+  /** The environment's own OAuth connections (capability oauth.connections, ADR-0062): no secret and no token of them. */
+  listOAuthConnections(
+    org: string,
+    project: string,
+    environment: string,
+  ): Promise<Page<OAuthConnection> & { redirectBase?: string | null }> {
+    return this.request("GET", `/v1/organizations/${encodeURIComponent(org)}/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(environment)}/oauth-connections`);
+  }
+
+  createOAuthConnection(org: string, project: string, environment: string, input: OAuthConnectionInput): Promise<OAuthConnection> {
+    return this.request("POST", `/v1/organizations/${encodeURIComponent(org)}/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(environment)}/oauth-connections`, input);
+  }
+
+  /** What a connection to this provider would pin, and the redirect URI to register there. */
+  discoverOAuthProvider(
+    org: string,
+    project: string,
+    environment: string,
+    input: { provider: OAuthProviderInput; grant?: OAuthGrant },
+  ): Promise<OAuthDiscovery> {
+    return this.request("POST", `/v1/organizations/${encodeURIComponent(org)}/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(environment)}/oauth-connections/discovery`, input);
+  }
+
+  getOAuthConnection(org: string, project: string, environment: string, item: string): Promise<OAuthConnection> {
+    return this.request("GET", `/v1/organizations/${encodeURIComponent(org)}/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(environment)}/oauth-connections/${encodeURIComponent(item)}`);
+  }
+
+  updateOAuthConnection(
+    org: string,
+    project: string,
+    environment: string,
+    item: string,
+    change: OAuthConnectionChange,
+  ): Promise<OAuthConnection> {
+    return this.request("PATCH", `/v1/organizations/${encodeURIComponent(org)}/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(environment)}/oauth-connections/${encodeURIComponent(item)}`, change);
+  }
+
+  /** Begin connecting: where to send the browser. A person in their dashboard session only. */
+  startOAuthAuthorization(
+    org: string,
+    project: string,
+    environment: string,
+    item: string,
+    input: { confirmAccountChange?: boolean; expectedVersionId?: string } = {},
+  ): Promise<OAuthAuthorization> {
+    return this.request("POST", `/v1/organizations/${encodeURIComponent(org)}/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(environment)}/oauth-connections/${encodeURIComponent(item)}/authorizations`, input);
+  }
+
+  completeOAuthAuthorization(
+    org: string,
+    project: string,
+    environment: string,
+    item: string,
+    answer: OAuthAuthorizationAnswer,
+  ): Promise<OAuthAuthorizationOutcome> {
+    return this.request("POST", `/v1/organizations/${encodeURIComponent(org)}/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(environment)}/oauth-connections/${encodeURIComponent(item)}/authorizations/complete`, answer);
+  }
+
+  refreshOAuthConnection(org: string, project: string, environment: string, item: string): Promise<OAuthRefresh> {
+    return this.request("POST", `/v1/organizations/${encodeURIComponent(org)}/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(environment)}/oauth-connections/${encodeURIComponent(item)}/refresh`);
+  }
+
+  /** Revokes its tokens at the provider, unless told not to, and forgets them here in every case. */
+  disconnectOAuthConnection(
+    org: string,
+    project: string,
+    environment: string,
+    item: string,
+    input: { revokeAtProvider?: boolean } = {},
+  ): Promise<OAuthDisconnection> {
+    return this.request("POST", `/v1/organizations/${encodeURIComponent(org)}/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(environment)}/oauth-connections/${encodeURIComponent(item)}/disconnect`, input);
+  }
+
   setValue(
     org: string,
     project: string,
     environment: string,
     item: string,
-    input: { value: string; expectedVersionId?: string },
+    /** A value, or the seed of one-time codes as an otpauth:// URI (capability values.totp; an older server refuses it). */
+    input: ({ value: string } | { otpauth: string }) & { expectedVersionId?: string },
     opts: { idempotencyKey?: string } = {},
   ): Promise<ValueVersion> {
     return this.request(
@@ -688,7 +803,8 @@ export class VarlatchClient {
     project: string,
     environment: string,
     item: string,
-    input: { value: string; expectedVersionId?: string; graceSeconds?: number },
+    /** Of a seed of one-time codes, to another seed: otpauth (capability values.totp). */
+    input: ({ value: string } | { otpauth: string }) & { expectedVersionId?: string; graceSeconds?: number },
   ): Promise<ValueRotation> {
     return this.request(
       "POST",
@@ -738,13 +854,18 @@ export class VarlatchClient {
     org: string,
     project: string,
     environment: string,
-    request: ({ items: string[] } | { scope: "all-authorized-secrets" }) & { purpose?: DisclosurePurpose },
+    request:
+      | (({ items: string[] } | { scope: "all-authorized-secrets" }) & { purpose?: DisclosurePurpose; totpSeeds?: undefined })
+      /** Also the seeds of one-time codes among the items, each as its otpauth:// URI (capability values.totp). */
+      | { items: string[]; totpSeeds: true },
   ): Promise<{
     items: {
       name: string;
       versionId: string;
       value: string;
       retiring?: { versionId: string; value: string };
+      /** Present when value is a seed. */
+      totp?: OneTimeCode;
     }[];
     withheld: string[];
     /** Present when the caller also holds config.metadata.read. */
@@ -783,6 +904,8 @@ export class VarlatchClient {
     environment: string,
     changes: (
       | { op: "set"; item: string; value: string; expectedVersionId?: string }
+      /** The seed of one-time codes (capability values.totp). */
+      | { op: "set"; item: string; otpauth: string; expectedVersionId?: string }
       | { op: "delete"; item: string; expectedVersionId?: string }
     )[],
     opts: { idempotencyKey?: string } = {},
@@ -1000,11 +1123,16 @@ export class VarlatchClient {
     input: {
       agentIdentityId: string;
       items: string[];
+      /** Hosts; or pages (web:https://host/path) and applications (app:name@broker), capability capabilities.destination-kinds. */
       destinations: string[];
-      /** Per item, 1 to 4 substitution targets (header:, query:, json:, form:). */
+      /** Per item, 1 to 4 substitution targets (header:, query:, json:, form:; pipe: and field:, capability capabilities.target-kinds). */
       targets: Record<string, string[]>;
       ttlSeconds: number;
       runId?: string;
+      /** The Broker it is for, when not the caller (capability capabilities.delegate). */
+      brokerIdentityId?: string;
+      /** Exercised once (capability capabilities.single-use; an older server ignores it). */
+      singleUse?: boolean;
       /** Agent-safe strict preflight: the state the preflight retrieval saw. */
       precondition?: {
         projectId: string;
@@ -1042,9 +1170,21 @@ export class VarlatchClient {
     capabilityId: string,
     input: {
       capabilitySecret: string;
-      destination: { host: string; port: number };
+      /**
+       * Where the values go: a host, or (capability capabilities.destination-kinds, ADR-0064) the page whose field
+       * it is, as the browser has its address, or an application on this machine. Report what is there, not what
+       * should be. An older server refuses the last two.
+       */
+      destination: { host: string; port: number } | { url: string; topUrl?: string } | { app: string };
       /** Each substitution the Broker will make: an item and one of its recorded targets. */
       placements: { item: string; target: string }[];
+      /**
+       * Still valid for this long: one-time codes among the items, else the next one (capability values.totp), and
+       * access tokens of OAuth connections, else refreshed first (capability oauth.connections).
+       */
+      minValiditySeconds?: number;
+      /** One-time codes among the items: none given before, else RATE_LIMITED (capability values.totp). */
+      fresh?: boolean;
     },
   ): Promise<CapabilityExercise> {
     return this.request(
@@ -1261,7 +1401,16 @@ export class VarlatchClient {
   createOidcBinding(
     org: string,
     identityId: string,
-    input: { issuer: string; audience: string; subject: string; claims?: Record<string, string> },
+    input: {
+      issuer: string;
+      audience: string;
+      subject: string;
+      claims?: Record<string, string>;
+      /** Limits (capability auth.oidc.limits; an older server ignores them). */
+      exerciseOnly?: boolean;
+      runIdClaim?: string;
+      singleExchange?: boolean;
+    },
   ): Promise<OidcBinding> {
     return this.request(
       "POST",

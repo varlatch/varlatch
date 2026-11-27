@@ -339,7 +339,7 @@ Step by step:
    read:
 
    ```sh
-   V=0.50.2  # the release that made the archive, or a newer one
+   V=0.51.0  # the release that made the archive, or a newer one
    curl -fsSL -o install.sh https://github.com/varlatch/varlatch/releases/download/v$V/install.sh
    sudo sh install.sh --server -- --restore /root/backup.vltbak \
      --root-kek-file /root/root-kek --backup-key-file /root/backup-key

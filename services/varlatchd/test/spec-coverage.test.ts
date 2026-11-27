@@ -24,6 +24,18 @@ const UNSPECCED = new Set([
   "POST /v1/tokens/convex",
 ]);
 
+/**
+ * Operations under /v1 that only the Go varlatchd serves, behind a capability
+ * this server does not list: OAuth connections (oauth.connections, ADR-0062),
+ * and entry links (values.entry-links, ADR-0063).
+ */
+const GO_ONLY = [
+  "/v1/organizations/:org/projects/:project/environments/:environment/oauth-connections",
+  "/v1/organizations/:org/projects/:project/environments/:environment/entry-links",
+  "/v1/entry-links",
+];
+const goOnly = (path: string) => GO_ONLY.some((p) => path === p || path.startsWith(`${p}/`));
+
 const METHODS = new Set(["get", "post", "put", "patch", "delete"]);
 
 function specOperations(): Set<string> {
@@ -52,7 +64,7 @@ function specOperations(): Set<string> {
       continue;
     }
     const method = line.match(/^ {4}([a-z]+):$/);
-    if (method && currentPath && METHODS.has(method[1]!)) {
+    if (method && currentPath && METHODS.has(method[1]!) && !goOnly(currentPath)) {
       ops.add(`${method[1]!.toUpperCase()} ${currentPath}`);
     }
   }
@@ -101,6 +113,10 @@ describe("OpenAPI route coverage", () => {
   it("every spec operation is served", () => {
     const phantom = [...spec].filter((op) => !served.has(op)).sort();
     expect(phantom, "in openapi.yaml but not served").toEqual([]);
+  });
+
+  it("what only the Go varlatchd serves is not served here", () => {
+    expect([...served].filter((op) => goOnly(op.split(" ")[1]!))).toEqual([]);
   });
 
   it("exclusions do not rot: everything allowlisted is actually served", () => {

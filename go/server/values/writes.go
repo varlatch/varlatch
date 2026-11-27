@@ -15,6 +15,7 @@ import (
 	"github.com/varlatch/varlatch/go/lib/contract"
 	"github.com/varlatch/varlatch/go/lib/envelope"
 	"github.com/varlatch/varlatch/go/lib/storage"
+	"github.com/varlatch/varlatch/go/lib/totp"
 	"github.com/varlatch/varlatch/go/server/audit"
 	"github.com/varlatch/varlatch/go/server/auth"
 	"github.com/varlatch/varlatch/go/server/contracts"
@@ -129,6 +130,57 @@ func nodeUTF8(s string) []byte {
 // valueRow is a row of env_values as lockValueRows reads it.
 type valueRow = query.ValueRowsOfItemsRow
 
+// What a live value row holds (ValueRowsOfItems' seed).
+const (
+	kindValue      = 0
+	kindSeed       = 1
+	kindConnection = 2
+)
+
+// deleted is whether a value row holds nothing: a seed of one-time codes
+// and an OAuth connection have a deleted_at and are live (ADR-0061,
+// ADR-0062).
+func deleted(at sql.NullInt64, seed int64) bool { return at.Valid && seed == 0 }
+
+// checkKind refuses, for a live value row, a value where a seed is, a value or
+// a seed where an OAuth connection is, and a seed for an item that is no
+// Secret.
+func checkKind(item string, holds int64, seed *totp.Seed, sensitive bool) error {
+	switch {
+	case holds == kindConnection:
+		return &domainerr.Error{Code: "VALIDATION_FAILED", Details: jsvalue.Object{{Key: "reason", Value: "oauth-connection"}},
+			Message: item + " is an OAuth connection: delete it before setting a value"}
+	case seed == nil && holds == kindSeed:
+		return &domainerr.Error{Code: "VALIDATION_FAILED", Details: jsvalue.Object{{Key: "reason", Value: "one-time-code"}},
+			Message: item + " holds the seed of a one-time code: give another seed (otpauth), or delete it before setting a value"}
+	case seed != nil && !sensitive:
+		return &domainerr.Error{Code: "VALIDATION_FAILED", Details: jsvalue.Object{{Key: "reason", Value: "not-sensitive"}},
+			Message: item + " is not sensitive in the Contract, and a seed is always a Secret: mark the item sensitive first"}
+	}
+	return nil
+}
+
+// writeVersion writes a new version of a value row, a value or a seed, and
+// points the row at it.
+func writeVersion(ctx context.Context, q *query.Queries, orgKEK []byte, organizationID, valueID, versionID, value string, seed *totp.Seed, previous sql.NullString, actor string, at int64) error {
+	if seed == nil {
+		return sealVersion(ctx, q, orgKEK, organizationID, valueID, versionID, value, previous, actor, at)
+	}
+	if err := insertSeed(ctx, q, orgKEK, organizationID, valueID, versionID, *seed, previous, actor, at); err != nil {
+		return err
+	}
+	return q.SetCurrentSeedVersion(ctx, query.SetCurrentSeedVersionParams{Version: sql.NullString{String: versionID, Valid: true},
+		Now: sql.NullInt64{Int64: at, Valid: true}, ID: valueID})
+}
+
+// ofSeed is a write's audit metadata, when it wrote a seed.
+func ofSeed(md jsvalue.Object, seed *totp.Seed) jsvalue.Object {
+	if seed != nil {
+		md = append(md, jsvalue.Member{Key: "totp", Value: true})
+	}
+	return md
+}
+
 // sealVersion writes a new version of a value row: sealed under the
 // Organization's KEK, its predecessor named, the row pointed at it (a plain
 // write supersedes any rotation in flight).
@@ -157,13 +209,15 @@ func insertVersion(ctx context.Context, q *query.Queries, orgKEK []byte, organiz
 	return q.InsertValueVersion(ctx, query.InsertValueVersionParams{
 		ID: versionID, ValueID: valueID, Payload: sql.NullString{String: string(payload), Valid: true},
 		WrappedDek: sql.NullString{String: string(dek), Valid: true}, PreviousVersionID: previous,
-		CreatedBy: sql.NullString{String: actor, Valid: true}, CreatedAt: at,
+		CreatedBy: sql.NullString{String: actor, Valid: actor != ""}, CreatedAt: at,
 	})
 }
 
 // SetInput is setValue's body as its zod schema leaves it.
 type SetInput struct {
 	Value string
+	// Seed, when set, is written instead of Value (ADR-0061).
+	Seed *totp.Seed
 	// ExpectedVersionID is nil when absent.
 	ExpectedVersionID *string
 }
@@ -223,8 +277,11 @@ func SetValue(ctx context.Context, w *write.Writer, rootKEK []byte, p *auth.Prin
 				Details: jsvalue.Object{{Key: "currentVersionId", Value: nullable(row.CurrentVersionID)}},
 			}
 		}
+		if err := checkKind(item, row.Seed, in.Seed, sensitive(item)); err != nil {
+			return write.Response{}, err
+		}
 		versionID := ids.New("ver")
-		if err := sealVersion(ctx, q, orgKEK, t.OrganizationID, row.ID, versionID, in.Value, row.CurrentVersionID, p.Identity.ID, at); err != nil {
+		if err := writeVersion(ctx, q, orgKEK, t.OrganizationID, row.ID, versionID, in.Value, in.Seed, row.CurrentVersionID, p.Identity.ID, at); err != nil {
 			return write.Response{}, err
 		}
 		actor, action := p.Identity.ID, "config.value.write"
@@ -234,15 +291,19 @@ func SetValue(ctx context.Context, w *write.Writer, rootKEK []byte, p *auth.Prin
 				{Key: "projectId", Value: t.Project.ID}, {Key: "environmentId", Value: t.Env.ID}, {Key: "itemName", Value: item},
 				{Key: "versionId", Value: versionID}, {Key: "previousVersionId", Value: nullable(row.CurrentVersionID)},
 			},
-			Metadata: jsvalue.Object{{Key: "sensitive", Value: sensitive(item)}},
+			Metadata: ofSeed(jsvalue.Object{{Key: "sensitive", Value: sensitive(item)}}, in.Seed),
 		}); err != nil {
 			return write.Response{}, err
 		}
-		return write.Response{Status: 200, Payload: jsvalue.Object{
+		answer := jsvalue.Object{
 			{Key: "versionId", Value: versionID}, {Key: "itemName", Value: item}, {Key: "environmentId", Value: t.Env.ID},
 			{Key: "sensitive", Value: sensitive(item)}, {Key: "previousVersionId", Value: nullable(row.CurrentVersionID)},
 			{Key: "createdAt", Value: audit.ISOTime(now().UnixMicro())},
-		}}, nil
+		}
+		if in.Seed != nil {
+			answer = append(answer, jsvalue.Member{Key: "totp", Value: ParamsJS(in.Seed.Params)})
+		}
+		return write.Response{Status: 200, Payload: answer}, nil
 	})
 	return resp, replayed, reports, err
 }
@@ -292,9 +353,16 @@ func DeleteValue(ctx context.Context, w *write.Writer, p *auth.Principal, t Targ
 		if reports, err = write.Checkpoint(ctx, tx, p, t.OrganizationID); err != nil {
 			return err
 		}
+		if err := checkDeletion(ctx, q, p, t.Env.ID, item); err != nil {
+			return err
+		}
 		if _, err := q.DeleteLiveValue(ctx, query.DeleteLiveValueParams{
 			DeletedAt: sql.NullInt64{Int64: now().UnixMicro(), Valid: true}, EnvironmentID: t.Env.ID, ItemName: item,
 		}); err != nil {
+			return err
+		}
+		// A connection's tokens go with it (ADR-0062).
+		if err := q.ForgetDeadOAuthConnectionsOf(ctx, query.ForgetDeadOAuthConnectionsOfParams{EnvironmentID: t.Env.ID, ItemName: item}); err != nil {
 			return err
 		}
 		actor, action := p.Identity.ID, "config.value.write"
@@ -315,6 +383,8 @@ type Change struct {
 	Op    string // "set" or "delete"
 	Item  string
 	Value string // for "set"
+	// Seed, for "set", is written instead of Value (ADR-0061).
+	Seed *totp.Seed
 	// ExpectedVersionID is nil when absent.
 	ExpectedVersionID *string
 }
@@ -383,13 +453,13 @@ func ApplyChangeSet(ctx context.Context, w *write.Writer, rootKEK []byte, p *aut
 		for _, c := range changes {
 			row, ok := rows[c.Item]
 			var current any
-			if ok && !row.DeletedAt.Valid && row.CurrentVersionID.Valid {
+			if ok && !deleted(row.DeletedAt, row.Seed) && row.CurrentVersionID.Valid {
 				current = row.CurrentVersionID.String
 			}
 			if c.ExpectedVersionID != nil && current != any(*c.ExpectedVersionID) {
 				conflict(c.Item, current)
 			}
-			if c.Op == "delete" && (current == nil || ok && row.DeletedAt.Valid) && c.ExpectedVersionID == nil {
+			if c.Op == "delete" && (current == nil || ok && deleted(row.DeletedAt, row.Seed)) && c.ExpectedVersionID == nil {
 				conflict(c.Item, nil)
 			}
 		}
@@ -397,6 +467,15 @@ func ApplyChangeSet(ctx context.Context, w *write.Writer, rootKEK []byte, p *aut
 			return write.Response{}, &domainerr.Error{
 				Code: "VERSION_CONFLICT", Message: "One or more values changed since they were reviewed; nothing was written",
 				Details: jsvalue.Object{{Key: "conflicts", Value: conflicts}},
+			}
+		}
+		for _, c := range changes {
+			if c.Op == "set" {
+				if err := checkKind(c.Item, rows[c.Item].Seed, c.Seed, sensitive(c.Item)); err != nil {
+					return write.Response{}, err
+				}
+			} else if err := checkDeletion(ctx, q, p, t.Env.ID, c.Item); err != nil {
+				return write.Response{}, err
 			}
 		}
 		// Phase 2: every change, then the audit events.
@@ -414,23 +493,26 @@ func ApplyChangeSet(ctx context.Context, w *write.Writer, rootKEK []byte, p *aut
 					}
 				}
 				previous := row.CurrentVersionID
-				if row.DeletedAt.Valid {
+				if deleted(row.DeletedAt, row.Seed) {
 					previous = sql.NullString{}
 				}
 				versionID := ids.New("ver")
-				if err := sealVersion(ctx, q, orgKEK, t.OrganizationID, row.ID, versionID, c.Value, previous, actor, at); err != nil {
+				if err := writeVersion(ctx, q, orgKEK, t.OrganizationID, row.ID, versionID, c.Value, c.Seed, previous, actor, at); err != nil {
 					return write.Response{}, err
 				}
 				events = append(events, audit.Event{
 					Type: "value.written", Decision: audit.Info, ActorIdentityID: &actor, OrganizationID: &t.OrganizationID, Action: &action,
 					Resource:  append(resource, jsvalue.Member{Key: "versionId", Value: versionID}, jsvalue.Member{Key: "previousVersionId", Value: nullable(previous)}),
 					RequestID: &requestID,
-					Metadata:  jsvalue.Object{{Key: "sensitive", Value: sensitive(c.Item)}, {Key: "changeSetId", Value: changeSetID}},
+					Metadata:  ofSeed(jsvalue.Object{{Key: "sensitive", Value: sensitive(c.Item)}, {Key: "changeSetId", Value: changeSetID}}, c.Seed),
 				})
 				results = append(results, jsvalue.Object{{Key: "item", Value: c.Item}, {Key: "op", Value: "set"}, {Key: "versionId", Value: versionID}})
 				continue
 			}
 			if err := q.DeleteValueRow(ctx, query.DeleteValueRowParams{DeletedAt: sql.NullInt64{Int64: at, Valid: true}, ID: row.ID}); err != nil {
+				return write.Response{}, err
+			}
+			if err := q.ForgetOAuthConnection(ctx, row.ID); err != nil {
 				return write.Response{}, err
 			}
 			events = append(events, audit.Event{

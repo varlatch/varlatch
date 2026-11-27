@@ -44,6 +44,14 @@ tags:
   - name: search
   - name: audit
   - name: sync
+  - name: oauth
+    description: >
+      OAuth connections (ADR-0062): varlatchd only, behind the capability
+      oauth.connections.
+  - name: entry-links
+    description: >
+      Entry links (ADR-0063): varlatchd only, behind the capability
+      values.entry-links.
 
 paths:
   /installation/backups:
@@ -593,7 +601,13 @@ paths:
     put:
       tags: [values]
       operationId: setValue
-      summary: Create a new immutable Value version for a Config Item in this environment
+      summary: >
+        Create a new immutable Value version for a Config Item in this
+        environment: a value, or the seed of one-time codes (otpauth,
+        capability values.totp, ADR-0061), never both. A seed's use is its
+        code: no retrieval delivers it. A value is refused where a seed is
+        (delete it first), and a seed for an item the Contract marks not
+        sensitive, both with VALIDATION_FAILED.
       parameters:
         - $ref: "#/components/parameters/org"
         - $ref: "#/components/parameters/project"
@@ -606,9 +620,10 @@ paths:
           application/json:
             schema:
               type: object
-              required: [value]
+              description: Either value or otpauth.
               properties:
                 value: { type: string }
+                otpauth: { $ref: "#/components/schemas/OtpauthURI" }
                 expectedVersionId:
                   description: Optimistic concurrency; rejects stale writes with VERSION_CONFLICT.
                   type: string
@@ -644,7 +659,10 @@ paths:
         alongside it for a bounded grace window, so running consumers migrate
         without an outage. Reads resolve the primary; the retiring value is
         exposed only through explicit disclosure and capability exercise.
-        Rejected with ROTATION_IN_PROGRESS if one is already active.
+        Rejected with ROTATION_IN_PROGRESS if one is already active. A seed of
+        one-time codes rotates to another seed (otpauth, capability
+        values.totp): until the rotation ends an exercise gives the codes of
+        both. A value never rotates to a seed, nor a seed to a value.
       parameters:
         - $ref: "#/components/parameters/org"
         - $ref: "#/components/parameters/project"
@@ -656,9 +674,10 @@ paths:
           application/json:
             schema:
               type: object
-              required: [value]
+              description: Either value or otpauth.
               properties:
                 value: { type: string }
+                otpauth: { $ref: "#/components/schemas/OtpauthURI" }
                 expectedVersionId:
                   description: Optimistic concurrency against the current primary.
                   type: string
@@ -796,7 +815,10 @@ paths:
         values, each such expansion audited; unauthorized or unknown
         references stay literal. An optional purpose (capability
         secrets.disclosure-purpose) is recorded in the disclosure's audit
-        events and changes nothing else.
+        events and changes nothing else. A seed of one-time codes is disclosed
+        only to a request that names its item and says totpSeeds (capability
+        values.totp): otherwise it is withheld, and the all-authorized scope
+        leaves it out.
       parameters:
         - $ref: "#/components/parameters/org"
         - $ref: "#/components/parameters/project"
@@ -816,6 +838,13 @@ paths:
                       minItems: 1
                       items: { type: string }
                     purpose: { $ref: "#/components/schemas/DisclosurePurpose" }
+                    totpSeeds:
+                      type: boolean
+                      description: >
+                        Disclose the seeds of one-time codes among items too
+                        (capability values.totp), each as its otpauth:// URI.
+                        Refused with a purpose or with the all-authorized
+                        scope.
                 - type: object
                   required: [scope]
                   properties:
@@ -849,6 +878,7 @@ paths:
                           properties:
                             versionId: { type: string }
                             value: { type: string }
+                        totp: { $ref: "#/components/schemas/OneTimeCode" }
                   withheld:
                     type: array
                     items: { type: string }
@@ -866,10 +896,15 @@ paths:
       tags: [capabilities]
       operationId: issueCapability
       summary: >
-        Issue a Capability (capability capabilities.broker, ADR-0022). Broker
-        identities only. Issuance narrows potential future use and never
-        expands the Agent's Grants; the capability secret is returned exactly
-        once. Responses are never cacheable.
+        Issue a Capability (capability capabilities.broker, ADR-0022). A Broker
+        identity issues one for itself. With capability.issue on the
+        Environment (capability capabilities.delegate, ADR-0060), a service,
+        workload, ci, or broker identity issues one for the Broker it names
+        in brokerIdentityId: only that Broker can exercise it, the issuer
+        cannot. Anyone else gets RESOURCE_NOT_FOUND. Issuance narrows
+        potential future use and never expands the Agent's Grants; the
+        capability secret is returned exactly once. Responses are never
+        cacheable.
       parameters:
         - $ref: "#/components/parameters/org"
         - $ref: "#/components/parameters/project"
@@ -893,6 +928,20 @@ paths:
                   minItems: 1
                   maxItems: 50
                   items: { type: string }
+                  description: >
+                    Hosts: host, host:port, *.suffix, an IP address; no port
+                    is 443. Or, for a Broker that types (capability
+                    capabilities.destination-kinds, ADR-0064), pages,
+                    web:<http or https>://<host or *.suffix>[:port][/path],
+                    the path a prefix of whole segments (an http page is
+                    allowed when it is written out, and not encrypted: whoever
+                    is on the network reads what is typed there), and desktop
+                    applications on the Broker's machine,
+                    app:<name>@<the Broker's identity ID>. Not hosts and the
+                    others in one Capability (VALIDATION_FAILED, reason
+                    mixed-destinations), nor an application of another machine
+                    (app-machine). A server without the capability refuses the
+                    last two kinds.
                 targets:
                   type: object
                   description: >
@@ -901,7 +950,16 @@ paths:
                     transport-owned header such as Host, Content-Length,
                     Transfer-Encoding, Content-Type, or connection and proxy
                     headers), query:<name>, json:<RFC 6901 pointer>, or
-                    form:<name>. Recorded immutably on the Capability; the
+                    form:<name>, in a request; or (capability
+                    capabilities.target-kinds, ADR-0064) pipe:<RFC 6901
+                    pointer>, in a JSON document handed to a process over a
+                    pipe, or field:<name>, typed into a field (both without
+                    ; and = and characters that do not show). A field goes
+                    with pages and applications, a pipe with hosts and
+                    applications, the others with hosts: a target no
+                    destination takes is refused (VALIDATION_FAILED, reason
+                    target-without-destination). A server without the
+                    capability refuses pipe and field. Recorded immutably on the Capability; the
                     Broker substitutes a Placeholder only at its targets.
                   additionalProperties:
                     type: array
@@ -910,6 +968,26 @@ paths:
                     items: { type: string }
                 ttlSeconds: { type: integer, minimum: 1 }
                 runId: { type: string, maxLength: 200 }
+                brokerIdentityId:
+                  type: string
+                  minLength: 1
+                  maxLength: 200
+                  description: >
+                    The Broker the Capability is issued for (capability
+                    capabilities.delegate): a broker identity of the
+                    Organization that is not retired. Naming any but the
+                    caller itself needs capability.issue. Required when the
+                    caller is not a Broker. While the Capability lives, every
+                    exercise also needs its issuer to be live and to hold
+                    capability.issue here.
+                singleUse:
+                  type: boolean
+                  description: >
+                    Exercised once (capability capabilities.single-use). A
+                    granted exercise uses it up, even when its response is
+                    lost or the server fails after recording it; a refused
+                    one, or one whose items have no value, does not. A server without the capability ignores
+                    this member: check it, or that the answer says singleUse.
                 precondition:
                   type: object
                   description: >
@@ -936,8 +1014,9 @@ paths:
       tags: [capabilities]
       operationId: listCapabilities
       summary: >
-        List Capabilities for this environment. Brokers see their own;
-        callers with policy.read see all.
+        List Capabilities for this environment. Brokers see their own (issued
+        for them or by them); callers with policy.read see all; an identity
+        holding capability.issue here sees what it issued.
       parameters:
         - $ref: "#/components/parameters/org"
         - $ref: "#/components/parameters/project"
@@ -963,8 +1042,9 @@ paths:
       tags: [capabilities]
       operationId: revokeCapability
       summary: >
-        Revoke a Capability. The issuing Broker may revoke its own; callers
-        with policy.manage may revoke any. Takes effect on the next exercise.
+        Revoke a Capability. Its Broker and the identity that issued it may
+        revoke it; callers with policy.manage may revoke any. Takes effect on
+        the next exercise.
       parameters:
         - $ref: "#/components/parameters/org"
         - $ref: "#/components/parameters/project"
@@ -983,8 +1063,9 @@ paths:
       tags: [capabilities]
       operationId: exerciseCapability
       summary: >
-        Exercise a Capability (ADR-0022). Requires the issuing Broker's
-        bearer plus the capability secret; the Agent's secret.use is
+        Exercise a Capability (ADR-0022). Requires the bearer of the Broker
+        it was issued for (an exercise-only credential too, ADR-0060) plus
+        the capability secret; the Agent's secret.use is
         evaluated against current state (including Tailnet Requirements on
         this request), current Value versions are resolved, and the exercise
         is audited before decryption. ${NAME} references inside exercised
@@ -994,6 +1075,17 @@ paths:
         denies the exercise (reason unresolved-reference) rather than
         injecting literal ${NAME} upstream — $${NAME} escapes. Responses
         are never cacheable and go to the Broker only.
+
+        An OAuth connection (capability oauth.connections, ADR-0062) gives its
+        access token, refreshed first when it has ended, ends within a minute,
+        or ends before minValiditySeconds. When there is none now the exercise
+        is refused with RATE_LIMITED (429, Retry-After), reason
+        connection-unavailable and retryAfterSeconds; when a person has to act,
+        with PERMISSION_DENIED, reason connection-needs-reconnect,
+        connection-not-connected, connection-revoked or connection-paused; when
+        the connection's own hosts do not name the destination, with
+        PERMISSION_DENIED, reason destination-mismatch. Neither uses up
+        anything.
       parameters:
         - $ref: "#/components/parameters/org"
         - $ref: "#/components/parameters/project"
@@ -1013,10 +1105,39 @@ paths:
                 capabilitySecret: { type: string }
                 destination:
                   type: object
-                  required: [host, port]
+                  description: >
+                    Where the values go, as the Broker says: host and port; or
+                    (capability capabilities.destination-kinds, ADR-0064) the
+                    page, url with topUrl, or the application, app, on the
+                    Broker's own machine. The audit log has the page's path,
+                    without query, fragment, credentials and path parameters,
+                    and the application's name; never a window's title, which
+                    is no part of a report. One of the three; a
+                    server without the capability refuses the last two for
+                    want of host and port. None of the Capability's
+                    destinations: PERMISSION_DENIED, reason
+                    destination-mismatch, recorded with what was reported.
                   properties:
                     host: { type: string }
                     port: { type: integer, minimum: 1, maximum: 65535 }
+                    url:
+                      type: string
+                      minLength: 1
+                      maxLength: 4096
+                      description: >
+                        The address of the page whose field it is, as the
+                        browser has it (a frame's own). Compared by scheme,
+                        host, port and path; its query and fragment are not
+                        compared nor recorded. One that cannot be read, or
+                        could be read two ways, is none of any.
+                    topUrl:
+                      type: string
+                      minLength: 1
+                      maxLength: 4096
+                      description: >
+                        The address of the page around it, when that is
+                        another one: a destination has to name it too.
+                    app: { type: string, minLength: 1, maxLength: 200, description: "The application's name, compared exactly, and recorded. Never its window's title." }
                 placements:
                   type: array
                   description: >
@@ -1027,19 +1148,512 @@ paths:
                     it is decrypted. A Capability without targets (issued
                     before they were required) is refused with reason
                     capability-without-targets; a placement the Capability
-                    does not hold with placement-not-targeted.
+                    does not hold with placement-not-targeted, and one whose
+                    target is none of the destination's kind with
+                    placement-not-for-destination. A single-use
+                    Capability exercised before is refused with already-used,
+                    and one whose issuer may no longer issue here with
+                    issuer-not-allowed.
                   items:
                     type: object
                     required: [item, target]
                     properties:
                       item: { type: string }
                       target: { type: string }
+                minValiditySeconds:
+                  type: integer
+                  minimum: 0
+                  maximum: 86400
+                  description: >
+                    How long the one-time codes (capability values.totp) and
+                    the access tokens (capability oauth.connections) among the
+                    items must still be valid. When the current code ends
+                    sooner, the next one is answered, with the time it starts
+                    (notBefore, startsInSeconds): the caller waits for it, the
+                    server does not. When an access token ends sooner, it is
+                    refreshed first. More than an item's period, or than the
+                    provider's access tokens last, is refused with
+                    VALIDATION_FAILED, reason min-validity-too-long, and uses
+                    up nothing. Other items are not affected.
+                fresh:
+                  type: boolean
+                  description: >
+                    Only codes of a later period than any this server has
+                    given (capability values.totp): the current period's, else
+                    the next one's. Once one of the next period or a later one
+                    was given (minValiditySeconds may have skipped the current
+                    one), the exercise is refused with RATE_LIMITED (429,
+                    Retry-After), reason no-fresh-code and retryAfterSeconds,
+                    and uses up nothing. Every code given
+                    counts, asked for as fresh or not; one made from a copy of
+                    the seed elsewhere is not known here. Other items are not
+                    affected.
       responses:
         "200":
           description: Exercised secret material (Cache-Control no-store)
           content:
             application/json:
               schema: { $ref: "#/components/schemas/CapabilityExercise" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections:
+    get:
+      tags: [oauth]
+      operationId: listOAuthConnections
+      summary: >
+        The environment's own OAuth connections (capability
+        oauth.connections, ADR-0062), without the ones it inherits. Needs
+        config.metadata.read. No secret and no token, nor anything derived
+        from one.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/environment"
+      responses:
+        "200":
+          description: The connections
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/OAuthConnection" }
+                  nextCursor: { $ref: "#/components/schemas/NextCursor" }
+                  redirectBase:
+                    type: [string, "null"]
+                    description: >
+                      What a connection's redirect URI starts with; the token
+                      endpoint's host (and port, when it is not 443) follows,
+                      and for a generic provider its other endpointHosts, in
+                      order, each after a "~".
+                      Null when this installation has no public URL over HTTPS
+                      (or on a loopback host).
+        "429": { $ref: "#/components/responses/RequestWindow" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      tags: [oauth]
+      operationId: createOAuthConnection
+      summary: >
+        Make an OAuth connection, not connected yet. Needs config.value.write;
+        one to a person's account (authorization_code) is made by a person
+        (PERMISSION_DENIED, reason person-required). Its endpoints are pinned:
+        the provider's metadata is read now and never again, and nothing but
+        these endpoints is ever sent the client secret or a token. They are
+        all on the host that was given, or on hosts the request names
+        (VALIDATION_FAILED, reason endpoint-hosts, with the others in
+        details.endpointHosts). The item has no value in this environment
+        (VERSION_CONFLICT otherwise) and is sensitive.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/environment"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OAuthConnectionInput" }
+      responses:
+        "201":
+          description: Made
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OAuthConnection" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/discovery:
+    post:
+      tags: [oauth]
+      operationId: discoverOAuthProvider
+      summary: >
+        What a connection to this provider would pin, the hosts its endpoints
+        are on (named or not), and the redirect URI to register there, without
+        making one. Needs config.value.write.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/environment"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OAuthDiscoveryInput" }
+      responses:
+        "200":
+          description: The provider
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OAuthDiscovery" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}:
+    get:
+      tags: [oauth]
+      operationId: getOAuthConnection
+      summary: >
+        One of the environment's own OAuth connections. Needs
+        config.metadata.read. An item is deleted as any item is
+        (deleteValue), which forgets its tokens without revoking them:
+        disconnect it first for that. One a person has connected is deleted
+        by a person (PERMISSION_DENIED, reason person-required).
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/environment"
+        - $ref: "#/components/parameters/item"
+      responses:
+        "200":
+          description: The connection
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OAuthConnection" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
+        default: { $ref: "#/components/responses/Error" }
+    patch:
+      tags: [oauth]
+      operationId: updateOAuthConnection
+      summary: >
+        Change an OAuth connection. Needs config.value.write; its provider,
+        client ID, scopes and hosts are changed by a person
+        (PERMISSION_DENIED, reason person-required). Its provider and client
+        ID can change only while it holds no tokens (VALIDATION_FAILED, reason
+        connected: disconnect it first), and need the client secret again. A
+        new client secret or new hosts leave it connected; new scopes are
+        asked for at the next connection. Paused, it is neither used nor
+        refreshed, and its tokens stay.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/environment"
+        - $ref: "#/components/parameters/item"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OAuthConnectionChange" }
+      responses:
+        "200":
+          description: The connection as it is now
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OAuthConnection" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}/authorizations:
+    post:
+      tags: [oauth]
+      operationId: startOAuthAuthorization
+      summary: >
+        Begin connecting an OAuth connection: the authorization endpoint's URL
+        to send the browser to, with a state, a nonce and a PKCE challenge
+        (S256) bound to this person and this session, good for ten minutes
+        and once. A person in their dashboard session only
+        (PERMISSION_DENIED, reason browser-session-required), with
+        config.value.write.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/environment"
+        - $ref: "#/components/parameters/item"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OAuthAuthorizationInput" }
+      responses:
+        "201":
+          description: Begun (Cache-Control no-store)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OAuthAuthorization" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}/authorizations/complete:
+    post:
+      tags: [oauth]
+      operationId: completeOAuthAuthorization
+      summary: >
+        Connect with what the provider sent the browser back with. The state
+        is taken, once, by the person and the session that began it
+        (RESOURCE_NOT_FOUND for anyone else, EXPIRED after ten minutes), and
+        then the redirect URI, the issuer (RFC 9207), the ID token and the
+        account are checked: another account than the one before is refused
+        unless the change was confirmed when it was begun.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/environment"
+        - $ref: "#/components/parameters/item"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OAuthAuthorizationAnswer" }
+      responses:
+        "200":
+          description: Connected, or why not (Cache-Control no-store)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OAuthAuthorizationOutcome" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}/refresh:
+    post:
+      tags: [oauth]
+      operationId: refreshOAuthConnection
+      summary: >
+        Refresh an OAuth connection's access token now, or get the first one
+        of a client's own connection. Needs config.value.write. The answer
+        says whether there is a new one, never the token.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/environment"
+        - $ref: "#/components/parameters/item"
+      responses:
+        "200":
+          description: What became of it
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OAuthRefresh" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/projects/{project}/environments/{environment}/oauth-connections/{item}/disconnect:
+    post:
+      tags: [oauth]
+      operationId: disconnectOAuthConnection
+      summary: >
+        Disconnect an OAuth connection: its tokens revoked at the provider
+        where it has an endpoint for that (RFC 7009), unless revokeAtProvider
+        is false, and forgotten here whatever it answers. Needs
+        config.value.write; also while the Organization is frozen. Many
+        providers revoke the whole grant of that client for that account,
+        other connections' tokens included.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/environment"
+        - $ref: "#/components/parameters/item"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OAuthDisconnectInput" }
+      responses:
+        "200":
+          description: What became of it
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OAuthDisconnection" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/projects/{project}/environments/{environment}/entry-links:
+    get:
+      tags: [entry-links]
+      operationId: listEntryLinks
+      summary: >
+        The environment's entry links (capability values.entry-links,
+        ADR-0063), newest first, at most 200, kept until a day after they
+        expire. A person holding config.value.write sees all of them; a
+        machine identity, and a person without it, see what they asked for.
+        Never a link's address, and nothing of a value.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/environment"
+      responses:
+        "200":
+          description: The links
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/EntryLink" }
+                  nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      tags: [entry-links]
+      operationId: createEntryLink
+      summary: >
+        Make a link a person enters one Secret's value with, once, on
+        Varlatch's own page. A service, workload, ci or broker identity needs
+        entry-link.create here (entry-link.create-open when restrictedTo is
+        anyone), which no built-in role holds; a person needs
+        config.value.write. Replacing a value needs config.value.write of
+        either. Whoever makes the link gets no value by it, and their right
+        is decided again when the value is entered. The item must have no
+        value here, inherited ones included (VERSION_CONFLICT otherwise),
+        unless replace; it must be sensitive, and no OAuth connection
+        (VALIDATION_FAILED, reason not-sensitive or oauth-connection), and one
+        the active Contract names when the caller has no config.value.write
+        (not-in-contract). Under
+        passkey-verification's enforce a link open to anyone is refused
+        (PERMISSION_DENIED, reason passkey-verification). RATE_LIMITED beyond
+        100 pending links, or 300 an hour, of one identity. The link ends with
+        the credential of this request: when a machine's is revoked or its
+        identity retired, or a service credential expires (the link's
+        expiresAt is never later), or an OIDC binding of the identity is
+        revoked after an exchanged one was issued (its own expiry ends no
+        link); when a person revokes it, or another browser session, from
+        elsewhere, or is no member any more (signing out ends no link).
+        PERMISSION_DENIED, reason credential-ended, for an exchanged
+        credential whose identity's binding was revoked already. The address is in
+        this answer only; it is never cacheable, and an Idempotency-Key is
+        not read.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/environment"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EntryLinkInput" }
+      responses:
+        "201":
+          description: The link, with its address
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreatedEntryLink" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/projects/{project}/environments/{environment}/entry-links/{entryLink}:
+    get:
+      tags: [entry-links]
+      operationId: getEntryLink
+      summary: >
+        One entry link, as listEntryLinks shows it: its status says whether
+        the value was entered.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/environment"
+        - $ref: "#/components/parameters/entryLink"
+      responses:
+        "200":
+          description: The link
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EntryLink" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [entry-links]
+      operationId: cancelEntryLink
+      summary: >
+        Cancel a pending entry link: who asked for it, with or without its
+        right still, or a person holding config.value.write. Works while the
+        Organization is frozen. A link that has ended is RESOURCE_NOT_FOUND.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/environment"
+        - $ref: "#/components/parameters/entryLink"
+      responses:
+        "204": { description: Cancelled }
+        "429": { $ref: "#/components/responses/RequestWindow" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /entry-links/lookup:
+    post:
+      tags: [entry-links]
+      operationId: lookupEntryLink
+      summary: >
+        What an entry link's page shows before a value is entered. The token
+        in the body is what is asked for; a link made for a member, or for one
+        person, also needs that person's bearer credential, and without one
+        answers signInRequired and no names. Nothing is used up and nothing
+        recorded, however often it is asked. RESOURCE_NOT_FOUND for a token
+        there is no link of; CONSUMED (410) after the value was entered,
+        EXPIRED (410) once expired or cancelled (details.status), with no
+        word on whether it was cancelled or ended with its credential;
+        PERMISSION_DENIED for another person (reason not-for-you), or when
+        whoever made the link may no longer (requester-not-allowed).
+        RATE_LIMITED for an unknown token after 20 of them from one address in
+        ten minutes; a link that there is is answered all the same. Never cacheable.
+      security:
+        - {}
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: { type: string, minLength: 1, maxLength: 200 }
+      responses:
+        "200":
+          description: What the page shows
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EntryLinkView" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /entry-links/submit:
+    post:
+      tags: [entry-links]
+      operationId: submitEntryLink
+      summary: >
+        Enter the value of an entry link, once. Authenticated as
+        lookupEntryLink, with the same refusals, and the passkey-verification
+        checkpoint of a value write for a signed-in person. One request of
+        several at once enters it. Refused (STATE_CHANGED), and the link
+        cancelled, when the item's value changed since the link was made. The
+        credential that made the link is looked at in the job that writes the
+        value. A refusal does not use the link up otherwise: a value that holds a
+        ${NAME} reference is refused (VALIDATION_FAILED, reason reference). The answer holds nothing
+        of the value. Never cacheable.
+      security:
+        - {}
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: { type: string, minLength: 1, maxLength: 200 }
+                value:
+                  type: string
+                  minLength: 1
+                  maxLength: 65536
+                  description: For a link that accepts a value.
+                otpauth:
+                  type: string
+                  minLength: 1
+                  maxLength: 2048
+                  description: For a link that accepts the seed of a one-time code, an otpauth://totp/ URI.
+      responses:
+        "200":
+          description: Entered
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, const: entered }
         "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
@@ -1071,11 +1685,13 @@ paths:
                   items:
                     oneOf:
                       - type: object
-                        required: [op, item, value]
+                        required: [op, item]
+                        description: "With op set: either value or otpauth."
                         properties:
                           op: { type: string, enum: [set] }
                           item: { type: string }
                           value: { type: string }
+                          otpauth: { $ref: "#/components/schemas/OtpauthURI" }
                           expectedVersionId: { type: string }
                       - type: object
                         required: [op, item]
@@ -2020,7 +2636,11 @@ paths:
         A binding is an Authentication Method: exchanging a matching
         verified token establishes identity only — authority remains the
         identity's Grants, evaluated per request. Subject matches exactly,
-        or by prefix when it ends with '*'.
+        or by prefix when it ends with '*'. exerciseOnly, runIdClaim, and
+        singleExchange limit what its exchanges give (capability
+        auth.oidc.limits, ADR-0060); an identity's live bindings for one
+        issuer are either all limited or all unlimited, and a token that
+        matches several limited bindings gets the limits of all of them.
       parameters:
         - $ref: "#/components/parameters/org"
         - name: identity
@@ -2042,7 +2662,31 @@ paths:
                 claims:
                   type: object
                   additionalProperties: { type: string, maxLength: 2000 }
-                  description: Additional token claims that must match exactly.
+                  description: >
+                    Additional token claims that must match exactly. Names
+                    that start with varlatch: are reserved.
+                exerciseOnly:
+                  type: boolean
+                  description: >
+                    The exchanged credential exercises Capabilities issued for
+                    the binding's identity, a Broker, and nothing else: every
+                    other operation, reads included, is refused with
+                    PERMISSION_DENIED. Turns singleExchange on.
+                runIdClaim:
+                  type: string
+                  minLength: 1
+                  maxLength: 200
+                  description: >
+                    With exerciseOnly: only Capabilities whose runId equals
+                    this claim of the exchanged token. A token without it (a
+                    string of 1 to 200 characters) exchanges nothing.
+                singleExchange:
+                  type: boolean
+                  description: >
+                    A token exchanges once within its lifetime, by its issuer
+                    and jti, or by the token itself when it has no jti. A
+                    token that stays valid for more than a day exchanges
+                    nothing. Off by default, always on with exerciseOnly.
       responses:
         "201":
           description: Created binding
@@ -5259,6 +5903,12 @@ components:
       required: true
       description: Config Item name
       schema: { type: string, pattern: "^[A-Z][A-Z0-9_]*$" }
+    entryLink:
+      name: entryLink
+      in: path
+      required: true
+      description: Entry link ID
+      schema: { type: string }
     limit:
       name: limit
       in: query
@@ -5292,7 +5942,8 @@ components:
       description: >
         varlatch: only Varlatch's own events, those with no actor identity
         (sync delivery, webhooks, operator commands), except
-        authentication.* events, whose missing actor is an unknown caller
+        authentication.* events, whose missing actor is an unknown caller,
+        and what somebody did with an entry link open to anyone
         (capability audit.attribution). Given with actorIdentityId it is
         refused with VALIDATION_FAILED.
       schema: { type: string, enum: [varlatch] }
@@ -5903,6 +6554,7 @@ components:
         sensitive: { type: boolean }
         previousVersionId: { type: [string, "null"] }
         createdAt: { type: string, format: date-time }
+        totp: { $ref: "#/components/schemas/OneTimeCode" }
 
     EffectiveConfigurationItem:
       type: object
@@ -5932,6 +6584,357 @@ components:
             True while a dual-phase rotation (ADR-0027) is active for this
             item. Metadata only — the retiring plaintext is exposed solely
             through explicit disclosure and capability exercise.
+        totp: { $ref: "#/components/schemas/OneTimeCode" }
+        oauth: { $ref: "#/components/schemas/OAuthItem" }
+
+    OAuthItem:
+      type: object
+      description: >
+        Present when the item is an OAuth connection (capability
+        oauth.connections, ADR-0062). Such an item is always sensitive and has
+        no value that is delivered: exercising a Capability that names it
+        gives its access token.
+      required: [preset, grant, status, paused]
+      properties:
+        preset: { type: string }
+        grant: { $ref: "#/components/schemas/OAuthGrant" }
+        status: { $ref: "#/components/schemas/OAuthStatus" }
+        paused: { type: boolean }
+        account: { type: string, description: Whose account it is, as the provider calls it. }
+
+    OAuthGrant:
+      type: string
+      enum: [authorization_code, client_credentials]
+      description: >
+        authorization_code: a person consents, in the browser.
+        client_credentials: the client's own access, nobody's account.
+
+    OAuthStatus:
+      type: string
+      description: >
+        not_connected: nobody connected it yet. connected: it has tokens.
+        refreshing: a refresh is in progress. failing: the last refresh failed
+        for now, and is tried again; an access token that still lasts is used.
+        needs_reconnect: the provider refuses its refresh token (or there is
+        none), and a person has to connect it again. revoked: it was
+        disconnected here.
+      enum: [not_connected, connected, refreshing, failing, needs_reconnect, revoked]
+
+    OAuthProviderInput:
+      type: object
+      required: [preset]
+      description: >
+        A provider: a preset (google; microsoft with the tenant's ID), or
+        generic with an issuer, whose metadata is read (OpenID Connect
+        Discovery, RFC 8414), or with its endpoints. Every URL is https.
+      properties:
+        preset: { type: string, enum: [google, microsoft, generic] }
+        tenant:
+          type: string
+          maxLength: 100
+          description: "microsoft only: the tenant's ID (a UUID). common, organizations and consumers are refused."
+        issuer: { type: string, maxLength: 2000 }
+        authorizationEndpoint: { type: string, maxLength: 2000 }
+        tokenEndpoint: { type: string, maxLength: 2000 }
+        revocationEndpoint: { type: string, maxLength: 2000 }
+        userinfoEndpoint:
+          type: string
+          maxLength: 2000
+          description: Asked once at each connection, with the access token, for whose account it is (sub or id).
+        endpointHosts:
+          type: array
+          maxItems: 10
+          items: { type: string, minLength: 1, maxLength: 300 }
+          description: >
+            generic, authorization_code only: the hosts the provider's
+            addresses may be on beside the issuer's (or, with its endpoints
+            given, the token endpoint's), each with its port when that is not
+            443. The ones they are on are in the redirect URI.
+        tokenEndpointAuthMethod: { $ref: "#/components/schemas/OAuthAuthMethod" }
+        authorizationParams:
+          type: object
+          description: More parameters of the authorization request, at most 10; none of the request's own.
+          additionalProperties: { type: string, maxLength: 512 }
+        accessTokenLifetimeSeconds:
+          type: integer
+          minimum: 1
+          maximum: 31622400
+          description: How long an access token lasts where the provider does not say.
+        refreshTokenIdleDays:
+          type: integer
+          minimum: 1
+          maximum: 3650
+          description: >
+            After how many days without use the provider drops a refresh
+            token: Varlatch then refreshes after two thirds of them, used or
+            not.
+
+    OAuthAuthMethod:
+      type: string
+      enum: [client_secret_basic, client_secret_post, none]
+
+    OAuthProvider:
+      type: object
+      description: A provider as a connection pinned it.
+      required: [preset, tokenEndpoint, endpointHosts, tokenEndpointAuthMethod]
+      properties:
+        preset: { type: string }
+        endpointHosts:
+          type: array
+          items: { type: string }
+          description: >
+            The hosts of every address of the provider's here, the token
+            endpoint's first: the client secret, codes and tokens are sent to
+            no other, and neither is the browser.
+        tenant: { type: string }
+        issuer: { type: string }
+        authorizationEndpoint: { type: string }
+        tokenEndpoint: { type: string }
+        revocationEndpoint: { type: string }
+        userinfoEndpoint: { type: string }
+        jwksUri: { type: string }
+        tokenEndpointAuthMethod: { $ref: "#/components/schemas/OAuthAuthMethod" }
+        authorizationParams:
+          type: object
+          additionalProperties: { type: string }
+        accessTokenLifetimeSeconds: { type: integer }
+        refreshTokenIdleDays: { type: integer }
+
+    OAuthConnectionInput:
+      type: object
+      required: [item, provider, clientId]
+      properties:
+        item: { type: string, minLength: 1 }
+        provider: { $ref: "#/components/schemas/OAuthProviderInput" }
+        grant: { $ref: "#/components/schemas/OAuthGrant" }
+        clientId: { type: string, minLength: 1, maxLength: 512 }
+        clientSecret:
+          type: string
+          minLength: 1
+          maxLength: 2048
+          description: Stored sealed. No operation answers it, to anyone.
+        scopes:
+          type: array
+          maxItems: 100
+          items: { type: string, minLength: 1, maxLength: 512 }
+          description: What to ask for; a preset adds what it needs to know the account and to get a refresh token.
+        hosts:
+          type: array
+          maxItems: 50
+          items: { type: string, minLength: 1 }
+          description: >
+            The destinations its access token may go to, as a Capability's:
+            a Capability that names the connection may name only these, and an
+            exercise for another is refused. None, whatever the Capability
+            names.
+
+    OAuthConnectionChange:
+      type: object
+      properties:
+        provider: { $ref: "#/components/schemas/OAuthProviderInput" }
+        clientId: { type: string, minLength: 1, maxLength: 512 }
+        clientSecret: { type: string, minLength: 1, maxLength: 2048 }
+        scopes:
+          type: array
+          maxItems: 100
+          items: { type: string, minLength: 1, maxLength: 512 }
+        hosts:
+          type: array
+          maxItems: 50
+          items: { type: string, minLength: 1 }
+        paused: { type: boolean }
+        expectedVersionId: { type: string, description: Rejects a stale change with VERSION_CONFLICT. }
+
+    OAuthDiscoveryInput:
+      type: object
+      required: [provider]
+      properties:
+        provider: { $ref: "#/components/schemas/OAuthProviderInput" }
+        grant: { $ref: "#/components/schemas/OAuthGrant" }
+
+    OAuthDiscovery:
+      type: object
+      required: [provider]
+      properties:
+        provider: { $ref: "#/components/schemas/OAuthProvider" }
+        redirectUri: { type: string, description: "Of an authorization_code connection, when this installation has a public URL." }
+
+    OAuthAccount:
+      type: object
+      required: [id, label]
+      properties:
+        id: { type: string, description: The provider's own ID of it. }
+        label: { type: string, description: "What the provider calls it: an email address, a name." }
+
+    OAuthConnection:
+      type: object
+      description: An OAuth connection. No secret and no token, nor anything derived from one.
+      required:
+        - item
+        - environmentId
+        - versionId
+        - provider
+        - grant
+        - clientId
+        - hasClientSecret
+        - scopes
+        - hosts
+        - status
+        - reason
+        - paused
+        - account
+        - grantedScopes
+        - missingScopes
+        - hasRefreshToken
+        - accessTokenExpiresAt
+        - refreshTokenExpiresAt
+        - connectedBy
+        - connectedAt
+        - refreshedAt
+        - retryAt
+        - createdBy
+        - createdAt
+      properties:
+        item: { type: string }
+        environmentId: { type: string }
+        versionId: { type: string, description: Changes with its parameters and its client secret, not with its tokens. }
+        provider: { $ref: "#/components/schemas/OAuthProvider" }
+        grant: { $ref: "#/components/schemas/OAuthGrant" }
+        clientId: { type: string }
+        hasClientSecret: { type: boolean }
+        scopes:
+          type: array
+          items: { type: string }
+        hosts:
+          type: array
+          items: { type: string }
+        status: { $ref: "#/components/schemas/OAuthStatus" }
+        reason:
+          type: [string, "null"]
+          description: >
+            Why it is failing or needs to be connected again: a word of
+            Varlatch's (unreachable, timeout, refresh-answer-lost,
+            no-refresh-token, refused-by-provider) or the provider's error
+            code (invalid_client). Never text of the provider's.
+        paused: { type: boolean }
+        account:
+          oneOf:
+            - { $ref: "#/components/schemas/OAuthAccount" }
+            - { type: "null" }
+          description: >
+            Whose account it is or, disconnected or after a change of its
+            provider or client, was. Null when the provider does not say.
+        grantedScopes:
+          type: [array, "null"]
+          items: { type: string }
+          description: As the provider named them; null when it did not.
+        missingScopes:
+          type: array
+          items: { type: string }
+          description: The scopes asked for that the provider did not grant, as far as it says.
+        hasRefreshToken: { type: boolean }
+        accessTokenExpiresAt: { type: [string, "null"], format: date-time }
+        refreshTokenExpiresAt: { type: [string, "null"], format: date-time }
+        connectedBy: { type: [string, "null"], description: The person who connected it. }
+        connectedAt: { type: [string, "null"], format: date-time }
+        refreshedAt: { type: [string, "null"], format: date-time }
+        retryAt: { type: [string, "null"], format: date-time, description: When a failed refresh is tried again, if it is asked for. }
+        createdBy: { type: [string, "null"], description: Who wrote its parameters as they are now. }
+        createdAt: { type: string, format: date-time }
+        redirectUri: { type: string, description: To register at the provider. Present for authorization_code when this installation has a public URL. }
+
+    OAuthAuthorizationInput:
+      type: object
+      properties:
+        confirmAccountChange:
+          type: boolean
+          description: Another account than the one it was connected to may connect it.
+        expectedVersionId: { type: string, description: The version the person was shown. Another one is refused with VERSION_CONFLICT. }
+
+    OAuthAuthorization:
+      type: object
+      required: [authorizationUrl, state, redirectUri, expiresAt]
+      properties:
+        authorizationUrl: { type: string }
+        state: { type: string }
+        redirectUri: { type: string }
+        expiresAt: { type: string, format: date-time }
+
+    OAuthAuthorizationAnswer:
+      type: object
+      required: [state, redirectUri]
+      properties:
+        state: { type: string, minLength: 1, maxLength: 200 }
+        redirectUri: { type: string, minLength: 1, maxLength: 2000, description: "The address the browser came back to, without its query." }
+        code: { type: string, maxLength: 8192 }
+        error: { type: string, maxLength: 200 }
+        iss: { type: string, maxLength: 2000 }
+
+    OAuthAuthorizationOutcome:
+      type: object
+      required: [outcome]
+      properties:
+        outcome:
+          type: string
+          enum: [connected, refused, failed]
+          description: "refused: the answer does not fit what was asked for, and nothing was kept. failed: the provider refused, or did not answer."
+        reason: { type: string }
+        message: { type: string }
+        account: { $ref: "#/components/schemas/OAuthAccount" }
+        previousAccount: { $ref: "#/components/schemas/OAuthAccount" }
+        connection: { $ref: "#/components/schemas/OAuthConnection" }
+
+    OAuthRefresh:
+      type: object
+      required: [refreshed, connection]
+      properties:
+        refreshed: { type: boolean }
+        reason: { type: string, description: Why not. }
+        retryAfterSeconds: { type: integer, minimum: 1 }
+        connection: { $ref: "#/components/schemas/OAuthConnection" }
+
+    OAuthDisconnectInput:
+      type: object
+      properties:
+        revokeAtProvider: { type: boolean, default: true }
+
+    OAuthDisconnection:
+      type: object
+      required: [atProvider, connection]
+      properties:
+        atProvider:
+          type: string
+          enum: [revoked, not-supported, failed, nothing-to-revoke, left]
+          description: "What became of the tokens at the provider; here they are forgotten in every case. left: not asked."
+        reason: { type: string, description: Of failed. }
+        connection: { $ref: "#/components/schemas/OAuthConnection" }
+
+    OtpauthURI:
+      type: string
+      maxLength: 4096
+      description: >
+        The seed of one-time codes (RFC 6238) as an otpauth://totp/ URI, what
+        an authenticator's QR code holds: a base32 secret of 80 bits or more,
+        SHA1 (the default), SHA256, or SHA512, 6 (the default) or 8 digits, a
+        period of 30 (the default) or 60 seconds. It goes where a value would
+        (capability values.totp): a server without the capability refuses the
+        request for want of a value. Refused with VALIDATION_FAILED, which
+        never repeats any of it.
+
+    OneTimeCode:
+      type: object
+      description: >
+        Present when the item holds the seed of one-time codes (capability
+        values.totp, ADR-0061): what may be read of it. Such an item is always
+        sensitive and its value is never delivered: exercising a Capability
+        that names it gives the code.
+      required: [issuer, account, algorithm, digits, periodSeconds]
+      properties:
+        issuer: { type: string, description: Who the code is for; may be empty. }
+        account: { type: string, description: The account there; may be empty. }
+        algorithm: { type: string, enum: [SHA1, SHA256, SHA512] }
+        digits: { type: integer, enum: [6, 8] }
+        periodSeconds: { type: integer, enum: [30, 60] }
 
     ValueRotation:
       type: object
@@ -6034,8 +7037,14 @@ components:
             required: [name, reason, requires]
             properties:
               name: { type: string }
-              reason: { type: string, enum: [permission, requirement] }
-              requires: { type: string, enum: [config.value.read, secret.reveal] }
+              reason:
+                type: string
+                enum: [permission, requirement, one-time-code, oauth-connection]
+                description: >
+                  one-time-code (strict retrieval): the item holds the seed of
+                  one-time codes, which is delivered to nobody; its code is
+                  used through a Capability (requires secret.use).
+              requires: { type: string, enum: [config.value.read, secret.reveal, secret.use] }
         unexpanded:
           type: array
           items:
@@ -6107,6 +7116,8 @@ components:
                   versionId: { type: string }
                   value: { type: string }
               rotating: { type: boolean }
+              totp: { $ref: "#/components/schemas/OneTimeCode" }
+              oauth: { $ref: "#/components/schemas/OAuthItem" }
         callerView: { $ref: "#/components/schemas/CallerView" }
         validation: { $ref: "#/components/schemas/ValidationReport" }
 
@@ -6727,6 +7738,9 @@ components:
         expiresAt: { type: string, format: date-time }
         revokedAt: { type: [string, "null"], format: date-time }
         createdAt: { type: string, format: date-time }
+        issuedByIdentityId: { type: string, description: "Who issued it, when that is not its Broker (ADR-0060)." }
+        singleUse: { type: boolean, description: Present (true) for one that may be exercised once. }
+        used: { type: boolean, description: "With singleUse, whether it was." }
 
     CredentialMetadata:
       type: object
@@ -6759,6 +7773,8 @@ components:
             never the User-Agent itself. Null when the client was not
             recognized, for every other kind, and for credentials issued
             before 0.14.0; absent from older servers.
+        exerciseOnly: { type: boolean, description: "Present (true) for an exercise-only credential (ADR-0060)." }
+        runId: { type: string, description: The run whose Capabilities it exercises. Present when it is tied to one. }
     CredentialReviewReason:
       type: string
       enum: [never-used, idle, no-expiry]
@@ -6992,6 +8008,8 @@ components:
           type: string
           enum: [ok, agent-lacks-secret-use]
           description: Advisory current-authority check; exercise re-evaluates regardless.
+        brokerIdentityId: { type: string, description: The Broker it was issued for. Present when the request named one. }
+        singleUse: { type: boolean, description: Present (true) for one that may be exercised once. }
         preflightItems:
           type: array
           description: >
@@ -7022,17 +8040,38 @@ components:
             properties:
               name: { type: string }
               versionId: { type: string }
-              value: { type: string }
+              value:
+                type: string
+                description: The value or, with kind totp, the one-time code or, with kind oauth, the access token (to send as a Bearer token).
+              kind:
+                type: string
+                enum: [totp, oauth]
+                description: Present for a one-time code (capability values.totp) and for an OAuth connection's access token (capability oauth.connections).
+              notBefore:
+                type: string
+                format: date-time
+                description: Present while the code's period has not started, as the server's clock has it.
+              startsInSeconds: { type: integer, minimum: 1, description: Present with notBefore. How long to wait from this answer. }
+              expiresAt: { type: string, format: date-time, description: "Of a code: when its period ends. Of an access token: when it expires, absent when the provider does not say. As the server's clock has it." }
+              expiresInSeconds: { type: integer, minimum: 0, description: "Present with expiresAt: whole seconds from this answer until then." }
               retiring:
                 description: >
                   The previous value during a dual-phase rotation (ADR-0027),
                   injected as-is so the consumer accepts either during the
-                  window. Absent when the item is stable.
+                  window; of a one-time code, the previous seed's code for the
+                  same conditions. Absent when the item is stable.
                 type: object
                 required: [versionId, value]
                 properties:
                   versionId: { type: string }
                   value: { type: string }
+                  notBefore:
+                    type: string
+                    format: date-time
+                    description: Present while the code's period has not started, as the server's clock has it.
+                  startsInSeconds: { type: integer, minimum: 1, description: Present with notBefore. How long to wait from this answer. }
+                  expiresAt: { type: string, format: date-time, description: Of a code. When its period ends, as the server's clock has it. }
+                  expiresInSeconds: { type: integer, minimum: 0, description: "Of a code: whole seconds from this answer until its period ends." }
         withheld:
           type: array
           items: { type: string }
@@ -7042,6 +8081,117 @@ components:
           additionalProperties:
             type: array
             items: { type: string }
+
+    EntryLinkStatus:
+      type: string
+      description: >
+        pending until the value is entered, the link expires, or it is
+        cancelled (reason says by what).
+      enum: [pending, entered, expired, cancelled]
+
+    EntryLink:
+      type: object
+      required: [id, environmentId, item, accepts, replace, restrictedTo, description, requestedByIdentityId, status, createdAt, expiresAt, endedAt]
+      properties:
+        id: { type: string }
+        environmentId: { type: string }
+        item: { type: string }
+        accepts:
+          type: string
+          enum: [value, otpauth]
+          description: A value, or the seed of a one-time code (capability values.totp).
+        replace: { type: boolean, description: It replaces the value there was when it was made. }
+        restrictedTo:
+          type: string
+          enum: [anyone, member, identity]
+          description: >
+            Who may enter the value: whoever holds the link, a signed-in
+            member of the Organization, or the one person in identityId.
+        identityId: { type: string, description: Present when restrictedTo is identity. }
+        description: { type: [string, "null"] }
+        requestedByIdentityId: { type: string }
+        status: { $ref: "#/components/schemas/EntryLinkStatus" }
+        reason:
+          type: string
+          enum: [cancelled, value-changed, credential-ended]
+          description: >
+            Present when the status is cancelled: somebody cancelled it, the
+            item's value changed before a value was entered, or the link ended
+            with the credential that made it (createEntryLink).
+        createdAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+        endedAt:
+          type: [string, "null"]
+          format: date-time
+          description: >
+            When the value was entered, or the link cancelled. Null also for a
+            link that ended with its credential at a time not known.
+
+    EntryLinkInput:
+      type: object
+      required: [item]
+      properties:
+        item: { type: string, minLength: 1, maxLength: 200 }
+        accepts: { type: string, enum: [value, otpauth], description: value when absent. }
+        replace:
+          type: boolean
+          description: >
+            Replace the value there is now. Entering is refused when it is
+            another one by then.
+        restrictedTo: { type: string, enum: [anyone, member, identity], description: member when absent. }
+        identityId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: With restrictedTo identity, the person, a member of the Organization.
+        description:
+          type: string
+          maxLength: 280
+          description: >
+            A few words for the person, shown on the page as the caller's own:
+            plain text in one line, with no link, address or markup
+            (VALIDATION_FAILED otherwise). In the audit log.
+        ttlSeconds:
+          type: integer
+          minimum: 60
+          maximum: 3600
+          description: 900 when absent.
+
+    CreatedEntryLink:
+      type: object
+      required: [link, url]
+      properties:
+        link: { $ref: "#/components/schemas/EntryLink" }
+        url:
+          type: string
+          description: >
+            The page's address, on this installation's public URL. What
+            follows the # is the link's secret, which a browser sends to no
+            server and to no proxy; Varlatch keeps its hash only.
+
+    EntryLinkView:
+      type: object
+      required: [restrictedTo, signInRequired]
+      properties:
+        restrictedTo: { type: string, enum: [anyone, member, identity] }
+        signInRequired:
+          type: boolean
+          description: Whether a person has to sign in first; then nothing below is there.
+        organization: { type: string }
+        project: { type: string }
+        environment: { type: string }
+        item: { type: string }
+        accepts: { type: string, enum: [value, otpauth] }
+        replace: { type: boolean }
+        description: { type: [string, "null"] }
+        requestedBy:
+          type: object
+          required: [name, kind]
+          properties:
+            name: { type: string }
+            kind: { type: string, enum: [human, service, workload, ci, broker, agent] }
+        expiresAt: { type: string, format: date-time }
+        expiresInSeconds: { type: integer, minimum: 0 }
 
     Action:
       type: string
@@ -7057,6 +8207,9 @@ components:
         - config.value.write
         - secret.reveal
         - secret.use
+        - capability.issue
+        - entry-link.create
+        - entry-link.create-open
         - contract.read
         - contract.submit
         - contract.activate
@@ -7996,6 +9149,9 @@ components:
           type: [object, "null"]
           additionalProperties: { type: string }
         createdAt: { type: string, format: date-time }
+        exerciseOnly: { type: boolean, description: "Present (true) when the binding has this limit (ADR-0060)." }
+        runIdClaim: { type: string, description: Present when the binding has this limit. }
+        singleExchange: { type: boolean, description: Present (true) when the binding has this limit. }
 
     IssuedOidcCredential:
       type: object
@@ -8007,6 +9163,8 @@ components:
           description: Returned exactly once; never retrievable again.
         expiresAt: { type: string, format: date-time }
         identityId: { type: string }
+        exerciseOnly: { type: boolean, description: "Present (true) for an exercise-only credential (ADR-0060)." }
+        runId: { type: string, description: The run whose Capabilities it exercises. Present when its binding names a claim. }
 
     Webhook:
       type: object

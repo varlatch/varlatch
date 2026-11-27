@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import "./features/oauth/arrive";
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { detectBackend } from "./lib/backend";
@@ -9,7 +10,11 @@ import "./styles.css";
 // the app (and any Convex client) is loaded (lib/backend.ts). Until
 // /v1/meta answers, a screen says why the dashboard waits.
 const root = createRoot(document.getElementById("root") as HTMLElement);
-void detectBackend({
+// The entry page (ADR-0063) is for people from outside too, and holds a value
+// until it is sent: it is a page of its own, with none of the app's code.
+const entry = window.location.pathname === "/entry";
+if (entry) void import("./features/entry/EntryApp").then(({ EntryApp }) => root.render(<EntryApp />));
+else void detectBackend({
   onWaiting: (why) => root.render(why === "maintenance" ? <MaintenanceScreen /> : <ConnectingScreen />),
 }).then(async () => {
   const { App } = await import("./app");

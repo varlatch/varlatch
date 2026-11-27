@@ -221,6 +221,9 @@ func endMembership(ctx context.Context, tx query.DBTX, organizationID, identityI
 	if err != nil {
 		return ended{}, err
 	}
+	if err := auth.EndEntryLinksOfMember(ctx, tx, at, organizationID, identityID, actorID); err != nil {
+		return ended{}, err
+	}
 	out.grants, out.groups, out.invitations = int64(len(grants)), int64(len(groups)), int64(len(invitations))
 	return out, nil
 }

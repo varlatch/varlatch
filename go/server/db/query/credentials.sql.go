@@ -201,6 +201,18 @@ func (q *Queries) CredentialOfIdentity(ctx context.Context, arg CredentialOfIden
 	return i, err
 }
 
+const exerciseCredential = `-- name: ExerciseCredential :one
+SELECT credential_id, oidc_binding_id, run_id FROM exercise_credentials WHERE credential_id = ?
+`
+
+// What limits an exercise-only credential (ADR-0060).
+func (q *Queries) ExerciseCredential(ctx context.Context, credentialID string) (ExerciseCredential, error) {
+	row := q.db.QueryRowContext(ctx, exerciseCredential, credentialID)
+	var i ExerciseCredential
+	err := row.Scan(&i.CredentialID, &i.OidcBindingID, &i.RunID)
+	return i, err
+}
+
 const getIdentity = `-- name: GetIdentity :one
 SELECT id, kind, name, disabled, installation_admin, created_at, organization_id, last_seen_at, suspended_by_deletion FROM identities WHERE id = ?
 `
@@ -260,6 +272,21 @@ func (q *Queries) InsertCredential(ctx context.Context, arg InsertCredentialPara
 		arg.EvidenceUserVerified,
 		arg.EvidencePasskeyID,
 	)
+	return err
+}
+
+const insertExerciseCredential = `-- name: InsertExerciseCredential :exec
+INSERT INTO exercise_credentials (credential_id, oidc_binding_id, run_id) VALUES (?, ?, ?)
+`
+
+type InsertExerciseCredentialParams struct {
+	CredentialID  string
+	OidcBindingID string
+	RunID         sql.NullString
+}
+
+func (q *Queries) InsertExerciseCredential(ctx context.Context, arg InsertExerciseCredentialParams) error {
+	_, err := q.db.ExecContext(ctx, insertExerciseCredential, arg.CredentialID, arg.OidcBindingID, arg.RunID)
 	return err
 }
 

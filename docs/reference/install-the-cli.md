@@ -7,7 +7,7 @@ Varlatch server runs (shown in the dashboard under **Settings → Server**).
 ## On Linux and macOS
 
 ```sh
-V=0.50.2  # match the release your server runs
+V=0.51.0  # match the release your server runs
 curl -fsSL -o install.sh https://github.com/varlatch/varlatch/releases/download/v$V/install.sh
 sh install.sh
 ```
@@ -73,7 +73,7 @@ file, download the binary, `SHA256SUMS`, and `SHA256SUMS.sigstore.json`
 directly. Example for Linux amd64:
 
 ```sh
-V=0.50.2
+V=0.51.0
 B=https://github.com/varlatch/varlatch/releases/download/v$V
 curl -fLO "$B/varlatch-$V-linux-amd64"
 curl -fLO "$B/SHA256SUMS"

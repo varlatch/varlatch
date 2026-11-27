@@ -6,9 +6,11 @@ import type { Environment } from "@varlatch/protocol";
 import { CopyButton } from "../../components/CodeBlock";
 import { Menu, type MenuItem } from "../../components/Select";
 import { Skeleton, cn } from "../../components/ui";
-import { DraftMarker, RefHint, RotatingMarker, SecretMask } from "../values/bits";
+import { connectionLabel } from "../oauth/model";
+import { CodeValue, ConnectionValue, DraftMarker, RefHint, RotatingMarker, SecretMask } from "../values/bits";
 import { ValueEditor, type CommitHow } from "../values/ValueEditor";
 import {
+  codeLabel,
   draftKind,
   editorKind,
   storedText,
@@ -83,7 +85,8 @@ export function ValuesGridCell({
   const kind = draftKind(draft, server);
   // Plaintext disclosed before a Tailnet Requirement appeared is never shown or copied.
   const disclosed = tailnetOnly ? undefined : revealed;
-  const editable = !loading && !unavailable;
+  // A one-time code's seed and an OAuth connection are entered on their environment's page.
+  const editable = !loading && !unavailable && !server?.totp && !server?.oauth;
   // Copy offers the saved value only; with a draft pending it would mislead.
   const copyValue = draft ? undefined : sensitive ? disclosed?.value : !withheld ? (server?.value ?? undefined) : undefined;
 
@@ -137,7 +140,11 @@ export function ValuesGridCell({
   } else if (state === "set" && server) {
     content = (
       <span className="flex min-w-0 items-center gap-2">
-        {sensitive ? (
+        {server.oauth ? (
+          <ConnectionValue label={connectionLabel(server.oauth) ?? ""} />
+        ) : server.totp ? (
+          <CodeValue label={codeLabel(server) ?? ""} />
+        ) : sensitive ? (
           disclosed ? (
             <span className="min-w-0 truncate font-mono text-[13px] text-fg">{disclosed.value}</span>
           ) : (
@@ -195,11 +202,11 @@ export function ValuesGridCell({
 
   const menu: MenuItem[] = [];
   if (editable) menu.push({ label: sensitive && server ? "Overwrite…" : "Edit", onSelect: actions.edit, hint: "E" });
-  if (sensitive && server && !disclosed && !draft && !tailnetOnly) {
+  if (sensitive && server && !server.totp && !server.oauth && !disclosed && !draft && !tailnetOnly) {
     menu.push({ label: "Reveal", icon: <Eye size={14} />, hint: "audited", onSelect: actions.reveal });
   }
   if (sensitive && disclosed) menu.push({ label: "Hide again", icon: <Eye size={14} />, onSelect: actions.hide });
-  if (server?.source === "self" && !draft && !server.rotating) {
+  if (server?.source === "self" && !draft && !server.rotating && !server.totp && !server.oauth) {
     menu.push({ label: "Rotate…", icon: <RefreshCw size={14} />, onSelect: actions.rotate });
   }
   if (server?.rotating) menu.push({ label: "Finish rotation", icon: <RefreshCw size={14} />, onSelect: actions.finishRotation });

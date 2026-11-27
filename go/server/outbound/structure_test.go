@@ -67,6 +67,7 @@ var serverExceptions = []exception{
 	{"server/daemon/schema.go", "net.DialTimeout", 1, "a schema upgrade checks that no varlatchd answers on the data directory's control socket, as restore does"},
 	{"server/auth/authtest/enrollpasskey/main.go", "http.Client", 1, "a test tool, never shipped: go/install/test-setup.sh's enrollment of a passkey against the installation it set up (its own address, or the proxy in front of it), as a browser would"},
 	{"server/auth/authtest/enrollpasskey/main.go", "http.Transport", 1, "the same test tool's -insecure transport, for the test CA of the setup test's public HTTPS (Pebble)"},
+	{"server/oauth/oauthtest/provider.go", "net.Dialer", 1, "a test tool, never shipped: the fake OAuth provider's connections to itself, in the outbound policy's test options"},
 	{"server/daemon/doctor.go", "net.DialTimeout", 1, "doctor asks the running varlatchd for its live part through the data directory's control socket (its own Unix socket, never a destination), the server's peer checked as route checks it"},
 	{"server/clientaddr/clientaddr.go", "net.DefaultResolver", 1, "the names in the host's trusted_proxies, looked up every 30 seconds (the host's configuration, never an Organization's)"},
 	{"server/auditexport/probe.go", "backup.NewClient", 1, "the audit export's destination, on the outbound policy's audit_export client (ADR-0057 Decision 9: the S3 client takes the policy's transport)"},
