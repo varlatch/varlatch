@@ -16,8 +16,8 @@ import (
 // bearer lives 15 minutes, a browser signs out, `varlatch logout` revokes its
 // own credential), and that ends no link they sent. What ends them is taking
 // a session away, which is known only while it happens, so it ends the links
-// in its own job: revoking a credential with another one, and losing the
-// membership. Which login a link was made with is not asked then: whoever had
+// in its own job: revoking a credential with another one, signing out the
+// other browsers, and losing the membership. Which login a link was made with is not asked then: whoever had
 // one may have given it up themselves.
 
 // EntryLinkCredentialEnded is the reason of a link that ended with its
@@ -54,6 +54,20 @@ func endEntryLinksOfPerson(ctx context.Context, tx query.DBTX, now int64, p *Pri
 	if p.Identity.Kind != "human" || credentialID == p.Credential.ID {
 		return nil
 	}
+	links, err := query.New(tx).EndEntryLinksOfPerson(ctx, query.EndEntryLinksOfPersonParams{
+		Now: now, RequestedBy: p.Identity.ID, RevokedWith: p.Credential.ID,
+	})
+	if err != nil {
+		return err
+	}
+	return recordEndedEntryLinks(ctx, tx, links, p.Identity.ID)
+}
+
+// endEntryLinksOfOtherSessions ends, in the job that signs out a person's
+// other browsers, all the person's links but those of the browser session
+// that stays: what endEntryLinksOfPerson ends when they revoke a credential
+// from that session.
+func endEntryLinksOfOtherSessions(ctx context.Context, tx query.DBTX, now int64, p *Principal) error {
 	links, err := query.New(tx).EndEntryLinksOfPerson(ctx, query.EndEntryLinksOfPersonParams{
 		Now: now, RequestedBy: p.Identity.ID, RevokedWith: p.Credential.ID,
 	})

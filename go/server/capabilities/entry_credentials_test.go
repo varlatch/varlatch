@@ -283,6 +283,19 @@ func TestAPersonsOrdinaryEndsEndNoLink(t *testing.T) {
 }
 
 // Taking a session, or the person's access, away ends what was made with it.
+// signOutOthers signs out Alice's other browsers with the bearer as, as
+// the dashboard's Sign out everywhere else does.
+func signOutOthers(as string) func(w *world) {
+	return func(w *world) {
+		w.t.Helper()
+		w.exec("INSERT INTO auth_user_links (better_auth_user_id, identity_id) VALUES (?, ?) ON CONFLICT DO NOTHING", "usr_"+w.idn("Alice"), w.idn("Alice"))
+		a := w.want("sign out the other browsers", w.call("POST", "/v1/me/sessions/sign-out-others", as, nil), 200, "")
+		if fmt.Sprint(a.body["endedSessions"]) == "0" {
+			w.t.Fatalf("no session signed out: %s", a.raw)
+		}
+	}
+}
+
 func TestAPersonsLinkEndsWithAWithdrawal(t *testing.T) {
 	ses := func(w *world) {
 		w.browser("a", "Alice", "ses_a")
@@ -327,6 +340,8 @@ func TestAPersonsLinkEndsWithAWithdrawal(t *testing.T) {
 		"the CLI's, from another CLI":                {"cli", revoke("crd_t_cli", "cli2")},
 		"the move to another address":                {"a", func(w *world) { w.moved() }},
 		"revoked from elsewhere, and then signs out": {"a", func(w *world) { revoke("crd_t_a", "b")(w); w.exec("DELETE FROM auth_sessions WHERE id = 'ses_a'") }},
+		"the other browsers signed out, from another session": {"a", signOutOthers("b")},
+		"the other browsers signed out, the CLI's":            {"cli", signOutOthers("b")},
 	} {
 		t.Run(what, func(t *testing.T) {
 			w := entryWorld(t)
@@ -370,6 +385,13 @@ func TestAPersonsLinkEndsWithAWithdrawal(t *testing.T) {
 	revoke("crd_t_b", "handed")(w)
 	w.want("its own", w.submit("bob", l, nil), 200, "")
 	w.want("the browser's", w.submit("bob", m, nil), 410, "EXPIRED")
+	// Signing out the other browsers keeps what the browser that stays made.
+	w = entryWorld(t)
+	ses(w)
+	l, m = w.link("b", nil), w.link("a", with{"item": "NEW_2"})
+	signOutOthers("b")(w)
+	w.want("the browser that stays", w.submit("bob", l, nil), 200, "")
+	w.want("a browser signed out", w.submit("bob", m, nil), 410, "EXPIRED")
 	// The membership: removed, and added again.
 	w = entryWorld(t)
 	w.browser("bobs", "bob", "ses_bob")

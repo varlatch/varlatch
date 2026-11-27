@@ -432,7 +432,8 @@ func (s *Service) RevokeOwnCredential(ctx context.Context, p *Principal, credent
 // and returns how many: the session-end trigger revokes each session's
 // browser bearers, each a credential.revoked event, so the browser cannot
 // mint another. CLI credentials, the hand-off's included, stay. Only a
-// browser bearer may: it names the session that stays.
+// browser bearer may: it names the session that stays. The caller's
+// pending entry links end but those of that session (ADR-0063).
 func (s *Service) SignOutOtherSessions(ctx context.Context, p *Principal) (int64, error) {
 	if p.Identity.Kind != "human" || p.Credential.Kind != KindBrowser || p.Credential.AuthSessionID == nil {
 		return 0, domainerr.New("PERMISSION_DENIED", "Only a browser session bearer may sign out the other browsers")
@@ -456,7 +457,12 @@ func (s *Service) SignOutOtherSessions(ctx context.Context, p *Principal) (int64
 		ended, err = q.DeleteOtherAuthSessionsOfIdentity(ctx, query.DeleteOtherAuthSessionsOfIdentityParams{
 			Keep: *p.Credential.AuthSessionID, IdentityID: p.Identity.ID,
 		})
-		return err
+		if err != nil {
+			return err
+		}
+		// What it takes away ends the person's entry links as revoking a
+		// credential from elsewhere does: all but this browser session's.
+		return endEntryLinksOfOtherSessions(ctx, tx, s.micros(), p)
 	})
 	return ended, err
 }

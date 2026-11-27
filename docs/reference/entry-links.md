@@ -52,8 +52,8 @@ the item's value changes, and **with the credential that made it**:
 | --- | --- | --- |
 | a service credential | it is revoked (by the identity itself too), or its identity retired; it expires: the link's `expiresAt` is never later | its use limit is used up |
 | a credential [exchanged for an OIDC token](ci-and-machines.md) | it is revoked, also after it expired, or its identity retired; an OIDC binding of the identity is revoked after the exchange | it expires |
-| a person's dashboard | the person is disabled; their membership ends, also if they are added again; they revoke any of their credentials from anywhere but that browser session; an operator moves the installation to another address | the 15 minutes of a bearer pass, the session expires, they sign out, reload the page or go on in the CLI |
-| a person's CLI login | the person is disabled or their membership ends; they revoke any of their credentials with another than that login | it expires, or `varlatch logout` gives it up |
+| a person's dashboard | the person is disabled; their membership ends, also if they are added again; they revoke any of their credentials from anywhere but that browser session, or sign out their other browsers from another one; an operator moves the installation to another address | the 15 minutes of a bearer pass, the session expires, they sign out, reload the page or go on in the CLI |
+| a person's CLI login | the person is disabled or their membership ends; they revoke any of their credentials with another than that login, or sign out their other browsers | it expires, or `varlatch logout` gives it up |
 
 It is looked at in the job that writes the value. A link that ended this way is
 refused as a cancelled one is, with the same answer: whoever holds it is not
@@ -72,9 +72,9 @@ log says how.
   login may have given it up after making links with it. So revoking any of
   one's credentials from elsewhere ends all the links one has pending,
   dashboard and CLI alike, but those of the browser session or login it is
-  done with. **Sign out everywhere else** does that. Where nothing else is
-  live there is nothing to revoke: cancel the links, or they end within the
-  hour.
+  done with. **Sign out everywhere else** does the same, keeping the links of
+  the browser session it is done in, also when no other browser is signed in.
+  Otherwise cancel the links, or they end within the hour.
 - **Removing a passkey** ends no session, and no link.
 - **Replacing a service credential** ends the links made with the old one: wait
   an hour before you revoke it, or make them again.
