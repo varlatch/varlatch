@@ -106,7 +106,7 @@ sudo varlatch admin backup run
 ```
 
 Download that archive with your off-host read key onto an isolated machine and
-[rehearse a restore](backup.md#rehearse-a-restore) there—a successful upload is
+[rehearse a restore](backup.md#rehearse-a-restore) there: a successful upload is
 not a restore test. For more options and other S3 providers, see
 [Backup and recovery](backup.md#s3-compatible-destinations).
 

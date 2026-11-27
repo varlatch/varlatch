@@ -24,7 +24,7 @@ each step:
 2. **Pick or create** the organization and project.
 3. **Create environments** (`development` and `production` by default if none exist).
 4. **Write `varlatch.toml`** and the instruction files coding agents read.
-5. **Import your `.env` files**—showing names, inferred types, and sensitivity
+5. **Import your `.env` files**, showing names, inferred types, and sensitivity
    (never values), adding new items to the Contract, and asking before
    overwriting existing values or activating the Contract.
 6. **Clean up** by offering to delete each `.env` file once every value is

@@ -28,7 +28,7 @@ Want to inspect the signature with `cosign` before running `install.sh`? See
 ## What you need
 
 - **Linux (amd64 or arm64)** with systemd, `curl`, `sha256sum`, and `sudo`
-  (1 GiB RAM, 1–2 CPU cores, 5 GB local disk — see
+  (1 GiB RAM, 1–2 CPU cores, 5 GB local disk; see
   [Host requirements](self-hosting/requirements.md)).
 - **An address for people to reach it** (or none if you are trying it on
   `localhost` first):
@@ -37,7 +37,7 @@ Want to inspect the signature with `cosign` before running `install.sh`? See
 | --- | --- | --- |
 | **public** | `https://vault.example.com` (automatic Let's Encrypt HTTPS) | DNS pointing to this host, plus TCP ports `80` and `443` open |
 | **proxy** | Whatever your reverse proxy serves (also for LAN or tailnet-only dashboards) | A reverse proxy forwarding the root of the hostname to `127.0.0.1:8686` |
-| **localhost** | `http://localhost:8686` (this machine only) | Nothing—great for trying Varlatch in 2 minutes |
+| **localhost** | `http://localhost:8686` (this machine only) | Nothing: great for trying Varlatch in 2 minutes |
 | **tailnet** | Your proxy's address, plus `varlatchd` joins your tailnet | A tagged Tailscale auth key ([Tailscale setup](self-hosting/configuration.md#tailscale)) |
 
 Choose your address carefully: passkeys are bound to the hostname, so changing
@@ -57,7 +57,7 @@ it later means everyone re-registers their passkey with
    restored.
 6. Runs the first encrypted backup, verifies it, and runs `varlatch doctor`.
 
-If setup is interrupted, run `sudo varlatch setup` again—it picks up where it
+If setup is interrupted, run `sudo varlatch setup` again: it picks up where it
 left off and never overwrites keys it already created.
 
 <details>
@@ -108,9 +108,9 @@ lists the exact cleanup commands, or you can
    [Upgrading](operations/upgrade.md), and
    [Configuration](self-hosting/configuration.md).
 
-> **Upgrading from 0.23.0 (Docker Compose)?** Do not run a fresh install—follow
-> [Migrating from 0.23.0 to 0.50](operations/migrate-to-0.50.md). Legacy Compose
-> docs are in [Docker Compose (0.23.0 legacy)](../infra/compose/README.md).
+> **Upgrading from 0.23.x (Docker Compose)?** Do not run a fresh install: follow
+> [Migrating from 0.23.x to 0.50](operations/migrate-to-0.50.md). Legacy Compose
+> docs are in [Docker Compose (0.23.x legacy)](../infra/compose/README.md).
 
 <details>
 <summary>Moved sections (links from older pages)</summary>

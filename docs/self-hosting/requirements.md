@@ -138,8 +138,8 @@ I/O.
 ### Sharing the host with other workloads
 
 The figures above assume a host dedicated to Varlatch. On a small (2-core) host
-shared with other containers—especially **Coolify**, whose scheduler spikes CPU
-during the first 10 seconds of every minute—give Varlatch higher CPU priority:
+shared with other containers, especially **Coolify**, whose scheduler spikes CPU
+during the first 10 seconds of every minute: give Varlatch higher CPU priority:
 
 - **systemd (`install.sh`):** add a drop-in (`sudo systemctl edit varlatchd`)
   with:
@@ -149,7 +149,7 @@ during the first 10 seconds of every minute—give Varlatch higher CPU priority:
   ```
   Then `sudo systemctl restart varlatchd`.
 - **Docker / Coolify container:** set `cpu_shares` to **`4096`** (not `1024` or
-  `2048`—on older cgroup v2 runtimes, `1024` maps to weight `39`, *below* the
+  `2048`: on older cgroup v2 runtimes, `1024` maps to weight `39`, *below* the
   default `100`).
 
 <details>
@@ -169,7 +169,9 @@ during the first 10 seconds of every minute—give Varlatch higher CPU priority:
   (Without extra writes on a separate systemd test, p95 during `:00–:09` was
   132 ms vs 22–28 ms in the rest of the minute. In the weight-39 runs, Sync
   Target runs also overlapped the minute boundary; in the weight-157 run they
-  did not.)
+  did not. In the weight-39 runs, some requests could not be sent on time, so
+  their figures are the requests' own response times; the weight-157 run is
+  measured from each request's scheduled start.)
 
 - **Why `4096` on cgroup v2:** Docker maps `cpu_shares` to `cpu.weight`
   (default `100` for containers that set nothing):

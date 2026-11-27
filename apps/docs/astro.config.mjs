@@ -105,8 +105,8 @@ export default defineConfig({
           collapsed: true,
           items: [
             { label: "Glossary", slug: "concepts" },
-            { label: "Migrating from 0.23.0 to 0.50", slug: "operations/migrate-to-0.50" },
-            { label: "Docker Compose (0.23.0 legacy)", slug: "self-hosting/compose" },
+            { label: "Migrating from 0.23.x to 0.50", slug: "operations/migrate-to-0.50" },
+            { label: "Docker Compose (0.23.x legacy)", slug: "self-hosting/compose" },
             { label: "Changelog", link: "/changelog/" },
           ],
         },

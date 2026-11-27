@@ -161,7 +161,7 @@ sudo sh install.sh --server
 
 - **Full server setup & local trial:** [Install Varlatch](docs/self-hosting.md)
 - **Docker or Coolify:** [Docker and Coolify](docs/self-hosting/docker-and-coolify.md)
-- **Upgrading from 0.23.0 (Docker Compose):** [Migrating to 0.50](docs/operations/migrate-to-0.50.md)
+- **Upgrading from 0.23.x (Docker Compose):** [Migrating to 0.50](docs/operations/migrate-to-0.50.md)
 
 ### 2. Join a team or connect a project
 
@@ -294,7 +294,7 @@ Copyright © 2026 Robotsson. Varlatch is open source, licensed by directory
 - **Apache-2.0:** everything else, including the CLI, the SDK and other
   packages, and the deployment files.
 
-The Convex backend that 0.23.0 and earlier run by default is source-available,
+The Convex backend that 0.23.x and earlier run by default is source-available,
 not open source; from 0.50, Varlatch runs none. Its license, FSL-1.1-Apache-2.0, permits internal use but not offering
 it to others as a competing commercial service, and each version becomes
 Apache-2.0 two years after its release. Running Varlatch for your own

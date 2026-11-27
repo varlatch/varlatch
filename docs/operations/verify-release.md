@@ -1,7 +1,7 @@
 # Verifying a release
 
 Every Varlatch release after 0.15.0 is signed keylessly by its GitHub Actions
-release workflow via Sigstore—no separate signing key to fetch or trust.
+release workflow via Sigstore: no separate signing key to fetch or trust.
 
 > `install.sh`, `install.ps1`, `varlatch upgrade`, and `varlatch self-update`
 > already verify these signatures automatically before installing anything. Use
@@ -86,20 +86,21 @@ Then pull and run the image by that exact verified digest.
 - Releases **after 0.15.0** are published from the public repository and are
   **always signed** (`SHA256SUMS.sigstore.json` plus image signatures). If a
   release after 0.15.0 is missing its signature or fails verification, **stop
-  and do not install it**—never fall back to unsigned checks.
+  and do not install it**; never fall back to unsigned checks.
 - Releases **0.15.0 and earlier** were published while the repository was
   private and are unsigned.
 - Every night, the repository's
   [image scan](https://github.com/varlatch/varlatch/actions/workflows/image-scan.yml)
   scans the latest published images with OSV-Scanner and reports known
-  vulnerabilities in the run summary.
+  vulnerabilities in the run summary. It only reports: it never changes a
+  published release or holds back the next one.
 
 <details>
-<summary>Legacy: verifying 0.23.0 and earlier (three Compose images, provenance, SBOM)</summary>
+<summary>Legacy: verifying 0.23.x and earlier (three Compose images, provenance, SBOM)</summary>
 
 <a id="images"></a>
 
-Releases up to 0.23.0 ship three images pinned in `varlatch-release.json`, with
+Releases up to 0.23.1 ship three images pinned in `varlatch-release.json`, with
 signatures stored in `ghcr.io/varlatch/varlatch-signatures`:
 
 ```sh
@@ -111,6 +112,9 @@ for image in $(jq -r '.images | to_entries[]
     && echo "verified $image"
 done
 ```
+
+Without `COSIGN_REPOSITORY`, cosign looks beside each image and reports
+that no signatures were found. 0.15.1's signatures are in both places.
 
 <a id="provenance-and-sbom"></a>
 
@@ -124,7 +128,7 @@ docker buildx imagetools inspect "$image" --format '{{ json (index .SBOM "linux/
 
 Releases built on self-hosted runners attach SPDX 2.3 SBOMs as release files
 (`sbom-IMAGE-VERSION-linux-ARCH.spdx.json`), covered by `SHA256SUMS`. Up to
-0.23.0, `varlatch upgrade` did not verify signatures automatically—verify
+0.23.1, `varlatch upgrade` did not verify signatures automatically: verify
 before upgrading.
 
 </details>
@@ -137,7 +141,11 @@ before upgrading.
 Releases 0.15.0 and earlier are not cryptographically signed. Checksums and
 unsigned attestations confirm download integrity and claimed provenance, **not**
 who published them (anyone with repo/registry write access could replace both).
-Save as `verify-unsigned.sh` and run `bash verify-unsigned.sh 0.15.0`:
+Save as `verify-unsigned.sh` and run `bash verify-unsigned.sh 0.15.0`. Do not
+paste it into an interactive shell, where a failed check would not stop the
+commands after it. It runs the downloaded CLI only at the end, once every
+other check has passed; that runs code from the release, as installing it
+would.
 
 ```bash
 #!/usr/bin/env bash

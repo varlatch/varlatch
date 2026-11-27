@@ -19,7 +19,7 @@ the property cannot be enforced.
   explicit confirmations) when an agent acts with your own credential.
 - **Who is trusted:** Anyone with `root` on the server host, access to the
   `varlatchd` process/container, or access to the Root KEK is an
-  **Infrastructure Operator**—above application-level policy. Varlatch audits
+  **Infrastructure Operator**, above application-level policy. Varlatch audits
   host interventions rather than pretending to block root.
 - **What is NOT claimed:** Plain `varlatch run` hands plaintext to the child
   process (so the app can use it). Output redaction, secret scanning, and

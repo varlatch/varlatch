@@ -34,7 +34,7 @@ can also install the CLI for you.
 
 ## From your installation
 
-*(Optional — only if your server administrator enabled
+*(Optional: only if your server administrator enabled
 [`serve_cli = on`](../self-hosting/configuration.md#serving-the-cli), which is
 off by default.)* Your server can host the exact CLI version it runs:
 
@@ -51,7 +51,7 @@ irm https://vault.example.com/install.ps1 -OutFile install.ps1
 if ($?) { powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 }
 ```
 
-If that returns `404`, `serve_cli` is off—use the GitHub release commands above
+If that returns `404`, `serve_cli` is off: use the GitHub release commands above
 instead. Note that installing from your server trusts that server (and its host
 operator) to serve the install script; the downloaded CLI still checks the
 official release signature.
@@ -124,7 +124,7 @@ See [Removing Varlatch](uninstall.md#what-varlatch-puts-on-your-machine).
 <a id="nodejs-version"></a>
 
 From 0.50, the CLI is a native binary and no longer needs Node.js. `self-update`
-from 0.23.0 or earlier cannot jump to 0.50 directly—run `install.sh`,
+from 0.23.x or earlier cannot jump to 0.50 directly: run `install.sh`,
 `install.ps1`, or `brew upgrade varlatch` above to replace it. Your sign-ins
 and settings carry over automatically. (On a legacy Compose host, the old CLI
 is kept alongside as `varlatch-ts` for migration.) For 0.23.0 Node.js

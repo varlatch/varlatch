@@ -1,7 +1,7 @@
 # Agent-safe runs
 
-`varlatch run --agent-safe` runs an untrusted process—such as an autonomous AI
-coding agent—so it can **use** API credentials without ever **reading** them.
+`varlatch run --agent-safe` runs an untrusted process, such as an autonomous AI
+coding agent, so it can **use** API credentials without ever **reading** them.
 
 ```sh
 varlatch run --agent-safe --agent "coding agent" \
