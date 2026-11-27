@@ -5,6 +5,34 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
+## Unreleased
+
+### Server
+
+- **The container image upgrades the database schema when it starts.** An
+  installation that runs the image is upgraded by deploying a newer
+  release's digest, but `varlatchd` never upgraded the database schema
+  there: on a database of an older schema the new container stopped with
+  `run varlatch upgrade`, a command for systemd hosts, and kept restarting
+  until the previous digest was deployed again. This happened from 0.50.0
+  to 0.50.2 (schema 2 to 3). Now, in the image, `varlatchd serve` applies
+  the schema upgrade itself before it serves, when the upgrade is
+  rollback-safe (the release that wrote the database still opens it
+  afterwards), and logs it; the previous digest then still serves the
+  upgraded database, with no restore. An upgrade that is not rollback-safe
+  is refused and changes nothing, and the message gives the steps: a
+  backup with the previous image, then `varlatchd admin schema upgrade`
+  with the new image in a one-off container. A systemd installation is
+  unchanged: `varlatch upgrade` applies the schema upgrade, with its
+  snapshot and its way back. `varlatchd admin schema status` in the image
+  says which of the two an upgrade is.
+
+### Upgrading
+
+- The container image: an installation on 0.50.0 or 0.50.2 can set this
+  release's digest and redeploy; the schema upgrade runs at start. See
+  [Upgrading by digest](docs/self-hosting/docker-and-coolify.md#upgrading-by-digest).
+
 ## 0.50.2 (2026-11-26)
 
 A security fix release. 0.50.1 was tagged but never published: its changes
@@ -37,7 +65,11 @@ are part of this release.
 - A systemd installation: `varlatch upgrade`, which applies schema version
   3 (`varlatchd admin schema upgrade`).
 - The container image: set the new digest from this release's
-  `varlatchd-image.txt` and redeploy.
+  `varlatchd-image.txt` and redeploy. From 0.50.0, the 0.50.2 image does
+  not upgrade the schema itself and stops on the older database: run its
+  `varlatchd admin schema upgrade` once first, as
+  [Upgrading by digest](docs/self-hosting/docker-and-coolify.md#upgrading-by-digest)
+  describes, or upgrade straight to a later release.
 - `varlatch migrate` now starts from 0.23.1, the patched TypeScript
   release: upgrade a 0.23.0 installation to 0.23.1 first. A rollback within
   the window returns to 0.23.1.

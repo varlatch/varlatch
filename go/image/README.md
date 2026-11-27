@@ -52,6 +52,23 @@ checked. Coolify passes every environment variable to every service of a
 stack, so a key set there as a variable would be in every container: give
 it as a file instead.
 
+## Upgrades by digest
+
+An installation of the image is upgraded by deploying a newer release's
+digest ([Upgrading by digest](../../docs/self-hosting/docker-and-coolify.md#upgrading-by-digest)).
+The image sets `VARLATCH_IMAGE=varlatchd`, and in it `varlatchd serve`
+upgrades an older database's schema when it starts, before it serves, when
+the upgrade is rollback-safe: the release that wrote the database still
+opens it, so the previous digest is the way back. One that is not
+rollback-safe is refused and changes nothing; it runs as `varlatchd admin
+schema upgrade` in a one-off container, after a backup. Outside the image
+(`VARLATCH_IMAGE` unset), serve refuses an older schema, and `varlatch
+upgrade` upgrades a systemd installation with its snapshot. In the image,
+`VARLATCH_IMAGE` also makes `varlatchd admin` and the CLI refuse a key in
+their environment (above); do not unset it. Never set it on a host install:
+there it would move the schema at start without `varlatch upgrade`'s
+snapshot.
+
 The container runs with a read-only root filesystem (`docker run
 --read-only`) and needs no tmpfs: it writes only to the data volume.
 SQLite's temporary files go there too (the image sets `SQLITE_TMPDIR`, and
@@ -73,7 +90,8 @@ node go/image/check-image.mjs <image>
 `<dir>` holds `varlatchd-<v>-linux-<arch>` and `varlatch-<v>-linux-<arch>`
 (`go/release/build-assets.sh` writes them). `--check` instead of `--load`
 builds every platform given and keeps nothing. The check uses Docker and its
-compose plugin only;
+compose plugin only, and pulls one published image: 0.50.0's, by digest, for
+its upgrade by digest across a schema change;
 every container and volume it makes is named `vl-image-test-<run>-*` and
 removed by that name. `VARLATCH_TEST_SLOWDOWN` multiplies its waits (the
 release runs it on an emulated arm64 image when no arm64 runner is

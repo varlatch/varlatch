@@ -39,6 +39,14 @@
  *      image's SQLITE_TMPDIR, where varlatchd finds the place by itself
  *   8. with nowhere to write a temporary file, serve refuses to start and
  *      says what to set
+ *   9. an upgrade by digest across a schema change, as the Coolify and
+ *      Docker runbooks do it (docs/self-hosting/docker-and-coolify.md,
+ *      Upgrading by digest): an installation of the published 0.50.0
+ *      image (schema 2), then this image on the same volume. A rollback-
+ *      safe upgrade is applied by serve at start, and the previous digest
+ *      then serves the upgraded database again; one that is not rollback-
+ *      safe is refused, names the one-off procedure, and that procedure
+ *      (`admin schema upgrade` in a one-off container) lets it serve
  *
  * Every container and volume it makes is named vl-image-test-<run>-*, and
  * it removes exactly those. Keys are random, made inside a container from
@@ -59,6 +67,12 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const BUSYBOX = "busybox@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec";
+/**
+ * The published 0.50.0 image, schema 2: the digest its release's signed
+ * varlatchd-image.txt names. Check 9 upgrades from it by digest; any later
+ * schema is a schema change from it.
+ */
+const PREVIOUS_SCHEMA_IMAGE = "ghcr.io/varlatch/varlatchd:0.50.0@sha256:36ece9647de3250d64eb90c0acd7161b021696fbad8b5103c7652c9ad22f8287";
 const IMAGE_USER = "65532:65532";
 const CONF_DIR = "/etc/varlatch";
 const CONF = `${CONF_DIR}/varlatchd.conf`;
@@ -119,10 +133,10 @@ function remove(name) {
 }
 
 /** Starts varlatchd from the image, detached, on a loopback port: its name and origin. */
-async function serve(name, data, keys, conf, options = []) {
+async function serve(name, data, keys, conf, options = [], from = image) {
   const c = containerName(name);
   // A read-only root filesystem: varlatchd writes only to the data volume.
-  docker(["run", "-d", "--name", c, "--read-only", ...options, "-p", "127.0.0.1:0:8686", "-v", `${data}:${DATA}`, "-v", `${keys}:/keys:ro`, "-v", `${conf}:${CONF_DIR}:ro`, image]);
+  docker(["run", "-d", "--name", c, "--read-only", ...options, "-p", "127.0.0.1:0:8686", "-v", `${data}:${DATA}`, "-v", `${keys}:/keys:ro`, "-v", `${conf}:${CONF_DIR}:ro`, from]);
   return started(c);
 }
 function started(c) {
@@ -522,6 +536,50 @@ async function main() {
   assert.match(why, /varlatchd does not start: SQLite has no directory for its temporary files/, `the refusal: ${why.slice(0, 400)}`);
   assert.match(why, /set SQLITE_TMPDIR/, "the refusal says what to set");
   console.log("ok 8 with nowhere to write a temporary file, serve refuses to start");
+
+  // 9. An upgrade by digest across a schema change, and back.
+  docker(["pull", "-q", PREVIOUS_SCHEMA_IMAGE], { env: { ...process.env, DOCKER_CLI_HINTS: "false" } });
+  const upgraded = volume("upgraded");
+  const previous = await serve("previous-1", upgraded, keys, conf, [], PREVIOUS_SCHEMA_IMAGE);
+  await until(previous, 200, "an installation of the previous schema's release");
+  // The runbook's backup before the new digest is deployed.
+  JSON.parse(admin(previous, ["backup", "run", "--json"]));
+  docker(["stop", "-t", "30", previous.c]);
+  remove(previous.c);
+  const schema = (name) => JSON.parse(once(name, ["--read-only", ...mounts(upgraded), image, "admin", "schema", "status", "--json", "--config", CONF]).stdout);
+  const found = schema("upgraded-status");
+  assert.ok(found.database && found.needsUpgrade, `this image needs to upgrade the previous release's database: ${JSON.stringify(found)}`);
+  const from = found.database.schemaVersion;
+  const rollbackSafe = found.binary.compatibleFrom <= from;
+  if (rollbackSafe) {
+    const next = await serve("upgraded-1", upgraded, keys, conf);
+    await until(next, 200, "this image on the previous release's database");
+    const logs = docker(["logs", next.c]);
+    assert.match(`${logs.stdout}${logs.stderr}`, new RegExp(`upgraded the database's schema.*from=${from} to=${found.binary.schemaVersion}`), "the upgrade at start is logged");
+    docker(["stop", "-t", "30", next.c]);
+    remove(next.c);
+    const after = schema("upgraded-after");
+    assert.equal(after.database.schemaVersion, found.binary.schemaVersion, "the schema after the upgrade at start");
+    assert.equal(after.needsUpgrade, false, "nothing left to upgrade");
+    // Back by digest, with no restore: the previous release opens the result.
+    const back = await serve("previous-2", upgraded, keys, conf, [], PREVIOUS_SCHEMA_IMAGE);
+    await until(back, 200, "the previous digest on the upgraded database");
+    admin(back, ["kek", "verify"]);
+    remove(back.c);
+    console.log(`ok 9 an upgrade by digest from schema ${from} to ${found.binary.schemaVersion} is applied at start, and the previous digest serves it again`);
+  } else {
+    const refusedStart = once("upgraded-refused", ["--read-only", ...mounts(upgraded), image], { allowFail: true });
+    const said = `${refusedStart.stdout}${refusedStart.stderr}`;
+    assert.notEqual(refusedStart.status, 0, "serve starts on a database whose upgrade is not rollback-safe");
+    assert.match(said, /is not rollback-safe/, `the refusal says why: ${said.slice(0, 600)}`);
+    assert.match(said, /admin schema upgrade/, "the refusal names the one-off procedure");
+    assert.equal(schema("upgraded-unchanged").database.schemaVersion, from, "the refusal changed nothing");
+    once("upgraded-oneoff", ["--read-only", ...mounts(upgraded), image, "admin", "schema", "upgrade", "--config", CONF]);
+    const next = await serve("upgraded-1", upgraded, keys, conf);
+    await until(next, 200, "this image after the one-off schema upgrade");
+    remove(next.c);
+    console.log(`ok 9 an upgrade by digest from schema ${from} that is not rollback-safe is refused at start, and the one-off procedure upgrades it`);
+  }
 }
 
 let failed = false;

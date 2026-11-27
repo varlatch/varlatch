@@ -258,7 +258,9 @@ jobs:
           # refusal varlatchd and the CLI share (lib/keyenv, with the key
           # parsers and the files kept open it uses) and the CLI's entrypoint, which
           # applies it in the image; the storage engine (its temporary files, under a
-          # read-only root filesystem) and the Compose file the check runs.
+          # read-only root filesystem) and the Compose file the check runs;
+          # the schema and its upgrade steps (server/db), which serve applies
+          # at start in the image (the check's upgrade by digest).
           # scripts/conformance/test/routing.test.mjs checks that these
           # select every file the image's build and check read and the
           # refusal's Go sources.
@@ -272,6 +274,7 @@ jobs:
             go/lib/preread/*
             go/lib/envelope/*
             go/lib/storage/*
+            go/server/db/*
             go/cmd/varlatch/main.go
             infra/coolify/varlatchd.compose.yml
             LICENSE

@@ -117,12 +117,58 @@ In a container deployment, the pinned image digest **is** the version (`varlatch
 is for systemd hosts only):
 
 1. Look up and verify the new release's digest ([Verifying a release](../operations/verify-release.md)).
-2. Take a fresh backup (`docker exec <container> varlatchd admin backup run`).
+2. Take a fresh backup (`docker exec <container> varlatchd admin backup run`) and
+   keep a copy off the host.
 3. Update `VARLATCH_VARLATCHD_DIGEST` in Coolify (or your `docker run` digest)
    and redeploy.
 4. Confirm `GET https://vault.example.com/readyz` returns `200`.
 
-To roll back a compatible release, restore the previous digest and redeploy.
+**The database schema.** When the new release has a newer database schema,
+`varlatchd` upgrades it when the container starts, before it serves, and logs
+`upgraded the database's schema` with the old and new versions. It does this
+only when the upgrade is **rollback-safe**: the release you came from can still
+open the upgraded database. Every release so far is. Check before you deploy
+by running the new image once, with the running container left as it is:
+
+```sh
+docker run --rm --read-only -v /srv/varlatch/data:/var/lib/varlatch \
+  -v /srv/varlatch/keys:/keys:ro \
+  -v /srv/varlatch/varlatchd.conf:/etc/varlatch/varlatchd.conf:ro \
+  ghcr.io/varlatch/varlatchd@sha256:<new-digest> admin schema status
+```
+
+Images up to 0.50.2 do not upgrade the schema when they start: on an older
+database they stop with `run varlatch upgrade`. For one of them (for example
+0.50.0 to 0.50.2), use the by-hand procedure below, or upgrade straight to a
+later release.
+
+**Going back.** After a rollback-safe upgrade, set the previous digest again
+and redeploy: the previous release opens the upgraded database, and nothing
+needs restoring.
+
+**A release that is not rollback-safe.** Its release notes say so, and the new
+container does not start: it stops with a message that its schema upgrade is
+not rollback-safe and changes nothing. Upgrade it by hand (the same steps work
+for any schema upgrade):
+
+1. Redeploy the previous digest if you already deployed the new one, and take a
+   backup with it (`docker exec <container> varlatchd admin backup run`). Keep a
+   copy off the host: after an upgrade that is not rollback-safe, it is the only
+   way back.
+2. Stop the container (in Coolify, stop the resource).
+3. Run the new image once on the same volume, keys and configuration:
+
+   ```sh
+   docker run --rm --read-only -v /srv/varlatch/data:/var/lib/varlatch \
+     -v /srv/varlatch/keys:/keys:ro \
+     -v /srv/varlatch/varlatchd.conf:/etc/varlatch/varlatchd.conf:ro \
+     ghcr.io/varlatch/varlatchd@sha256:<new-digest> admin schema upgrade
+   ```
+
+4. Set the new digest and deploy, then confirm `/readyz` returns `200`.
+
+To go back after such an upgrade, restore the backup from step 1 with the
+previous image ([Restoring a backup in a container](#restoring-a-backup-in-a-container)).
 
 ## Restoring a backup in a container
 

@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/varlatch/varlatch/go/lib/storage"
@@ -47,10 +48,51 @@ type Upgraded struct {
 // directory's lock), never while varlatchd serves: ADR-0059 Decision 8
 // runs it on a copy of the database first (`varlatch upgrade`).
 func Upgrade(ctx context.Context, s *storage.DB, release string) (Upgraded, error) {
-	return upgrade(ctx, s, release, steps, SchemaVersion, CompatibleFrom)
+	return upgrade(ctx, s, release, steps, SchemaVersion, CompatibleFrom, false)
 }
 
-func upgrade(ctx context.Context, s *storage.DB, release string, steps []Step, target, compatibleFrom int64) (Upgraded, error) {
+// Steps returns a copy of this varlatchd's upgrade steps, in order:
+// Steps()[i] upgrades version i+1 to i+2.
+func Steps() []Step { return slices.Clone(steps) }
+
+// NotRollbackSafeError is returned by UpgradeIfRollbackSafe for a database
+// whose upgrade would not be rollback-safe: after it, the database would
+// open only in a varlatchd of schema CompatibleFrom or later, newer than
+// the schema it has now (Database), so the release that wrote it could no
+// longer open it. Nothing was changed.
+type NotRollbackSafeError struct {
+	Database       int64 // the database's schema version
+	CompatibleFrom int64 // the oldest version that may open it after the upgrade
+	Binary         int64 // SchemaVersion
+}
+
+func (e *NotRollbackSafeError) Error() string {
+	return fmt.Sprintf("db: upgrading the database's schema from version %d to %d is not rollback-safe: afterwards only varlatchd of schema %d and later opens it, so the release that wrote it could not open it again",
+		e.Database, e.Binary, e.CompatibleFrom)
+}
+
+// RollbackSafeFrom reports whether an upgrade from schema version from to
+// SchemaVersion is rollback-safe: the varlatchd of schema from still opens
+// the database after it (CompatibleFrom is not newer than from).
+func RollbackSafeFrom(from int64) bool { return CompatibleFrom <= from }
+
+// UpgradeIfRollbackSafe is Upgrade, for a database whose upgrade is
+// rollback-safe only: when the steps from its recorded version would raise
+// compatible_from above that version, it changes nothing and returns a
+// *NotRollbackSafeError. It reads the version and runs the steps in the
+// same write job as Upgrade, so the check and the upgrade see the same
+// database.
+//
+// varlatchd serve runs it at start in the single-container image, where an
+// installation is upgraded by deploying a newer image's digest and the way
+// back is the previous digest (go/server/daemon schemaAtStart): for a
+// rollback-safe upgrade, that previous digest still opens the result, so
+// going back needs no restore.
+func UpgradeIfRollbackSafe(ctx context.Context, s *storage.DB, release string) (Upgraded, error) {
+	return upgrade(ctx, s, release, steps, SchemaVersion, CompatibleFrom, true)
+}
+
+func upgrade(ctx context.Context, s *storage.DB, release string, steps []Step, target, compatibleFrom int64, rollbackSafeOnly bool) (Upgraded, error) {
 	if n := len(release); n < 1 || n > 64 {
 		return Upgraded{}, errors.New("db: the release name must be 1 to 64 characters")
 	}
@@ -93,6 +135,9 @@ func upgrade(ctx context.Context, s *storage.DB, release string, steps []Step, t
 		if v.Version == target {
 			return nil
 		}
+		if rollbackSafeOnly && compatibleFrom > v.Version {
+			return &NotRollbackSafeError{Database: v.Version, CompatibleFrom: compatibleFrom, Binary: target}
+		}
 		for _, st := range steps[v.Version-1:] {
 			if _, err := tx.ExecContext(ctx, st.SQL); err != nil {
 				return fmt.Errorf("db: upgrading the schema to version %d: %w", st.To, err)
@@ -111,8 +156,9 @@ func upgrade(ctx context.Context, s *storage.DB, release string, steps []Step, t
 	})
 	if err != nil {
 		var verr *VersionError
+		var nerr *NotRollbackSafeError
 		switch {
-		case errors.Is(err, ErrNoDatabase), errors.Is(err, ErrNotVarlatch), errors.As(err, &verr):
+		case errors.Is(err, ErrNoDatabase), errors.Is(err, ErrNotVarlatch), errors.As(err, &verr), errors.As(err, &nerr):
 			return up, unwrapped(err)
 		}
 		return up, err
@@ -124,9 +170,12 @@ func upgrade(ctx context.Context, s *storage.DB, release string, steps []Step, t
 // carries, so callers compare and print it as Init's.
 func unwrapped(err error) error {
 	var verr *VersionError
+	var nerr *NotRollbackSafeError
 	switch {
 	case errors.As(err, &verr):
 		return verr
+	case errors.As(err, &nerr):
+		return nerr
 	case errors.Is(err, ErrNoDatabase):
 		return ErrNoDatabase
 	case errors.Is(err, ErrNotVarlatch):
