@@ -203,8 +203,13 @@ func (s *Service) Read(ctx context.Context) (State, error) {
 		return st, err
 	}
 	if status == nil || status.RequestID != last.ID {
-		// Taken (the file is gone), and nothing said yet.
+		// Taken (the file is gone), and nothing said yet. Past the
+		// request's expiry the host never will (its helper stopped, or
+		// the file was no request): over, so another may be filed.
 		st.State, st.NoAnswer = "taken", now.Sub(asked) > NoAnswer
+		if until, err := time.Parse(upgraderequest.TimeLayout, last.ExpiresAt); err == nil && !now.Before(until) {
+			st.State, st.NoAnswer = "interrupted", false
+		}
 		return st, nil
 	}
 	st.State, st.Reason, st.JournalID, st.UpdatedAt = string(status.Phase), status.Reason, status.JournalID, status.UpdatedAt

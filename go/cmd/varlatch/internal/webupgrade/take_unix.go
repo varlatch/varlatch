@@ -9,8 +9,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
-	"os"
 	"path/filepath"
 
 	"golang.org/x/sys/unix"
@@ -75,8 +73,7 @@ func take(dataDir, takenDir string, takenOwner uint32) (raw []byte, taken string
 	if err != nil {
 		return nil, taken, fmt.Errorf("%w: %v", ErrInvalid, err)
 	}
-	f := os.NewFile(uintptr(fd), taken)
-	defer f.Close()
+	defer unix.Close(fd)
 	if err := unix.Fstat(fd, &st); err != nil {
 		return nil, taken, err
 	}
@@ -90,10 +87,23 @@ func take(dataDir, takenDir string, takenOwner uint32) (raw []byte, taken string
 	case st.Size > upgraderequest.MaxBytes:
 		return nil, taken, fmt.Errorf("%w: more than %d bytes", ErrInvalid, upgraderequest.MaxBytes)
 	}
-	raw, err = io.ReadAll(io.LimitReader(f, upgraderequest.MaxBytes+1))
-	if err != nil {
-		return nil, taken, err
+	// Read on the descriptor itself, at most one byte past the cap.
+	buf := make([]byte, upgraderequest.MaxBytes+1)
+	n := 0
+	for n < len(buf) {
+		m, err := unix.Read(fd, buf[n:])
+		if errors.Is(err, unix.EINTR) {
+			continue
+		}
+		if err != nil {
+			return nil, taken, err
+		}
+		if m == 0 {
+			break
+		}
+		n += m
 	}
+	raw = buf[:n]
 	if len(raw) > upgraderequest.MaxBytes {
 		return nil, taken, fmt.Errorf("%w: more than %d bytes", ErrInvalid, upgraderequest.MaxBytes)
 	}
