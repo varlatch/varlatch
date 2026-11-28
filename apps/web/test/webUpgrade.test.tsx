@@ -14,7 +14,14 @@ import type { InstallationRelease, UpgradeRequestState } from "@varlatch/protoco
  * failure in words. And every dashboard's restart notice.
  */
 
-const fake = vi.hoisted(() => ({ api: {} as Record<string, (...args: never[]) => unknown>, capable: true }));
+const fake = vi.hoisted(() => ({
+  api: {} as Record<string, (...args: never[]) => unknown>,
+  capable: true,
+  /** What /v1/meta answers, and how often it was asked and the page reloaded. */
+  meta: "0.51.0",
+  metaAsked: 0,
+  reloads: 0,
+}));
 vi.hoisted(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const g = globalThis;
@@ -23,7 +30,12 @@ vi.hoisted(() => {
     clearInterval: g.clearInterval.bind(g),
     setTimeout: g.setTimeout.bind(g),
     clearTimeout: g.clearTimeout.bind(g),
-    location: { reload: () => {} },
+    location: { reload: () => void fake.reloads++ },
+  });
+  vi.stubGlobal("fetch", async (url: string) => {
+    if (url !== "/v1/meta") throw new Error(`unexpected fetch ${url}`);
+    fake.metaAsked++;
+    return { ok: true, json: async () => ({ serverVersion: fake.meta }) };
   });
 });
 vi.mock("../src/lib/session", () => ({ useSession: () => ({ api: fake.api }) }));
@@ -39,9 +51,20 @@ vi.mock("../src/components/Dialog", () => ({
     ) : null,
 }));
 
+import { VarlatchApiError } from "@varlatch/sdk";
 import { ReleaseReport } from "../src/features/installation/ReleaseTab";
 import { WebUpgrade } from "../src/features/installation/WebUpgrade";
-import { failedStep, newRequestId, oneClickVersion, opened, outcomeText } from "../src/features/installation/webUpgradeStatus";
+import {
+  IDLE_POLL_MS,
+  POLL_MS,
+  failedStep,
+  newRequestId,
+  offeredAfter,
+  oneClickVersion,
+  opened,
+  outcomeText,
+  pollEvery,
+} from "../src/features/installation/webUpgradeStatus";
 import { SignalStream, type EventSourceLike } from "../src/lib/sse";
 import { SseContext } from "../src/lib/sseProvider";
 import { RestartNotice } from "../src/components/RestartNotice";
@@ -77,9 +100,10 @@ const state = (over: Partial<UpgradeRequestState> = {}): UpgradeRequestState => 
   journalId: null,
   updatedAt: null,
   noAnswer: false,
+  unreadable: [],
   ...over,
 });
-const none: UpgradeRequestState = { request: null, state: "none", reason: null, journalId: null, updatedAt: null, noAnswer: false };
+const none: UpgradeRequestState = { request: null, state: "none", reason: null, journalId: null, updatedAt: null, noAnswer: false, unreadable: [] };
 
 describe("one click is offered", () => {
   it("only on a systemd host with every line passing, the helper's among them, for one release's step", () => {
@@ -90,6 +114,27 @@ describe("one click is offered", () => {
     expect(oneClickVersion(ready({ lines: IDS.map((i) => (i === "backup" ? { ...pass(i), status: "unknown" as const } : pass(i))) }))).toBeNull();
     expect(oneClickVersion(ready({ previous: "0.51.1" }))).toBeNull();
     expect(oneClickVersion({ ...ready(), newer: false })).toBeNull();
+  });
+
+  it("not for a version the host undid, nor the one a request just upgraded to", () => {
+    expect(offeredAfter("0.52.0", undefined)).toBe("0.52.0");
+    expect(offeredAfter("0.52.0", none)).toBe("0.52.0");
+    expect(offeredAfter("0.52.0", state({ state: "undone", reason: "health" }))).toBeNull();
+    expect(offeredAfter("0.52.0", state({ state: "refused", reason: "undone" }))).toBeNull();
+    expect(offeredAfter("0.52.0", state({ state: "done" }))).toBeNull();
+    // Undone before the stop (its backup failed): asked for again once put right.
+    expect(offeredAfter("0.52.0", state({ state: "failed", reason: "backup" }))).toBe("0.52.0");
+    // A newer release than the one undone is offered as usual.
+    expect(offeredAfter("0.52.1", state({ state: "undone", reason: "health" }))).toBe("0.52.1");
+    expect(offeredAfter(null, none)).toBeNull();
+  });
+
+  it("asks often while the host works, slowly while a click is offered, else not", () => {
+    expect(pollEvery(state({ state: "verifying" }), null)).toBe(POLL_MS);
+    expect(pollEvery(none, "0.52.0")).toBe(IDLE_POLL_MS);
+    expect(pollEvery(undefined, "0.52.0")).toBe(IDLE_POLL_MS);
+    expect(pollEvery(state({ state: "refused", reason: "pending" }), "0.52.0")).toBe(IDLE_POLL_MS);
+    expect(pollEvery(none, null)).toBe(false);
   });
 
   it("makes request ids the server takes", () => {
@@ -124,6 +169,9 @@ afterEach(async () => {
   root = undefined;
   fake.api = {};
   fake.capable = true;
+  fake.meta = "0.51.0";
+  fake.metaAsked = 0;
+  fake.reloads = 0;
 });
 const all = (id: string) => root!.root.findAll((n) => typeof n.type === "string" && n.props["data-testid"] === id);
 const text = (node: ReactTestInstance | string): string =>
@@ -204,7 +252,92 @@ describe("the Release tab's one click", () => {
     fake.api = { getUpgradeRequest: async () => state({ state: "undone", reason: "health", updatedAt: ago(60_000) }) };
     await showTab(ready());
     expect(one("web-upgrade-outcome")).toContain("0.51.0 serves");
+    expect(all("web-upgrade-outcome")[0]!.props.role).toBe("alert");
+    expect(all("web-upgrade-steps")[0]!.props["aria-live"]).toBe("polite");
     expect(all("web-upgrade-step-4")[0]!.props["data-done"]).toBe(false);
+  });
+
+  it("does not offer a version the host undid again, there or after the request is no longer shown", async () => {
+    for (const undone of [state({ state: "undone", reason: "health", updatedAt: ago(60_000) }), state({ state: "refused", reason: "undone", updatedAt: ago(60_000) })]) {
+      fake.api = { getUpgradeRequest: async () => undone };
+      await showTab(ready());
+      expect(all("web-upgrade-progress")).toHaveLength(1);
+      expect(all("web-upgrade-button")).toHaveLength(0);
+      await act(async () => root?.unmount());
+      fake.api = { getUpgradeRequest: async () => ({ ...undone, updatedAt: ago(2 * 3600_000) }) };
+      await showTab(ready());
+      expect(all("web-upgrade-progress")).toHaveLength(0);
+      expect(all("web-upgrade-button")).toHaveLength(0);
+      await act(async () => root?.unmount());
+    }
+    // A backup that failed (before the stop) may be asked for again.
+    fake.api = { getUpgradeRequest: async () => state({ state: "failed", reason: "backup", updatedAt: ago(60_000) }) };
+    await showTab(ready());
+    expect(one("web-upgrade-button")).toBe("Upgrade to 0.52.0 again");
+    expect(all("web-upgrade-outcome")[0]!.props.role).toBe("alert");
+  });
+
+  it("says when the request's record cannot be read, and offers nothing until it ends", async () => {
+    fake.api = { getUpgradeRequest: async () => ({ ...none, state: "waiting" as const, unreadable: ["last.json" as const] }) };
+    await showTab(ready());
+    expect(one("web-upgrade-unreadable")).toContain("The host has a request waiting");
+    expect(all("web-upgrade-button")).toHaveLength(0);
+    await act(async () => root?.unmount());
+    fake.api = { getUpgradeRequest: async () => ({ ...none, unreadable: ["last.json" as const] }) };
+    await showTab(ready());
+    expect(all("web-upgrade-unreadable")).toHaveLength(0);
+    expect(one("web-upgrade-button")).toBe("Upgrade to 0.52.0");
+  });
+
+  it("says what a step-up that was not given changed: nothing", async () => {
+    fake.api = {
+      getUpgradeRequest: async () => none,
+      requestUpgrade: async () => {
+        throw new VarlatchApiError(403, { code: "STEP_UP_REQUIRED", message: "approve it", requestId: "req_1" } as never);
+      },
+    };
+    await showTab(ready());
+    await click("web-upgrade-button");
+    await click("web-upgrade-confirm-button");
+    await flush();
+    expect(one("web-upgrade-error")).toBe("Nothing changed: this needs your approval with a trusted passkey, and it was not given.");
+    expect(all("web-upgrade-progress")).toHaveLength(0);
+  });
+});
+
+describe("the reload once the new release opens", () => {
+  it("reloads once /v1/meta answers another release, from the stop on", async () => {
+    fake.api = { getUpgradeRequest: async () => state({ state: "restarting", updatedAt: ago(5000) }) };
+    fake.meta = "0.51.0";
+    await showTab(ready());
+    expect(fake.metaAsked).toBeGreaterThan(0);
+    expect(fake.reloads).toBe(0);
+    await act(async () => root?.unmount());
+    fake.meta = "0.52.0";
+    await showTab(ready());
+    expect(fake.reloads).toBe(1);
+  });
+
+  it("reloads when the request says done before /v1/meta was asked, without offering it again meanwhile", async () => {
+    fake.api = { getUpgradeRequest: async () => state({ state: "done", journalId: "0123456789abcdef", updatedAt: ago(1000) }) };
+    fake.meta = "0.52.0";
+    await showTab(ready());
+    expect(fake.reloads).toBe(1);
+    expect(one("web-upgrade-outcome")).toContain("Upgraded to 0.52.0");
+    expect(all("web-upgrade-button")).toHaveLength(0);
+  });
+
+  it("does not reload again once the page is the new release's, nor for an undo", async () => {
+    fake.api = { getUpgradeRequest: async () => state({ state: "done", updatedAt: ago(1000) }) };
+    fake.meta = "0.52.0";
+    await showTab({ ...ready(), running: "0.52.0", newer: false });
+    expect(fake.metaAsked).toBe(0);
+    expect(fake.reloads).toBe(0);
+    await act(async () => root?.unmount());
+    fake.api = { getUpgradeRequest: async () => state({ state: "undone", reason: "health", updatedAt: ago(1000) }) };
+    fake.meta = "0.51.0";
+    await showTab(ready());
+    expect(fake.reloads).toBe(0);
   });
 
   it("shows no button when a line fails, or without the capability, and the commands stay", async () => {

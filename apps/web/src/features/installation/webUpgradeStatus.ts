@@ -22,6 +22,18 @@ export function oneClickVersion(r: InstallationRelease): string | null {
   return target.version;
 }
 
+/**
+ * The version a click upgrades to once the last request is known: not one
+ * the host undid (Decision 6: the pre-flight says so too, once the tab's
+ * release is asked again), and not the one a request just upgraded to (the
+ * tab's release is the one before it until the page reloads).
+ */
+export function offeredAfter(version: string | null, st: UpgradeRequestState | undefined): string | null {
+  if (!version || st?.request?.version !== version) return version;
+  const undone = st.state === "undone" || (st.state === "refused" && st.reason === "undone");
+  return undone || st.state === "done" ? null : version;
+}
+
 /** A fresh request id: upr_ and 26 base32 characters, from the browser's random source. */
 export function newRequestId(random: (n: number) => Uint8Array = (n) => crypto.getRandomValues(new Uint8Array(n))): string {
   const alphabet = "abcdefghijklmnopqrstuvwxyz234567";
@@ -33,6 +45,20 @@ type State = UpgradeRequestState["state"];
 /** Whether the state ends the request. */
 export function isOver(state: State): boolean {
   return ["none", "done", "refused", "failed", "undone", "interrupted", "cancelled", "expired"].includes(state);
+}
+
+/** How often the tab asks how far the host got, while it works. */
+export const POLL_MS = 2_000;
+/**
+ * How often it asks while nothing runs and a click is offered: another
+ * admin's request, its progress and its cancel show up here too.
+ */
+export const IDLE_POLL_MS = 10_000;
+
+/** How often to ask for the request's state: often while one runs, slowly while a click is offered, else not. */
+export function pollEvery(st: UpgradeRequestState | undefined, offered: string | null): number | false {
+  if (st && !isOver(st.state)) return POLL_MS;
+  return offered ? IDLE_POLL_MS : false;
 }
 
 /** The steps the tab shows while the host works (Decision 8), in order. */

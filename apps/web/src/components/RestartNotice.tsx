@@ -7,6 +7,11 @@ import { useSseInstallationNotice } from "../lib/sseProvider";
  * upgrade (ADR-0065 Decision 8): sent over the live updates before the stop,
  * gone once the server is back (or the upgrade ended without the restart).
  * Mounted under SseProvider.
+ *
+ * The live-updates pill (LiveUpdatesStatus) sits at the top right, and
+ * shows during the restart too: below xl, where the centred notice would
+ * reach it, the notice sits under it. The full-width strip lets clicks
+ * through.
  */
 export function RestartNotice() {
   const notice = useSseInstallationNotice();
@@ -16,9 +21,9 @@ export function RestartNotice() {
       role="status"
       aria-live="polite"
       data-testid="restart-notice"
-      className="fixed inset-x-0 top-0 z-50 flex justify-center px-4 pt-3"
+      className="pointer-events-none fixed inset-x-0 top-0 z-50 flex justify-center px-4 pt-14 xl:pt-3"
     >
-      <div className="flex max-w-xl items-center gap-2 rounded-lg border border-warn/40 bg-raised px-4 py-2 text-[13px] shadow-pop">
+      <div className="pointer-events-auto flex max-w-xl items-center gap-2 rounded-lg border border-warn/40 bg-raised px-4 py-2 text-[13px] shadow-pop">
         <span className="size-2 shrink-0 animate-pulse rounded-full bg-warn" aria-hidden="true" />
         <span>
           <span className="font-medium">Varlatch is restarting for an upgrade{notice.version ? ` to ${notice.version}` : ""}.</span>{" "}

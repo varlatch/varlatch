@@ -288,3 +288,32 @@ describe("security control events (ADR-0054)", () => {
     expect(describeEvent(summary, names).title).toBe("Security control report");
   });
 });
+
+describe("upgrades, from the host and asked for in the web app (ADR-0065)", () => {
+  const upgrade = (eventType: string, metadata: Record<string, unknown>, actorIdentityId: string | null = "idn_admin") =>
+    event({ eventType, actorIdentityId, metadata: { from: "0.51.0", to: "0.52.0", requestId: "upr_" + "a".repeat(26), ...metadata } });
+  it("says where an upgrade came from: the web app, or the host", () => {
+    const web = upgrade("installation.upgraded", { source: "web" }, null);
+    expect(describeEvent(web, names).title).toBe("Varlatch upgraded");
+    expect(sentence(web)).toBe("upgraded Varlatch from 0.51.0 to 0.52.0, as asked in the web app");
+    expect(sentence(upgrade("installation.upgraded", { source: "host", requestId: null }, null))).toBe("upgraded Varlatch from 0.51.0 to 0.52.0 on the host");
+  });
+  it("describes a request, its cancel by an admin or its expiry, a cancel too late, a refusal and an undo", () => {
+    expect(sentence(upgrade("installation.upgrade_requested", { approvalId: "apr_1" }))).toBe(
+      "asked the host to upgrade Varlatch from 0.51.0 to 0.52.0, approved with a passkey",
+    );
+    const cancelled = upgrade("installation.upgrade_cancelled", { reason: "cancelled" });
+    expect(describeEvent(cancelled, names).title).toBe("Upgrade request cancelled");
+    expect(sentence(cancelled)).toBe("cancelled the request to upgrade to 0.52.0");
+    const expired = upgrade("installation.upgrade_cancelled", { reason: "expired" }, null);
+    expect(describeEvent(expired, names).title).toBe("Upgrade request expired");
+    expect(sentence(expired)).toBe("the request to upgrade to 0.52.0 expired before the host took it");
+    expect(sentence(upgrade("installation.upgrade_cancel_too_late", {}))).toBe("tried to cancel the upgrade to 0.52.0, which the host had taken");
+    expect(sentence(upgrade("installation.upgrade_refused", { reason: "no-backup-destination" }, null))).toBe(
+      "the host refused the upgrade to 0.52.0: no backup destination",
+    );
+    const undone = upgrade("installation.upgrade_undone", { reason: "admin status: a check failed", source: "web" }, null);
+    expect(describeEvent(undone, names).title).toBe("Upgrade undone");
+    expect(sentence(undone)).toBe("a health check of 0.52.0 failed, so the host went back to 0.51.0");
+  });
+});

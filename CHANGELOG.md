@@ -19,7 +19,10 @@ fixes.
   waiting for it (with a cancel until it takes the request, and "too late"
   after), verifying the release, backing up and checking the delivered copy,
   restarting, checking health, done; it says when the host did not answer,
-  and each refusal or failure in words, with what it changed. Every
+  and each refusal or failure in words, with what it changed, and reloads
+  once the new release answers. A version the host undid is not offered
+  again; a newer one is. While the button is offered, the tab looks every
+  10 seconds, so another admin's request and its progress show up. Every
   signed-in dashboard shows "Varlatch is restarting for an upgrade" before
   the stop. The commands stay on the card. The audit log describes the new
   upgrade events.

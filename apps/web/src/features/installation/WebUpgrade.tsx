@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUpRight, CheckCircle2, Circle, Fingerprint, Loader2, TriangleAlert, XCircle } from "lucide-react";
 import type { InstallationRelease, UpgradeRequestState } from "@varlatch/protocol";
@@ -10,10 +10,21 @@ import { Dialog } from "../../components/Dialog";
 import { CodeBlock } from "../../components/CodeBlock";
 import { errorMessage } from "../../shell/Shell";
 import { approvalOutcomeMessage } from "../security-controls/approval";
-import { DOCS_WEB_UPGRADE_URL, STEPS, failedStep, isOver, newRequestId, oneClickVersion, opened, outcomeText, stepOf } from "./webUpgradeStatus";
+import {
+  DOCS_WEB_UPGRADE_URL,
+  POLL_MS,
+  STEPS,
+  failedStep,
+  isOver,
+  newRequestId,
+  offeredAfter,
+  oneClickVersion,
+  opened,
+  outcomeText,
+  pollEvery,
+  stepOf,
+} from "./webUpgradeStatus";
 
-/** How often the tab asks how far the host got, while it works. */
-const POLL_MS = 2_000;
 /** A request that ended this long ago is no longer shown. */
 const SHOW_ENDED_MS = 60 * 60_000;
 
@@ -26,25 +37,59 @@ const SHOW_ENDED_MS = 60 * 60_000;
 export function WebUpgrade({ release }: { release: InstallationRelease }) {
   const supported = useCapability("installation.upgrade");
   const { api } = useSession();
+  const qc = useQueryClient();
+  const offered = oneClickVersion(release);
   const state = useQuery({
     queryKey: ["installation-upgrade-request"],
     queryFn: () => api.getUpgradeRequest(),
     enabled: supported,
     retry: false,
-    refetchInterval: (q) => (q.state.data && !isOver(q.state.data.state) ? POLL_MS : false),
+    refetchInterval: (q) => pollEvery(q.state.data, offered),
   });
-  if (!supported || !state.data) return null;
+  // The release this page loaded with: the reload below brings the one
+  // that opened, whichever answer (the request's, or /v1/meta's) comes
+  // first. After the reload it is the new one, so it does not reload again.
+  const [loadedWith] = useState(release.running);
   const st = state.data;
+  useReloadWhenOpen(loadedWith, !!st?.request && RESTARTED.includes(st.state) && st.request.version !== loadedWith);
+  // A request that ended may change the pre-flight (an undone version is
+  // not offered again): the tab's release is asked again.
+  const ended = st ? isOver(st.state) : true;
+  const wasEnded = useRef(ended);
+  useEffect(() => {
+    if (ended && !wasEnded.current) void qc.invalidateQueries({ queryKey: ["installation-release"] });
+    wasEnded.current = ended;
+  }, [ended, qc]);
+  if (!supported || !st) return null;
+  const again = offeredAfter(offered, st);
   const recent = st.request && Date.now() - Date.parse(st.updatedAt ?? st.request.requestedAt) < SHOW_ENDED_MS;
   if (st.request && (!isOver(st.state) || recent)) {
-    return <UpgradeProgress state={st} running={release.running} offered={oneClickVersion(release)} />;
+    return <UpgradeProgress state={st} running={release.running} offered={again} />;
   }
-  const version = oneClickVersion(release);
-  return version ? <UpgradeButton version={version} running={release.running} /> : null;
+  if (st.unreadable?.includes("last.json") && !isOver(st.state)) {
+    return <UnreadableRequest state={st} />;
+  }
+  return again ? <UpgradeButton version={again} running={release.running} /> : null;
+}
+
+/** The states of a request from the stop on: the page reloads once the new release answers. */
+const RESTARTED: UpgradeRequestState["state"][] = ["restarting", "checking", "done"];
+
+/**
+ * A request whose record cannot be read, while the host has one waiting or
+ * running: no button until it ends, and nothing to cancel by its id.
+ */
+function UnreadableRequest({ state }: { state: UpgradeRequestState }) {
+  return (
+    <Callout tone="warn" icon={<TriangleAlert size={16} />} data-testid="web-upgrade-unreadable" title="The upgrade request's record cannot be read">
+      The host has a request {state.state === "waiting" ? "waiting" : "under way"}, but which one is not known. It ends by itself (a waiting request
+      expires after 10 minutes); then a new request replaces the record.
+    </Callout>
+  );
 }
 
 /** "Upgrade to 0.52.0", the confirmation, then the passkey prompt (the session's step-up dialog). */
-export function UpgradeButton({ version, running, label }: { version: string; running: string; label?: string }) {
+export function UpgradeButton({ version, running, label }: { version: string; running: string; label?: string | undefined }) {
   const { api } = useSession();
   const qc = useQueryClient();
   const [confirming, setConfirming] = useState(false);
@@ -111,7 +156,6 @@ export function UpgradeProgress({ state, running, offered }: { state: UpgradeReq
       qc.setQueryData(["installation-upgrade-request"], st);
     },
   });
-  useReloadWhenOpen(running, state.state === "restarting" || state.state === "checking");
   const at = stepOf(state.state);
   const failAt = failedStep(state);
   const outcome = outcomeText(state, tooLate);
@@ -120,7 +164,7 @@ export function UpgradeProgress({ state, running, offered }: { state: UpgradeReq
   return (
     <div className="space-y-3 rounded-lg border border-bd px-4 py-3" data-testid="web-upgrade-progress" data-state={state.state}>
       <p className="font-medium">Upgrade to {version}</p>
-      <ol className="space-y-1.5">
+      <ol className="space-y-1.5" aria-live="polite" aria-label="The host's steps" data-testid="web-upgrade-steps">
         {STEPS.map((step, i) => {
           const done = state.state === "done" || (failAt >= 0 ? i < failAt : at > i);
           const current = at === i && !over;
@@ -148,7 +192,12 @@ export function UpgradeProgress({ state, running, offered }: { state: UpgradeReq
         </Callout>
       )}
       {outcome && (
-        <Callout tone={outcome.tone === "ok" ? "success" : outcome.tone} data-testid="web-upgrade-outcome" data-reason={state.reason ?? ""}>
+        <Callout
+          tone={outcome.tone === "ok" ? "success" : outcome.tone}
+          role={outcome.tone === "danger" || outcome.tone === "warn" ? "alert" : "status"}
+          data-testid="web-upgrade-outcome"
+          data-reason={state.reason ?? ""}
+        >
           {outcome.text}
         </Callout>
       )}
@@ -158,7 +207,7 @@ export function UpgradeProgress({ state, running, offered }: { state: UpgradeReq
             Cancel the request
           </Button>
         )}
-        {over && offered && <UpgradeButton version={offered} running={running} label={`Upgrade to ${offered} again`} />}
+        {over && offered && <UpgradeButton version={offered} running={running} label={offered === version ? `Upgrade to ${offered} again` : undefined} />}
         <a href={DOCS_WEB_UPGRADE_URL} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-accent hover:underline">
           Upgrading from the web app
           <ArrowUpRight size={13} />
@@ -174,22 +223,32 @@ export function UpgradeProgress({ state, running, offered }: { state: UpgradeReq
 }
 
 /**
- * Through the restart: polls /v1/meta (it answers without a session) and
- * reloads the page once another release than `running` answers, the new
- * one open (Decision 8). A failed health check keeps `running`, and the
+ * Through the restart: polls /v1/meta (it answers without a session), at
+ * once and then every POLL_MS, and reloads the page once, when another
+ * release than `loadedWith` answers: the new one open (Decision 8). Armed
+ * from the stop through done, so a request that says done before /v1/meta
+ * is asked still reloads. A failed health check keeps `loadedWith`, and the
  * tab's state says undone.
  */
-function useReloadWhenOpen(running: string, active: boolean) {
+function useReloadWhenOpen(loadedWith: string, active: boolean) {
+  const reloaded = useRef(false);
   useEffect(() => {
     if (!active) return;
-    const timer = window.setInterval(() => {
+    let stopped = false;
+    const look = () =>
       void fetch("/v1/meta", { cache: "no-store" })
         .then((r) => (r.ok ? (r.json() as Promise<{ serverVersion?: string }>) : null))
         .then((m) => {
-          if (m && opened(running, m.serverVersion)) window.location.reload();
+          if (stopped || reloaded.current || !m || !opened(loadedWith, m.serverVersion)) return;
+          reloaded.current = true;
+          window.location.reload();
         })
         .catch(() => undefined);
-    }, POLL_MS);
-    return () => window.clearInterval(timer);
-  }, [running, active]);
+    look();
+    const timer = window.setInterval(look, POLL_MS);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+    };
+  }, [loadedWith, active]);
 }
