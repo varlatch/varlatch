@@ -12,7 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -21,65 +21,248 @@ import (
 	"github.com/varlatch/varlatch/go/lib/keyenv"
 	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/server/db"
+	"github.com/varlatch/varlatch/go/server/db/schemadiff"
 )
 
+// releasedSchema1 is schema version 1 as 0.50.0-rc.1 released it, the
+// schema server/db's releasecheck holds the upgrade steps against. Made
+// absolute as the package loads: a test may change the directory.
+var releasedSchema1, _ = filepath.Abs(filepath.Join("..", "db", "releasecheck", "testdata", "schema-0.50.0-rc.1.sql"))
+
 // previousSchema makes the stopped installation's database the one the
-// release before this schema left: what the last upgrade step creates
-// dropped again (a rollback-safe step only adds), and the version and
-// compatible_from recorded as they were before it. A step that does more
-// than add tables, indexes, triggers or columns needs its undoing here.
+// release before this schema left, its rows kept, and the version and
+// compatible_from recorded as they were before the last upgrade step.
+//
+// The two schemas come from the released schema 1 (releasedSchema1), as
+// releasecheck builds them: with every upgrade step but the last, and with
+// every step. What differs between the two is the last step's own doing,
+// and is undone: what it adds is dropped again; a table it makes again
+// (schema 8 does so to widen approval_intents' operation CHECK) is made
+// again as it was, its rows copied, and its indexes and triggers with it;
+// an index or trigger it changes is made as it was. A step that removes a
+// table, index or trigger is not rollback-safe, and is refused here. The
+// result is held against the previous schema (schemadiff), so a step this
+// cannot undo fails here rather than in the tests that use it.
 func previousSchema(t *testing.T, in install) {
 	t.Helper()
+	ctx := context.Background()
 	steps := db.Steps()
 	if len(steps) == 0 {
 		t.Fatal("this varlatchd has no upgrade step to undo")
 	}
 	last := steps[len(steps)-1]
-	if regexp.MustCompile(`(?i)\b(INSERT|UPDATE|DELETE|DROP|RENAME|REPLACE)\b`).MatchString(last.SQL) {
-		t.Fatalf("previousSchema cannot undo schema %d's step, which does more than add: extend it\n%s", last.To, last.SQL)
+	schema1, err := os.ReadFile(releasedSchema1)
+	if err != nil {
+		t.Fatal(err)
 	}
-	var undo []string
-	for _, m := range regexp.MustCompile(`(?i)\bCREATE\s+TRIGGER\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)`).FindAllStringSubmatch(last.SQL, -1) {
-		undo = append(undo, "DROP TRIGGER "+m[1])
+	before := stepsSchema(t, string(schema1), steps[:len(steps)-1])
+	after := stepsSchema(t, string(schema1), steps)
+
+	var drop, rebuild, recreate []string
+	for _, name := range sortedNames(before) {
+		b := before[name]
+		a, ok := after[name]
+		switch {
+		case !ok:
+			t.Fatalf("schema %d's step removes %s %s, which a rollback-safe step does not: previousSchema cannot undo it", last.To, b.kind, name)
+		case a.sql == b.sql:
+		case b.kind == "table":
+			rebuild = append(rebuild, name)
+		default:
+			recreate = append(recreate, name)
+		}
 	}
-	for _, m := range regexp.MustCompile(`(?i)\bCREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)`).FindAllStringSubmatch(last.SQL, -1) {
-		undo = append(undo, "DROP INDEX "+m[1])
+	for _, name := range sortedNames(after) {
+		if _, ok := before[name]; !ok {
+			drop = append(drop, name)
+		}
 	}
-	for _, m := range regexp.MustCompile(`(?i)\bALTER\s+TABLE\s+(\w+)\s+ADD\s+(?:COLUMN\s+)?(\w+)`).FindAllStringSubmatch(last.SQL, -1) {
-		undo = append(undo, "ALTER TABLE "+m[1]+" DROP COLUMN "+m[2])
+	if len(drop)+len(rebuild)+len(recreate) == 0 {
+		t.Fatalf("schema %d's step changes nothing previousSchema can see\n%s", last.To, last.SQL)
 	}
-	for _, m := range regexp.MustCompile(`(?i)\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)`).FindAllStringSubmatch(last.SQL, -1) {
-		undo = append(undo, "DROP TABLE "+m[1])
+	// A table made again loses its indexes and triggers with the table set
+	// aside: they are made again too.
+	for _, name := range sortedNames(before) {
+		if b := before[name]; b.kind != "table" && slices.Contains(rebuild, b.table) && !slices.Contains(recreate, name) {
+			recreate = append(recreate, name)
+		}
 	}
-	if len(undo) == 0 {
-		t.Fatalf("previousSchema found nothing to undo in schema %d's step: extend it\n%s", last.To, last.SQL)
-	}
+	// Indexes before triggers, each in name order.
+	slices.SortStableFunc(recreate, func(x, y string) int { return kindOrder(before[x].kind) - kindOrder(before[y].kind) })
+
 	compatibleFrom := int64(1)
 	if len(steps) > 1 {
 		compatibleFrom = steps[len(steps)-2].CompatibleFrom
 	}
-	s, err := storage.Open(context.Background(), storage.Options{Path: filepath.Join(in.data, "varlatch.db")})
+	pool, err := sql.Open("sqlite", "file:"+filepath.Join(in.data, "varlatch.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
-	if err := s.Write(context.Background(), func(tx *storage.Tx) error {
-		for _, q := range undo {
-			if _, err := tx.ExecContext(context.Background(), q); err != nil {
-				return fmt.Errorf("%s: %w", q, err)
-			}
-		}
-		_, err := tx.ExecContext(context.Background(), "UPDATE schema_version SET version = ?, compatible_from = ?, updated_by_release = 'previous'", last.To-1, compatibleFrom)
-		return err
-	}); err != nil {
+	defer pool.Close()
+	conn, err := pool.Conn(ctx) // the pragmas and the transaction on one connection
+	if err != nil {
 		t.Fatal(err)
 	}
+	defer conn.Close()
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := conn.ExecContext(ctx, q, args...); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	// Off, so a table set aside and dropped deletes no row by a cascade; the
+	// legacy rename, so the references to a table set aside keep its name.
+	exec("PRAGMA foreign_keys = OFF")
+	exec("PRAGMA legacy_alter_table = ON")
+	exec("BEGIN IMMEDIATE")
+	// What the step added, triggers and indexes before their tables.
+	for _, kind := range []string{"trigger", "index", "table"} {
+		for _, name := range drop {
+			if after[name].kind == kind {
+				exec("DROP " + strings.ToUpper(kind) + " " + quoteName(name))
+			}
+		}
+	}
+	for _, name := range recreate {
+		exec("DROP " + strings.ToUpper(before[name].kind) + " " + quoteName(name))
+	}
+	for _, name := range rebuild {
+		aside := name + "_previous_schema"
+		exec("ALTER TABLE " + quoteName(name) + " RENAME TO " + quoteName(aside))
+		exec(before[name].sql)
+		rows, err := conn.QueryContext(ctx, "SELECT name FROM pragma_table_info(?) WHERE name IN (SELECT name FROM pragma_table_info(?)) ORDER BY cid", name, aside)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var columns []string
+		for rows.Next() {
+			var c string
+			if err := rows.Scan(&c); err != nil {
+				t.Fatal(err)
+			}
+			columns = append(columns, quoteName(c))
+		}
+		if err := rows.Close(); err != nil {
+			t.Fatal(err)
+		}
+		list := strings.Join(columns, ", ")
+		exec("INSERT INTO " + quoteName(name) + " (" + list + ") SELECT " + list + " FROM " + quoteName(aside))
+	}
+	for _, name := range rebuild {
+		exec("DROP TABLE " + quoteName(name+"_previous_schema"))
+	}
+	for _, name := range recreate {
+		exec(before[name].sql)
+	}
+	exec("UPDATE schema_version SET version = ?, compatible_from = ?, updated_by_release = 'previous'", last.To-1, compatibleFrom)
+	exec("COMMIT")
+	var broken int
+	if err := conn.QueryRowContext(ctx, "SELECT count(*) FROM pragma_foreign_key_check").Scan(&broken); err != nil || broken != 0 {
+		t.Fatalf("the previous schema's rows break %d references: %v", broken, err)
+	}
+	if changes := schemaChanges(t, definitions(before), definitions(schemaObjects(t, conn))); len(changes) != 0 {
+		t.Fatalf("previousSchema did not make schema %d: %v", last.To-1, changes)
+	}
 }
+
+// schemaObject is a table, index, view or trigger as sqlite_schema holds it.
+type schemaObject struct{ kind, table, sql string }
+
+// schemaObjects is every table, index, view and trigger a database holds
+// with its statement, by name; SQLite's own and the indexes it makes for
+// constraints are left out.
+func schemaObjects(t *testing.T, conn interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}) map[string]schemaObject {
+	t.Helper()
+	rows, err := conn.QueryContext(context.Background(), "SELECT type, name, tbl_name, sql FROM sqlite_schema WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\'")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	objects := map[string]schemaObject{}
+	for rows.Next() {
+		var name string
+		var o schemaObject
+		if err := rows.Scan(&o.kind, &name, &o.table, &o.sql); err != nil {
+			t.Fatal(err)
+		}
+		objects[name] = o
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return objects
+}
+
+// stepsSchema is the schema the released schema 1 makes with steps applied
+// in order, in a database of its own.
+func stepsSchema(t *testing.T, schema1 string, steps []db.Step) map[string]schemaObject {
+	t.Helper()
+	conn, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "steps.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err := conn.Exec(schema1); err != nil {
+		t.Fatalf("the released schema 1: %v", err)
+	}
+	for _, st := range steps {
+		if _, err := conn.Exec(st.SQL); err != nil {
+			t.Fatalf("schema %d's step: %v", st.To, err)
+		}
+	}
+	return schemaObjects(t, conn)
+}
+
+// definitions is objects' statements as one schema: tables, then indexes,
+// views and triggers, each in name order.
+func definitions(objects map[string]schemaObject) string {
+	names := sortedNames(objects)
+	slices.SortStableFunc(names, func(x, y string) int { return kindOrder(objects[x].kind) - kindOrder(objects[y].kind) })
+	var b strings.Builder
+	for _, name := range names {
+		b.WriteString(objects[name].sql + ";\n")
+	}
+	return b.String()
+}
+
+// schemaChanges is what schemadiff finds from the schema older makes to the
+// one newer makes: none when they are the same schema, written either way.
+func schemaChanges(t *testing.T, older, newer string) []schemadiff.Change {
+	t.Helper()
+	changes, err := schemadiff.Diff(context.Background(), older, newer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return changes
+}
+
+func sortedNames(objects map[string]schemaObject) []string {
+	names := make([]string, 0, len(objects))
+	for name := range objects {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
+}
+
+func kindOrder(kind string) int {
+	return map[string]int{"table": 0, "index": 1, "view": 2, "trigger": 3}[kind]
+}
+
+func quoteName(name string) string { return `"` + strings.ReplaceAll(name, `"`, `""`) + `"` }
 
 type recordedSchema struct {
 	version, compatibleFrom int64
 	updatedBy               string
 	objects                 string // every table, index and trigger, by type and name
+	definitions             string // their statements (definitions)
+}
+
+// String leaves the statements out of a failure's message.
+func (r recordedSchema) String() string {
+	return fmt.Sprintf("{version:%d compatibleFrom:%d updatedBy:%s objects:%s}", r.version, r.compatibleFrom, r.updatedBy, r.objects)
 }
 
 func readRecorded(t *testing.T, in install) recordedSchema {
@@ -97,6 +280,7 @@ func readRecorded(t *testing.T, in install) recordedSchema {
 	if err := conn.QueryRow("SELECT group_concat(type || ' ' || name, ', ') FROM (SELECT type, name FROM sqlite_schema WHERE name NOT LIKE 'sqlite\\_%' ESCAPE '\\' ORDER BY type, name)").Scan(&r.objects); err != nil {
 		t.Fatal(err)
 	}
+	r.definitions = definitions(schemaObjects(t, conn))
 	return r
 }
 
@@ -153,7 +337,9 @@ func TestServeInTheImageUpgradesARollbackSafeSchema(t *testing.T) {
 	start(t, in).stop(t)
 	current := readRecorded(t, in)
 	previousSchema(t, in)
-	if got := readRecorded(t, in); got.version != db.SchemaVersion-1 || got.objects == current.objects {
+	// Changed by what the last step does: a step that makes a table again
+	// (schema 8) keeps every name, so the statements are compared.
+	if got := readRecorded(t, in); got.version != db.SchemaVersion-1 || len(schemaChanges(t, got.definitions, current.definitions)) == 0 {
 		t.Fatalf("the previous schema: %+v", got)
 	}
 	// admin schema status says what start will do.
@@ -169,8 +355,12 @@ func TestServeInTheImageUpgradesARollbackSafeSchema(t *testing.T) {
 		!strings.Contains(logged, fmt.Sprintf("from=%d to=%d compatibleFrom=%d", db.SchemaVersion-1, db.SchemaVersion, db.CompatibleFrom)) {
 		t.Fatalf("the upgrade is not logged: %q", logged)
 	}
-	want := recordedSchema{version: db.SchemaVersion, compatibleFrom: db.CompatibleFrom, updatedBy: buildinfo.Version, objects: current.objects}
-	if got := readRecorded(t, in); got != want {
+	got := readRecorded(t, in)
+	if changes := schemaChanges(t, current.definitions, got.definitions); len(changes) != 0 {
+		t.Fatalf("after the upgrade at start, the schema is not a new database's: %v", changes)
+	}
+	want := recordedSchema{version: db.SchemaVersion, compatibleFrom: db.CompatibleFrom, updatedBy: buildinfo.Version, objects: current.objects, definitions: got.definitions}
+	if got != want {
 		t.Fatalf("after the upgrade at start: %+v, want %+v", got, want)
 	}
 
