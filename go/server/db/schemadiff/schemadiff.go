@@ -30,6 +30,9 @@
 // a value the previous release misreads, a restriction kept in code) is
 // left to G6's run and the release checklist.
 //
+// DiffSteps and JudgeSteps (steps.go) hold each upgrade step to its own
+// CompatibleFrom by the same rules, against the schema just before it.
+//
 // Both schemas are executed into in-memory databases, so the comparison is
 // of what SQLite stored (sqlite_schema and the table pragmas), with
 // comments and spacing taken out, not of the files' text.
@@ -81,6 +84,11 @@ func Diff(ctx context.Context, older, newer string) ([]Change, error) {
 	if err != nil {
 		return nil, fmt.Errorf("schemadiff: the newer schema: %w", err)
 	}
+	return compare(a, b), nil
+}
+
+// compare returns the changes from schema a to schema b, in Diff's order.
+func compare(a, b *schema) []Change {
 	var out []Change
 	add := func(class Class, object, what string) { out = append(out, Change{class, object, what}) }
 
@@ -137,7 +145,7 @@ func Diff(ctx context.Context, older, newer string) ([]Change, error) {
 		}
 		return out[i].Object < out[j].Object
 	})
-	return out, nil
+	return out
 }
 
 type table struct {
@@ -218,20 +226,36 @@ func diffTable(a, b *table, add func(Class, string, string)) {
 }
 
 func load(ctx context.Context, ddl string) (*schema, error) {
+	var s *schema
+	err := withMemory(ctx, func(conn *sql.Conn) error {
+		if _, err := conn.ExecContext(ctx, ddl); err != nil {
+			return err
+		}
+		var err error
+		s, err = read(ctx, conn)
+		return err
+	})
+	return s, err
+}
+
+// withMemory runs f on one connection to a new in-memory database.
+func withMemory(ctx context.Context, f func(*sql.Conn) error) error {
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer db.Close()
 	db.SetMaxOpenConns(1)
 	conn, err := db.Conn(ctx)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer conn.Close()
-	if _, err := conn.ExecContext(ctx, ddl); err != nil {
-		return nil, err
-	}
+	return f(conn)
+}
+
+// read takes the schema the database on conn holds now.
+func read(ctx context.Context, conn *sql.Conn) (*schema, error) {
 	rows, err := conn.QueryContext(ctx, "SELECT type, name, tbl_name, sql FROM sqlite_schema WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' ORDER BY type, name")
 	if err != nil {
 		return nil, err
