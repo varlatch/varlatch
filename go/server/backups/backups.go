@@ -747,6 +747,9 @@ func (s *Service) client() (*backup.Client, backup.Destination, error) {
 	if err != nil {
 		return nil, d, err
 	}
+	if why := credentialsWarning(credentials); why != "" {
+		s.o.Log.Warn("backup: " + why)
+	}
 	return backup.NewClient(d, c, s.o.HTTPClient), d, nil
 }
 

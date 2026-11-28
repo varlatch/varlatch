@@ -580,7 +580,10 @@ are given in files, never on the command line:
   exchanges the client for a token of its own, and no token is kept.
 - **The new node's auth key** (`--tailnet-auth-key-file <file>`): an auth
   key with the node's tags, which the migration gives to the 0.50
-  server.
+  server. It writes the key to the server's `tailnet_auth_key_file`, where
+  the handoff's checks join probe nodes with it. After `--finish`, delete
+  that file and revoke the key: `sudo varlatch doctor` says so
+  (`tailnet.auth-key`).
 
 Give both again with `--resume`, `--abort` and `--rollback`: a migration
 whose tailnet name is moving is refused without them, and changes

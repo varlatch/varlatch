@@ -147,6 +147,82 @@ replay or a suite named here does not exist.
 | In `report` mode a control refuses nothing and changes nothing issued; it counts. A write that would have been refused, asked for an approval or changed is counted in its own transaction, so a refused, failed or rolled-back attempt, or one that changed nothing, leaves no count. A `passkey-verification` access is counted only after the request was allowed and succeeded, best-effort (a count that cannot be made within about a second is dropped, so its counts are a lower bound). Counters hold only the organization, control, control version, operation, actor, reason and hour, never a target, body, URL, token or value; each closed hour becomes one immutable `security_control.would_block` audit event, once across concurrent workers and crashes, a late increment going to the current hour; counters are deleted 35 days after their summary | **SHIPPED GUARANTEE** | `server/security.TestSummaries`, `server/security.TestTypeScriptSummaries`, `server/security.TestSummariesResumeAfterAnyJob`, `server/security.TestCountsSurviveAClockMovedBack`, `server/security.TestControlReport`, `server/values.TestConcurrentExportsUnderReportCountExactly`, `server/values.TestReportCountEntersMaintenanceAdmission` |
 | Freezing an organization, lifting its freeze, changing a security control, and creating, checking, changing, re-keying or removing its audit export recheck the requester's `organization.manage` inside their transaction, on the single writer, whatever the controls' modes: a requester who lost it meanwhile is refused and nothing changes (a lift's approval stays unused). The refusal is audited once as `authorization.denied`, after the rollback, when at least one control is at `report` or `enforce` in the state read there (for a control change, the state before it); otherwise it records nothing, as before the controls. The operator's reset takes the same gate, so a request waiting for it decides on the state the reset committed. If the controls cannot be read there, the request still gets the same refusal | **SHIPPED GUARANTEE** | replay `security`; `server/freeze.TestOperatorUnfreezeAndReset`, `server/daemon.TestOperatorCommandsWaitForAnEffect`, `server/access.TestMemberAndProjectWritesRecheckTheGroup`. **Not proven by a Go test:** a concurrent demotion between the check and the transaction for each of these operations; they recheck through the same code |
 | Validation verdicts are value-derived, so `POST …/validate` evaluates an item only if the caller may read what the verdict describes: presence needs `config.metadata.read`, non-sensitive verdicts `config.value.read`, Secret verdicts `secret.reveal` including its Requirements (`secret.use` alone is not enough). Everything else is reported as not evaluated, with an authorization-derived reason only, and a partial evaluation is never valid. Validation decryption is audited before it happens (`secret.validated`/`value.validated`, `item@versionId`, no verdicts). Residual: a `secret.reveal` holder who can also change the Contract can probe by repeated activation, but can already read the value, and each probe is audited | **SHIPPED GUARANTEE** | replay `core` (validation by permission); `cmd/varlatch/internal/cli.TestValidationVectors`; `apps/web/test/validationSummary.test.ts` |
+| `varlatchd serve` refuses to start (exit 78) when the Root KEK's or the backup key's file is not a regular file, before it reads either or opens the database. One its group or others may read is said at each start and fails `varlatch doctor` (`files.keys`); it still serves, so a mount that gives looser modes survives the upgrade that brought the check. A systemd credential is judged by its type only: systemd makes that copy for the unit's user alone, and its source in `/etc/varlatch` is root's 0600 file, which doctor checks | **SHIPPED GUARANTEE** | `server/daemon.TestServeRefusesAKeyFileThatIsNoFile`, `server/daemon.TestServeWarnsOfALooseKeyFile`, `server/daemon.TestKeyFileProblem`, `server/doctor.TestFailingChecks` |
+| No tailnet join key stays where setup put it once the node has joined: setup removes its copy (`/etc/varlatch/tailnet-auth-key`) at the end of a run once the node's pin is taken, and `varlatch doctor` reports any auth key file still on disk after the join (`tailnet.auth-key`, advisory: a migration, its rollback or a name takeover on the host may still need it) | **SHIPPED GUARANTEE** | `cmd/varlatch/internal/setup.TestTheJoinedNodesKeyIsRemoved`, `server/doctor.TestTailnetAuthKeyOnDisk` |
+| The bucket key file is read by the service's user only: `varlatch doctor` fails a file that is open to others, writable by its group, or readable by another group than the service's (`files.bucket-key`), each upload says the same, and doctor reports a bucket key that may read archives (`backups.bucket-key-read`, advisory), asked with one `HEAD` that downloads nothing | **SHIPPED GUARANTEE** | `lib/backup.TestCredentialsModeProblem`, `server/doctor.TestBucketKeyFile`, `server/doctor.TestBucketKeyRead`, `server/backups.TestKeyAccess`, `server/backups.TestUploadWarnsOfALooseBucketKeyFile` |
+
+### At rest: what the host's disk holds
+
+What a self-hosted installation keeps on disk, and what a copy of it gives.
+Paths are a systemd host's; in the container image the keys are under
+`/keys` and the configuration's directory is mounted read-only.
+
+**Encrypted:**
+
+- Every stored Value and Secret version: ciphertext under its own DEK,
+  wrapped by its Organization KEK, wrapped by the Root KEK (AES-256-GCM,
+  with associated data that binds each envelope to its purpose and record).
+- Under an Organization KEK as well: TOTP seeds and OAuth client secrets
+  (inside their Values), OAuth access and refresh tokens and PKCE
+  verifiers, webhook signing secrets, Platform Credentials, GitHub App
+  private keys, audit export credentials.
+- Under the Root KEK: the Organization KEKs, the KEK canary, and an audit
+  export's credential while a deleted organization's export drains.
+- Backup archives (`backups/*.vltbak`, an upgrade's
+  `upgrades/<id>/snapshot.vltbak`, and the root-owned copy of that
+  snapshot the upgrade keeps beside the binaries): sealed as a whole under
+  the Backup Encryption Key.
+
+**Hashed:** bearer credentials, browser sessions, setup, invite and
+recovery links, device sign-in codes, entry links and Capability secrets
+are stored as SHA-256 digests of 32 random bytes; approval bodies and
+idempotency bodies as HMACs keyed by the Root KEK.
+
+**Plaintext:**
+
+- In the database: names (Organizations, Projects, Environments, items),
+  Contracts (their defaults and examples included), Grants and other
+  authorization state, people's names and email addresses, session IP
+  addresses and user agents, passkeys' public keys, the audit log, sync
+  destinations and mappings, OAuth endpoints and client IDs, TOTP issuers
+  and accounts, and **webhook URLs**, which may embed a token.
+- In the data directory: the tailnet node's state (`tailnet/`, its private
+  keys), public HTTPS's ACME account key, certificate and private key
+  (`acme/`), the backups' status records, and **plain copies of the
+  database** while some operations run: a backup's snapshot
+  (`backups/.work-*`), a restore's (`.restore-work/`), an upgrade's
+  (`upgrades/<id>/db`, `upgrades/<id>/original`) and a reverse migration's
+  frozen copy. Each is removed when its operation ends, except a
+  rollback's `upgrades/<id>/original`, the database it replaced, kept 30
+  days ([Upgrading](operations/upgrade.md#what-is-kept)). All are 0600
+  in the 0700 data directory.
+- In `/etc/varlatch`: **the Root KEK and the backup key** (`root-kek`,
+  `backup-key`: root, 0600), the configuration (no secrets), setup's
+  journal (no key), the destinations file, the **bucket key**
+  (`writeCredentialsFile`, root and the service's group, 0640), and, until
+  the node has joined, the **tailnet auth key**.
+
+**What a copy gives:**
+
+- **A whole disk of a systemd host**, with the keys where setup puts them:
+  everything the installation holds. The Root KEK opens every envelope;
+  the backup key opens every local archive and upgrade snapshot; the tsnet
+  keys and the ACME key let the copy pose as the node and as the public
+  name until they are replaced; the bucket key can write to the bucket,
+  and, if it may read, download every archive the bucket keeps, older ones
+  included (so give it write access only:
+  [backups](operations/backup.md#scoping-destination-credentials-per-provider)).
+  The hashes do not give a sign-in. Keeping the two keys off that disk
+  (another volume, or a host that hands them in at start) is the
+  operator's choice; Varlatch does not do it.
+- **The data directory alone** (the keys elsewhere): no Value and no
+  envelope's content, but all the plaintext metadata above, any plain
+  database copy that is there, the tailnet node's keys and the public
+  certificate's key. Archives stay closed.
+- **One archive alone:** nothing without the backup key. With it, the
+  database as it was, under the same envelopes: the Root KEK is still
+  needed for any Value. An archive never holds the keys, the tailnet
+  state or the ACME material.
 
 ## 5. Explicit assumptions and non-guarantees
 

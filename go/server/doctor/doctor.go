@@ -148,6 +148,12 @@ type Live struct {
 	// Custody is the attestations, CustodyError why they could not be read.
 	Custody      *custody.Status `json:"custody,omitempty"`
 	CustodyError string          `json:"custodyError,omitempty"`
+	// BucketKeyReads is whether the backup destination's key may read
+	// archives (backups.Service.KeyAccess), nil when not known or no
+	// destination is configured; BucketKeyDetail what was asked and
+	// answered.
+	BucketKeyReads  *bool  `json:"bucketKeyReads,omitempty"`
+	BucketKeyDetail string `json:"bucketKeyDetail,omitempty"`
 }
 
 // Thresholds.
@@ -245,6 +251,11 @@ func Run(ctx context.Context, in Inputs) Report {
 	if cfg.Tailnet != nil {
 		add(tailnetPin(in.Live))
 		add(tailnetControl(in))
+		add(tailnetAuthKey(in))
+	}
+	if cfg.BackupDestinationsFile != "" {
+		add(bucketKeyFile(in))
+		add(bucketKeyRead(in))
 	}
 	if c, held := restoreHold(in); held {
 		add(c)

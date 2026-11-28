@@ -293,7 +293,9 @@ func Run(ctx context.Context, o Options) error {
 		case "backup":
 			err = r.backup(ctx)
 		case "doctor":
-			err = r.doctor(ctx)
+			if err = r.dropTailnetKey(); err == nil {
+				err = r.doctor(ctx)
+			}
 		}
 		if err != nil {
 			return err
@@ -532,7 +534,7 @@ func (r *run) tailnetKey(gid int) error {
 		if err := createPrivate(dest, own); err != nil {
 			return fmt.Errorf("setup: writing %s: %w", TailnetAuthKey, err)
 		}
-		if err := r.o.Say("Copied the tailnet auth key to " + TailnetAuthKey + " (root:" + User + ", 0640); your own file is no longer needed."); err != nil {
+		if err := r.o.Say("Copied the tailnet auth key to " + TailnetAuthKey + " (root:" + User + ", 0640), which setup removes once the node has joined. varlatchd never reads your own file: delete it, unless you keep the key for a restore or a migration (they need a reusable key)."); err != nil {
 			return err
 		}
 	}
@@ -965,7 +967,8 @@ func (r *run) config() error {
 		return err
 	}
 	answers := r.j.Answers
-	if _, err := os.Lstat(r.path(TailnetAuthKey)); err == nil && answers.Ingress == Tailnet {
+	if answers.Ingress == Tailnet {
+		// varlatchd's copy, made above (or removed since the node joined).
 		answers.TailnetAuthKeyFile = TailnetAuthKey
 	}
 	want := append(RenderConfig(answers), r.configExtra...)

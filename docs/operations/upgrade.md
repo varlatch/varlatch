@@ -194,6 +194,25 @@ removes what is older than 30 days, but never what belongs to the last change
 on record, or to the upgrade that change went back on. So they stay longer
 when you do not upgrade.
 
+What these files are, in `upgrades/<id>/`:
+
+- `snapshot.vltbak` is a backup archive, encrypted with the backup key.
+- `db/` and `original/` are **plain database files**, as the data
+  directory's own: the copy that gets the new schema, and the database as
+  the stopped release left it. Secret values in them stay encrypted under
+  the Root KEK, but names, people, the audit log and every other record
+  can be read. They exist only while an upgrade runs: once it is over,
+  successful or rolled back, they are removed.
+- After a rollback, `original/` stays: it is the database the rollback
+  replaced, kept so that nothing written after the upgrade is lost.
+
+Once you know you do not need it, remove a rollback's `original/` by hand,
+while no `varlatch upgrade` runs (`varlatchd` may run):
+
+```sh
+sudo rm -r /var/lib/varlatch/upgrades/<id>/original
+```
+
 ## Newer releases in the dashboard
 
 The dashboard never upgrades Varlatch, and neither `varlatchd` nor the
