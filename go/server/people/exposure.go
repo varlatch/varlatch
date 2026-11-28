@@ -69,8 +69,9 @@ func nullStringJS(s sql.NullString) any {
 
 // MemberExposure is memberExposure: the exposure report for a current or
 // former member, from one read snapshot (db); now is the time a retiring
-// version's deadline is read against.
-func MemberExposure(ctx context.Context, db query.DBTX, organizationID, identityID string, now int64) (jsvalue.Object, error) {
+// version's deadline is read against; rootKEK reads its review's webhook
+// URLs.
+func MemberExposure(ctx context.Context, db query.DBTX, rootKEK []byte, organizationID, identityID string, now int64) (jsvalue.Object, error) {
 	if err := pgText(identityID); err != nil {
 		return nil, err
 	}
@@ -169,7 +170,7 @@ func MemberExposure(ctx context.Context, db query.DBTX, organizationID, identity
 	if err != nil {
 		return nil, err
 	}
-	indirect, err := MemberReview(ctx, db, organizationID, identityID, now)
+	indirect, err := MemberReview(ctx, db, rootKEK, organizationID, identityID, now)
 	if err != nil {
 		return nil, err
 	}

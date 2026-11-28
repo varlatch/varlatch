@@ -79,7 +79,7 @@ func previousSchema(t *testing.T, in install) {
 type recordedSchema struct {
 	version, compatibleFrom int64
 	updatedBy               string
-	objects                 string // every table, index and trigger, by type and name
+	objects                 string // every table, index, trigger and column, by type and name
 }
 
 func readRecorded(t *testing.T, in install) recordedSchema {
@@ -94,7 +94,12 @@ func readRecorded(t *testing.T, in install) recordedSchema {
 	if err := conn.QueryRow("SELECT version, compatible_from, updated_by_release FROM schema_version").Scan(&r.version, &r.compatibleFrom, &r.updatedBy); err != nil {
 		t.Fatal(err)
 	}
-	if err := conn.QueryRow("SELECT group_concat(type || ' ' || name, ', ') FROM (SELECT type, name FROM sqlite_schema WHERE name NOT LIKE 'sqlite\\_%' ESCAPE '\\' ORDER BY type, name)").Scan(&r.objects); err != nil {
+	// The columns too: a step may add one (schema 8's webhooks.url_envelope).
+	if err := conn.QueryRow(`SELECT group_concat(entry, ', ') FROM (
+		SELECT type || ' ' || name AS entry FROM sqlite_schema WHERE name NOT LIKE 'sqlite\_%' ESCAPE '\'
+		UNION ALL SELECT 'column ' || m.name || '.' || c.name FROM sqlite_schema m, pragma_table_xinfo(m.name) c
+		WHERE m.type = 'table' AND m.name NOT LIKE 'sqlite\_%' ESCAPE '\'
+		ORDER BY entry)`).Scan(&r.objects); err != nil {
 		t.Fatal(err)
 	}
 	return r

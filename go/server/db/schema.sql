@@ -1586,3 +1586,14 @@ CREATE TABLE entry_links (
 CREATE INDEX entry_links_environment ON entry_links (environment_id, created_at);
 CREATE INDEX entry_links_requested_by ON entry_links (requested_by, created_at);
 CREATE INDEX entry_links_expires ON entry_links (expires_at);
+
+-- Webhook URLs under the Organization KEK: Go only, schema version 8. A
+-- URL may carry a token in its path or query, so it rests sealed as its
+-- signing secret does (envelope purpose webhook-url, bound to the
+-- Organization and the webhook). Every reader takes url_envelope first and
+-- url only while it is NULL. varlatchd writes both, and seals what it finds
+-- without one (or with one an older release changed the URL under) when it
+-- starts and on every delivery pass. url stays filled in this release, so
+-- the release before it reads the same webhooks after a rollback; the next
+-- release stops writing it.
+ALTER TABLE webhooks ADD COLUMN url_envelope TEXT CHECK (json_valid(url_envelope));

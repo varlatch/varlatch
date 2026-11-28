@@ -267,6 +267,12 @@ func checkSQLite(m *Manifest, lite map[string][]liteColumn) []string {
 		}
 		for _, c := range cols {
 			typ, ok := mine[c.name]
+			if _, own := m.TargetOnly.Columns[name+"."+c.name]; own {
+				if ok {
+					errs = append(errs, "SQLite column "+name+"."+c.name+": target-only, yet a manifest column targets it")
+				}
+				continue
+			}
 			if !ok {
 				errs = append(errs, "SQLite column "+name+"."+c.name+": no manifest column targets it")
 				continue
@@ -288,6 +294,15 @@ func checkSQLite(m *Manifest, lite map[string][]liteColumn) []string {
 	for name := range m.TargetOnly.Tables {
 		if _, ok := lite[name]; !ok {
 			errs = append(errs, "target-only table "+name+" is not in SQLite")
+		}
+	}
+	for name := range m.TargetOnly.Columns {
+		table, column, _ := strings.Cut(name, ".")
+		if _, whole := m.TargetOnly.Tables[table]; whole {
+			errs = append(errs, "target-only column "+name+": its whole table is target-only")
+		}
+		if !slices.ContainsFunc(lite[table], func(c liteColumn) bool { return c.name == column }) {
+			errs = append(errs, "target-only column "+name+" is not in SQLite")
 		}
 	}
 	return errs

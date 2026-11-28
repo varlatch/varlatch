@@ -471,6 +471,7 @@ func TestWrongKeyOrContext(t *testing.T) {
 	contexts := []Context{
 		OrgKEKContext("org_a"), DEKContext("org_a", "val_b", "ver_c"), ValueContext("org_a", "val_b", "ver_c"),
 		WebhookSecretContext("org_a", "whk_b"), PlatformCredentialContext("org_a", "pcn_b"), GitHubAppKeyContext("org_a", "gha_b"),
+		WebhookURLContext("org_a", "whk_b"), WebhookURLContext("org_x", "whk_b"), WebhookURLContext("org_a", "whk_x"),
 		AuditExportCredentialContext("org_a", "aex_b"), AuditExportDrainContext("org_a", "aex_b"), AuditExportCredentialContext("org_a", "aex_x"),
 		KEKCanaryContext("ins_a"), JWTSigningKeyContext("key_a"),
 		ValueContext("org_x", "val_b", "ver_c"), ValueContext("org_a", "val_x", "ver_c"), ValueContext("org_a", "val_b", "ver_x"),

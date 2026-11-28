@@ -55,7 +55,7 @@ func (q *Queries) DeletedProjectsAmong(ctx context.Context, arg DeletedProjectsA
 }
 
 const deliverableWebhooks = `-- name: DeliverableWebhooks :many
-SELECT w.id, w.organization_id, w.url, w.event_types, w.secret_envelope, w.cursor_order
+SELECT w.id, w.organization_id, w.url, w.url_envelope, w.event_types, w.secret_envelope, w.cursor_order
 FROM webhooks w JOIN organizations o ON o.id = w.organization_id
 WHERE w.revoked_at IS NULL AND w.suspended_by_deletion IS NULL AND o.deleted_at IS NULL
 ORDER BY w.created_at, w.id
@@ -65,6 +65,7 @@ type DeliverableWebhooksRow struct {
 	ID             string
 	OrganizationID string
 	Url            string
+	UrlEnvelope    sql.NullString
 	EventTypes     sql.NullString
 	SecretEnvelope string
 	CursorOrder    int64
@@ -84,6 +85,7 @@ func (q *Queries) DeliverableWebhooks(ctx context.Context) ([]DeliverableWebhook
 			&i.ID,
 			&i.OrganizationID,
 			&i.Url,
+			&i.UrlEnvelope,
 			&i.EventTypes,
 			&i.SecretEnvelope,
 			&i.CursorOrder,
@@ -102,14 +104,15 @@ func (q *Queries) DeliverableWebhooks(ctx context.Context) ([]DeliverableWebhook
 }
 
 const insertWebhook = `-- name: InsertWebhook :exec
-INSERT INTO webhooks (id, organization_id, url, event_types, secret_envelope, created_by, created_at, cursor_occurred_at, cursor_event_id, cursor_order)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO webhooks (id, organization_id, url, url_envelope, event_types, secret_envelope, created_by, created_at, cursor_occurred_at, cursor_event_id, cursor_order)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertWebhookParams struct {
 	ID               string
 	OrganizationID   string
 	Url              string
+	UrlEnvelope      sql.NullString
 	EventTypes       sql.NullString
 	SecretEnvelope   string
 	CreatedBy        sql.NullString
@@ -124,6 +127,7 @@ func (q *Queries) InsertWebhook(ctx context.Context, arg InsertWebhookParams) er
 		arg.ID,
 		arg.OrganizationID,
 		arg.Url,
+		arg.UrlEnvelope,
 		arg.EventTypes,
 		arg.SecretEnvelope,
 		arg.CreatedBy,
@@ -136,7 +140,7 @@ func (q *Queries) InsertWebhook(ctx context.Context, arg InsertWebhookParams) er
 }
 
 const liveWebhook = `-- name: LiveWebhook :one
-SELECT id, organization_id, url, event_types, created_at, revoked_at, failure_count, last_attempt_at, last_status, version, updated_at
+SELECT id, organization_id, url, url_envelope, event_types, created_at, revoked_at, failure_count, last_attempt_at, last_status, version, updated_at
 FROM webhooks WHERE id = ? AND organization_id = ? AND revoked_at IS NULL
 `
 
@@ -149,6 +153,7 @@ type LiveWebhookRow struct {
 	ID             string
 	OrganizationID string
 	Url            string
+	UrlEnvelope    sql.NullString
 	EventTypes     sql.NullString
 	CreatedAt      int64
 	RevokedAt      sql.NullInt64
@@ -167,6 +172,7 @@ func (q *Queries) LiveWebhook(ctx context.Context, arg LiveWebhookParams) (LiveW
 		&i.ID,
 		&i.OrganizationID,
 		&i.Url,
+		&i.UrlEnvelope,
 		&i.EventTypes,
 		&i.CreatedAt,
 		&i.RevokedAt,
@@ -181,7 +187,7 @@ func (q *Queries) LiveWebhook(ctx context.Context, arg LiveWebhookParams) (LiveW
 
 const organizationWebhooks = `-- name: OrganizationWebhooks :many
 
-SELECT id, organization_id, url, event_types, created_at, revoked_at, failure_count, last_attempt_at, last_status, version, updated_at
+SELECT id, organization_id, url, url_envelope, event_types, created_at, revoked_at, failure_count, last_attempt_at, last_status, version, updated_at
 FROM webhooks WHERE organization_id = ? AND revoked_at IS NULL
 ORDER BY created_at, id
 `
@@ -190,6 +196,7 @@ type OrganizationWebhooksRow struct {
 	ID             string
 	OrganizationID string
 	Url            string
+	UrlEnvelope    sql.NullString
 	EventTypes     sql.NullString
 	CreatedAt      int64
 	RevokedAt      sql.NullInt64
@@ -204,7 +211,8 @@ type OrganizationWebhooksRow struct {
 // integrationstepup.ts' readWebhook; ADR-0016, ADR-0029 section 8,
 // ADR-0051 Decision 9, ADR-0057; ADR-0059 step 4.7b). Every time written
 // is varlatchd's clock, passed in. event_types is a JSON array of strings,
-// or NULL for every event.
+// or NULL for every event. The URL is url_envelope's (schema version 8),
+// and url's only while that is NULL (webhooks.URLs); both are written.
 // listWebhooks: the live webhooks, oldest first.
 func (q *Queries) OrganizationWebhooks(ctx context.Context, organizationID string) ([]OrganizationWebhooksRow, error) {
 	rows, err := q.db.QueryContext(ctx, organizationWebhooks, organizationID)
@@ -219,6 +227,7 @@ func (q *Queries) OrganizationWebhooks(ctx context.Context, organizationID strin
 			&i.ID,
 			&i.OrganizationID,
 			&i.Url,
+			&i.UrlEnvelope,
 			&i.EventTypes,
 			&i.CreatedAt,
 			&i.RevokedAt,
@@ -259,6 +268,35 @@ func (q *Queries) RevokeWebhook(ctx context.Context, arg RevokeWebhookParams) (s
 	return id, err
 }
 
+const sealWebhookURL = `-- name: SealWebhookURL :execrows
+UPDATE webhooks SET url_envelope = ?1
+WHERE id = ?2 AND url = ?3 AND coalesce(url_envelope, '') = ?4
+`
+
+type SealWebhookURLParams struct {
+	UrlEnvelope sql.NullString
+	ID          string
+	Url         string
+	Seen        sql.NullString
+}
+
+// SealURLs' write: the envelope of the URL the pass read, only while the
+// row holds that URL and the envelope the pass saw (empty for none), so a
+// change made meanwhile is never overwritten. Neither the version nor
+// updated_at change: the webhook is the same.
+func (q *Queries) SealWebhookURL(ctx context.Context, arg SealWebhookURLParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, sealWebhookURL,
+		arg.UrlEnvelope,
+		arg.ID,
+		arg.Url,
+		arg.Seen,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const skipWebhookEvents = `-- name: SkipWebhookEvents :exec
 UPDATE webhooks SET cursor_order = max(cursor_order, ?1), cursor_event_id = ?2
 WHERE id = ?3
@@ -277,7 +315,7 @@ func (q *Queries) SkipWebhookEvents(ctx context.Context, arg SkipWebhookEventsPa
 }
 
 const storedWebhookURL = `-- name: StoredWebhookURL :one
-SELECT url FROM webhooks WHERE id = ? AND organization_id = ?
+SELECT url, url_envelope FROM webhooks WHERE id = ? AND organization_id = ?
 `
 
 type StoredWebhookURLParams struct {
@@ -285,25 +323,31 @@ type StoredWebhookURLParams struct {
 	OrganizationID string
 }
 
+type StoredWebhookURLRow struct {
+	Url         string
+	UrlEnvelope sql.NullString
+}
+
 // updateWebhook's check of whether the URL changes: any row, revoked ones
 // included.
-func (q *Queries) StoredWebhookURL(ctx context.Context, arg StoredWebhookURLParams) (string, error) {
+func (q *Queries) StoredWebhookURL(ctx context.Context, arg StoredWebhookURLParams) (StoredWebhookURLRow, error) {
 	row := q.db.QueryRowContext(ctx, storedWebhookURL, arg.ID, arg.OrganizationID)
-	var url string
-	err := row.Scan(&url)
-	return url, err
+	var i StoredWebhookURLRow
+	err := row.Scan(&i.Url, &i.UrlEnvelope)
+	return i, err
 }
 
 const updateWebhook = `-- name: UpdateWebhook :one
-UPDATE webhooks SET url = ?1, event_types = ?2, version = version + 1, updated_at = ?3
-WHERE id = ?4 RETURNING version, updated_at
+UPDATE webhooks SET url = ?1, url_envelope = ?2, event_types = ?3, version = version + 1, updated_at = ?4
+WHERE id = ?5 RETURNING version, updated_at
 `
 
 type UpdateWebhookParams struct {
-	Url        string
-	EventTypes sql.NullString
-	UpdatedAt  sql.NullInt64
-	ID         string
+	Url         string
+	UrlEnvelope sql.NullString
+	EventTypes  sql.NullString
+	UpdatedAt   sql.NullInt64
+	ID          string
 }
 
 type UpdateWebhookRow struct {
@@ -314,6 +358,7 @@ type UpdateWebhookRow struct {
 func (q *Queries) UpdateWebhook(ctx context.Context, arg UpdateWebhookParams) (UpdateWebhookRow, error) {
 	row := q.db.QueryRowContext(ctx, updateWebhook,
 		arg.Url,
+		arg.UrlEnvelope,
 		arg.EventTypes,
 		arg.UpdatedAt,
 		arg.ID,
@@ -441,4 +486,54 @@ func (q *Queries) WebhookStillDeliverable(ctx context.Context, id string) (sql.N
 	var wrapped_org_kek sql.NullString
 	err := row.Scan(&wrapped_org_kek)
 	return wrapped_org_kek, err
+}
+
+const webhookURLsAfter = `-- name: WebhookURLsAfter :many
+SELECT w.id, w.organization_id, w.url, w.url_envelope, o.wrapped_org_kek
+FROM webhooks w JOIN organizations o ON o.id = w.organization_id
+WHERE w.id > ?1 ORDER BY w.id LIMIT ?2
+`
+
+type WebhookURLsAfterParams struct {
+	After string
+	Batch int64
+}
+
+type WebhookURLsAfterRow struct {
+	ID             string
+	OrganizationID string
+	Url            string
+	UrlEnvelope    sql.NullString
+	WrappedOrgKek  sql.NullString
+}
+
+// SealURLs' batch: every webhook after the cursor, revoked ones included,
+// by id, with its Organization's KEK (NULL once destroyed).
+func (q *Queries) WebhookURLsAfter(ctx context.Context, arg WebhookURLsAfterParams) ([]WebhookURLsAfterRow, error) {
+	rows, err := q.db.QueryContext(ctx, webhookURLsAfter, arg.After, arg.Batch)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []WebhookURLsAfterRow
+	for rows.Next() {
+		var i WebhookURLsAfterRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrganizationID,
+			&i.Url,
+			&i.UrlEnvelope,
+			&i.WrappedOrgKek,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

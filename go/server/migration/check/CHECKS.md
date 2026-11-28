@@ -60,6 +60,16 @@ cleared once digested.
 | `audit-export-drain` | `audit_exports.credential_envelope`, state `draining` | Root KEK | `organizationId`, `exportId` |
 | `jwt-signing-key` | `signing_keys.private_key_wrapped` | Root KEK | `keyId` |
 
+One class is varlatchd's own (schema version 8), so no bundle has its
+digests: each item is opened and held against the plaintext its row keeps
+beside it, which the rows check holds against the bundle. An import writes
+none (varlatchd seals them from `url` when it starts), so they are met in
+the reverse checks, whose target is Go's copy.
+
+| Class | Read from | Key | ids | Held against |
+|---|---|---|---|---|
+| `webhook-url` | `webhooks.url_envelope` | org KEK | `organizationId`, `webhookId` | the row's `url` |
+
 The ids are the item's envelope context without its `purpose`. A null
 envelope column is no item; an erased value version is none. An item
 under an Organization KEK that was destroyed (`org_kek_destroyed_at`) is

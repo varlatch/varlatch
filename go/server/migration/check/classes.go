@@ -26,8 +26,16 @@ var ClassNames = []string{
 	envelope.PurposeWebhookSecret,
 }
 
+// TargetOnlyClassNames are the encryption classes only varlatchd's schema
+// has (since schema version 8, webhook-url): no bundle holds their digests,
+// since no source keeps them. Each item of the target is opened and held
+// against the plaintext its row keeps beside it, which the rows check holds
+// against the bundle.
+var TargetOnlyClassNames = []string{envelope.PurposeWebhookURL}
+
 // classTables are the table each class is read from, for the report.
 var classTables = map[string]string{
+	envelope.PurposeWebhookURL:            "webhooks",
 	envelope.PurposeKEKCanary:             "installation",
 	envelope.PurposeOrgKEK:                "organizations",
 	envelope.PurposeDEK:                   "value_versions",
@@ -243,6 +251,37 @@ func (c *checker) targetDigests(ctx context.Context) ([]bundle.Digest, error) {
 				clear(opened(s.class, k, text(r[2]), s.ctx(str(r[0]), str(r[1]))))
 			}
 		}
+	}
+	// webhook-url: an import writes none, and varlatchd seals url into it
+	// when it starts, so a reverse's target holds them. Each must open
+	// under its Organization's KEK to the url beside it: not digested (no
+	// source has the class), counted as checked.
+	rows, err = q("SELECT organization_id, id, url, url_envelope FROM webhooks WHERE url_envelope IS NOT NULL", 4)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range rows {
+		org, id := str(r[0]), str(r[1])
+		k, ok := under(envelope.PurposeWebhookURL, org)
+		if !ok {
+			continue
+		}
+		c.checked(Classes, 1)
+		what := idsName(bundle.Digest{IDs: map[string]string{"organizationId": org, "webhookId": id}})
+		var env envelope.Envelope
+		if json.Unmarshal([]byte(str(r[3])), &env) != nil {
+			c.fail(Classes, "webhooks", envelope.PurposeWebhookURL, "%s: not an envelope", what)
+			continue
+		}
+		p, err := envelope.Open(k, env, envelope.WebhookURLContext(org, id))
+		if err != nil {
+			c.fail(Classes, "webhooks", envelope.PurposeWebhookURL, "%s: does not open", what)
+			continue
+		}
+		if !hmac.Equal(p, []byte(str(r[2]))) {
+			c.fail(Classes, "webhooks", envelope.PurposeWebhookURL, "%s: does not hold the row's url", what)
+		}
+		clear(p)
 	}
 	rows, err = q("SELECT organization_id, id, credential_envelope FROM audit_exports WHERE credential_envelope IS NOT NULL AND state = 'draining'", 3)
 	if err != nil {

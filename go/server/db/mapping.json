@@ -1683,6 +1683,9 @@
       "oauth_authorizations": "OAuth authorizations in progress (ADR-0062), ten minutes at most: Go only, schema version 6.",
       "entry_links": "Links a person enters one item's value with, once (ADR-0063), an hour at most: Go only, schema version 7. The value entered is a value version."
     },
+    "columns": {
+      "webhooks.url_envelope": "The webhook's URL sealed under the Organization KEK (envelope purpose webhook-url): Go only, schema version 8. url keeps the plaintext in this release, and PostgreSQL's url is what goes back."
+    },
     "indexes": {
       "audit_events_capability_issued_idx": "A Capability's capability.issued by Organization, for the repair of Capabilities earlier retirements left live (capabilities.RevokeOfRetired): schema version 3. The TypeScript server's migration 53 adds its PostgreSQL counterpart, after v0.22.0.",
       "audit_events_identity_lifecycle_idx": "An identity's identity.retired and identity.reactivated by Organization, for the same repair: schema version 3. The TypeScript server's migration 53 adds its PostgreSQL counterpart, after v0.22.0.",

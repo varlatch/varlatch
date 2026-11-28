@@ -43,6 +43,9 @@ const (
 	PurposeOAuthAccessToken  = "oauth-access-token"
 	PurposeOAuthRefreshToken = "oauth-refresh-token"
 	PurposeOAuthVerifier     = "oauth-verifier"
+	// varlatchd's own, since schema version 8: a webhook's URL (org KEK),
+	// which may carry a token.
+	PurposeWebhookURL = "webhook-url"
 )
 
 // OrgKEKContext binds an organization's KEK, wrapped by the Root KEK.
@@ -92,6 +95,12 @@ func OAuthVerifierContext(organizationID, stateHash string) Context {
 // WebhookSecretContext binds a webhook's signing secret (org KEK).
 func WebhookSecretContext(organizationID, webhookID string) Context {
 	return Context{"purpose": PurposeWebhookSecret, "organizationId": organizationID, "webhookId": webhookID}
+}
+
+// WebhookURLContext binds a webhook's URL (org KEK), as
+// WebhookSecretContext binds its signing secret.
+func WebhookURLContext(organizationID, webhookID string) Context {
+	return Context{"purpose": PurposeWebhookURL, "organizationId": organizationID, "webhookId": webhookID}
 }
 
 // PlatformCredentialContext binds a platform connection's credential (org

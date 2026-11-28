@@ -2,31 +2,47 @@
 -- integrationstepup.ts' readWebhook; ADR-0016, ADR-0029 section 8,
 -- ADR-0051 Decision 9, ADR-0057; ADR-0059 step 4.7b). Every time written
 -- is varlatchd's clock, passed in. event_types is a JSON array of strings,
--- or NULL for every event.
+-- or NULL for every event. The URL is url_envelope's (schema version 8),
+-- and url's only while that is NULL (webhooks.URLs); both are written.
 
 -- name: OrganizationWebhooks :many
 -- listWebhooks: the live webhooks, oldest first.
-SELECT id, organization_id, url, event_types, created_at, revoked_at, failure_count, last_attempt_at, last_status, version, updated_at
+SELECT id, organization_id, url, url_envelope, event_types, created_at, revoked_at, failure_count, last_attempt_at, last_status, version, updated_at
 FROM webhooks WHERE organization_id = ? AND revoked_at IS NULL
 ORDER BY created_at, id;
 
 -- name: LiveWebhook :one
 -- readWebhook, and updateWebhook's read of the row it changes.
-SELECT id, organization_id, url, event_types, created_at, revoked_at, failure_count, last_attempt_at, last_status, version, updated_at
+SELECT id, organization_id, url, url_envelope, event_types, created_at, revoked_at, failure_count, last_attempt_at, last_status, version, updated_at
 FROM webhooks WHERE id = ? AND organization_id = ? AND revoked_at IS NULL;
 
 -- name: StoredWebhookURL :one
 -- updateWebhook's check of whether the URL changes: any row, revoked ones
 -- included.
-SELECT url FROM webhooks WHERE id = ? AND organization_id = ?;
+SELECT url, url_envelope FROM webhooks WHERE id = ? AND organization_id = ?;
 
 -- name: InsertWebhook :exec
-INSERT INTO webhooks (id, organization_id, url, event_types, secret_envelope, created_by, created_at, cursor_occurred_at, cursor_event_id, cursor_order)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+INSERT INTO webhooks (id, organization_id, url, url_envelope, event_types, secret_envelope, created_by, created_at, cursor_occurred_at, cursor_event_id, cursor_order)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: UpdateWebhook :one
-UPDATE webhooks SET url = sqlc.arg(url), event_types = sqlc.arg(event_types), version = version + 1, updated_at = sqlc.arg(updated_at)
+UPDATE webhooks SET url = sqlc.arg(url), url_envelope = sqlc.arg(url_envelope), event_types = sqlc.arg(event_types), version = version + 1, updated_at = sqlc.arg(updated_at)
 WHERE id = sqlc.arg(id) RETURNING version, updated_at;
+
+-- name: WebhookURLsAfter :many
+-- SealURLs' batch: every webhook after the cursor, revoked ones included,
+-- by id, with its Organization's KEK (NULL once destroyed).
+SELECT w.id, w.organization_id, w.url, w.url_envelope, o.wrapped_org_kek
+FROM webhooks w JOIN organizations o ON o.id = w.organization_id
+WHERE w.id > sqlc.arg(after) ORDER BY w.id LIMIT sqlc.arg(batch);
+
+-- name: SealWebhookURL :execrows
+-- SealURLs' write: the envelope of the URL the pass read, only while the
+-- row holds that URL and the envelope the pass saw (empty for none), so a
+-- change made meanwhile is never overwritten. Neither the version nor
+-- updated_at change: the webhook is the same.
+UPDATE webhooks SET url_envelope = sqlc.arg(url_envelope)
+WHERE id = sqlc.arg(id) AND url = sqlc.arg(url) AND coalesce(url_envelope, '') = sqlc.arg(seen);
 
 -- name: RevokeWebhook :one
 UPDATE webhooks SET revoked_at = sqlc.arg(revoked_at)
@@ -34,7 +50,7 @@ WHERE id = sqlc.arg(id) AND organization_id = sqlc.arg(organization_id) AND revo
 
 -- name: DeliverableWebhooks :many
 -- deliverWebhooksOnce: every active webhook of a live Organization.
-SELECT w.id, w.organization_id, w.url, w.event_types, w.secret_envelope, w.cursor_order
+SELECT w.id, w.organization_id, w.url, w.url_envelope, w.event_types, w.secret_envelope, w.cursor_order
 FROM webhooks w JOIN organizations o ON o.id = w.organization_id
 WHERE w.revoked_at IS NULL AND w.suspended_by_deletion IS NULL AND o.deleted_at IS NULL
 ORDER BY w.created_at, w.id;

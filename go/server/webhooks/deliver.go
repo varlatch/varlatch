@@ -208,6 +208,13 @@ func (s *Service) deliverOne(ctx context.Context, h query.DeliverableWebhooksRow
 	if err != nil {
 		return err
 	}
+	// The URL is its envelope's; url only while the row has none.
+	target := h.Url
+	if h.UrlEnvelope.Valid {
+		if target, err = OpenURL(kek, h.OrganizationID, h.ID, h.UrlEnvelope.String); err != nil {
+			return err
+		}
+	}
 	events := make([]any, len(rows))
 	for i, r := range rows {
 		if events[i], err = audit.Serialize(r); err != nil {
@@ -216,7 +223,7 @@ func (s *Service) deliverOne(ctx context.Context, h query.DeliverableWebhooksRow
 	}
 	body := jsvalue.Stringify(jsvalue.Object{{Key: "webhookId", Value: h.ID}, {Key: "organizationId", Value: h.OrganizationID}, {Key: "events", Value: events}})
 	seconds := s.now().Unix()
-	status, ok := s.post(ctx, h, body, "t="+strconv.FormatInt(seconds, 10)+",v1="+Sign(string(secret), seconds, body))
+	status, ok := s.post(ctx, h, target, body, "t="+strconv.FormatInt(seconds, 10)+",v1="+Sign(string(secret), seconds, body))
 	if ctx.Err() != nil {
 		// Stopping: the attempt is not recorded, and the next start
 		// retries it, as a restart of the TypeScript server does.
@@ -241,8 +248,8 @@ func (s *Service) deliverOne(ctx context.Context, h query.DeliverableWebhooksRow
 // delivery's own deadline as TimeoutError (fetch's AbortSignal.timeout);
 // any other failure as TypeError (fetch's network error), the dialer's
 // connect timeout included, as undici reports it.
-func (s *Service) post(ctx context.Context, h query.DeliverableWebhooksRow, body []byte, signature string) (string, bool) {
-	target, valid := outbound.RequestURL(h.Url)
+func (s *Service) post(ctx context.Context, h query.DeliverableWebhooksRow, to string, body []byte, signature string) (string, bool) {
+	target, valid := outbound.RequestURL(to)
 	if !valid {
 		return "TypeError", false
 	}
@@ -308,6 +315,14 @@ func (s *Service) pass(ctx context.Context, admit func() (func(), bool)) {
 			return
 		}
 		defer leave()
+	}
+	// The URLs first (SealURLs): the first pass is at start, and a later one
+	// seals what a restore or a migration brought in. A failure is logged,
+	// and delivery goes on: a row with no envelope is read by its url.
+	if n, err := SealURLs(ctx, s.Writer, s.RootKEK); err != nil && ctx.Err() == nil {
+		s.log().Error("cannot seal every webhook URL under its Organization KEK; tried again on the next pass", "sealed", n, "error", err)
+	} else if n > 0 {
+		s.log().Info("sealed webhook URLs under their Organization KEK", "webhooks", n)
 	}
 	if err := s.DeliverOnce(ctx); err != nil && ctx.Err() == nil {
 		s.log().Error("webhook loop error", "error", err)

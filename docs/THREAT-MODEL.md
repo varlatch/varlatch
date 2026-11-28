@@ -164,8 +164,9 @@ Paths are a systemd host's; in the container image the keys are under
   with associated data that binds each envelope to its purpose and record).
 - Under an Organization KEK as well: TOTP seeds and OAuth client secrets
   (inside their Values), OAuth access and refresh tokens and PKCE
-  verifiers, webhook signing secrets, Platform Credentials, GitHub App
-  private keys, audit export credentials.
+  verifiers, webhook signing secrets, **webhook URLs** (schema version 8;
+  see the plaintext copy below), Platform Credentials, GitHub App private
+  keys, audit export credentials.
 - Under the Root KEK: the Organization KEKs, the KEK canary, and an audit
   export's credential while a deleted organization's export drains.
 - Backup archives (`backups/*.vltbak`, an upgrade's
@@ -185,7 +186,14 @@ idempotency bodies as HMACs keyed by the Root KEK.
   authorization state, people's names and email addresses, session IP
   addresses and user agents, passkeys' public keys, the audit log, sync
   destinations and mappings, OAuth endpoints and client IDs, TOTP issuers
-  and accounts, and **webhook URLs**, which may embed a token.
+  and accounts.
+- **A plaintext copy of every webhook URL**, which may embed a token, for
+  one release more. varlatchd reads a URL from its envelope, and seals the
+  URL of a row that has none when it starts and on every delivery pass,
+  but it still writes the plaintext `url` column beside it, so that the
+  release before, which reads only that column, works after a rollback.
+  The next release removes the plaintext copy. Audit events recorded
+  before webhook URLs were redacted in them may still hold a full URL.
 - In the data directory: the tailnet node's state (`tailnet/`, its private
   keys), public HTTPS's ACME account key, certificate and private key
   (`acme/`), the backups' status records, and **plain copies of the

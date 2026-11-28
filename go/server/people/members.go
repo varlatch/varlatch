@@ -17,6 +17,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/ids"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
 	"github.com/varlatch/varlatch/go/server/security"
+	"github.com/varlatch/varlatch/go/server/webhooks"
 	"github.com/varlatch/varlatch/go/server/write"
 )
 
@@ -287,8 +288,10 @@ func urlHost(raw string) string {
 
 // MemberReview is memberReview: what the person created or changed that
 // may still work without them (ADR-0052 Decision 4). Names and states
-// only. now is the time a credential's expiry is read against.
-func MemberReview(ctx context.Context, db query.DBTX, organizationID, identityID string, now int64) (jsvalue.Object, error) {
+// only; a webhook by the host of its URL, which is its envelope's
+// (webhooks.URLs, under rootKEK). now is the time a credential's expiry is
+// read against.
+func MemberReview(ctx context.Context, db query.DBTX, rootKEK []byte, organizationID, identityID string, now int64) (jsvalue.Object, error) {
 	q := query.New(db)
 	org, who := organizationID, sql.NullString{String: identityID, Valid: true}
 	targets, err := q.ReviewSyncTargets(ctx, query.ReviewSyncTargetsParams{IdentityID: identityID, OrganizationID: org})
@@ -325,9 +328,15 @@ func MemberReview(ctx context.Context, db query.DBTX, organizationID, identityID
 	if err != nil {
 		return nil, err
 	}
-	webhooks := []any{}
+	urls := webhooks.NewURLs(rootKEK, db)
+	defer urls.Close()
+	hookList := []any{}
 	for _, w := range hooks {
-		webhooks = append(webhooks, jsvalue.Object{{Key: "id", Value: w.ID}, {Key: "host", Value: urlHost(w.Url)}, {Key: "revoked", Value: w.RevokedAt.Valid}})
+		url, err := urls.Of(ctx, org, w.ID, w.Url, w.UrlEnvelope)
+		if err != nil {
+			return nil, err
+		}
+		hookList = append(hookList, jsvalue.Object{{Key: "id", Value: w.ID}, {Key: "host", Value: urlHost(url)}, {Key: "revoked", Value: w.RevokedAt.Valid}})
 	}
 	binds, err := q.ReviewOIDCBindings(ctx, query.ReviewOIDCBindingsParams{OrganizationID: org, CreatedBy: who})
 	if err != nil {
@@ -371,7 +380,7 @@ func MemberReview(ctx context.Context, db query.DBTX, organizationID, identityID
 		personal = append(personal, jsvalue.Object{{Key: "id", Value: e.ID}, {Key: "name", Value: e.Name}, {Key: "projectId", Value: e.ProjectID}})
 	}
 	return jsvalue.Object{
-		{Key: "syncTargets", Value: syncTargets}, {Key: "connections", Value: connections}, {Key: "webhooks", Value: webhooks},
+		{Key: "syncTargets", Value: syncTargets}, {Key: "connections", Value: connections}, {Key: "webhooks", Value: hookList},
 		{Key: "oidcBindings", Value: bindings}, {Key: "credentials", Value: credentials}, {Key: "personalEnvironments", Value: personal},
 	}, nil
 }
@@ -379,7 +388,7 @@ func MemberReview(ctx context.Context, db query.DBTX, organizationID, identityID
 // PreviewReview is previewMemberReview: the review list before a removal
 // or a leave, from one read snapshot: for a live admin about any live
 // member, for a member about themselves.
-func PreviewReview(ctx context.Context, db query.DBTX, organizationID, identityID string, actor *auth.Principal, now int64) (jsvalue.Object, error) {
+func PreviewReview(ctx context.Context, db query.DBTX, rootKEK []byte, organizationID, identityID string, actor *auth.Principal, now int64) (jsvalue.Object, error) {
 	if actor.Identity.ID != identityID {
 		if err := requireLiveAdmin(ctx, db, organizationID, actor); err != nil {
 			return nil, err
@@ -392,7 +401,7 @@ func PreviewReview(ctx context.Context, db query.DBTX, organizationID, identityI
 	if m == nil {
 		return nil, memberNotFound()
 	}
-	return MemberReview(ctx, db, organizationID, identityID, now)
+	return MemberReview(ctx, db, rootKEK, organizationID, identityID, now)
 }
 
 func membershipChanged() error {
@@ -413,8 +422,8 @@ func recheckVersion(m *Member, expected *int64) error {
 // removing themselves, exempt). Recovery while frozen: it only takes
 // authority away. The admin check, a missing membership and the
 // last-admin rule refuse before an approval is asked for, and run again
-// once it is consumed.
-func RemoveMember(ctx context.Context, w *write.Writer, approvals *auth.Service, req Request, organizationID, identityID string, now func() time.Time) (jsvalue.Object, []auth.PendingReport, error) {
+// once it is consumed. rootKEK reads the review's webhook URLs.
+func RemoveMember(ctx context.Context, w *write.Writer, approvals *auth.Service, rootKEK []byte, req Request, organizationID, identityID string, now func() time.Time) (jsvalue.Object, []auth.PendingReport, error) {
 	r := req.security(approvals)
 	actor := req.Principal
 	left := actor.Identity.ID == identityID
@@ -498,7 +507,7 @@ func RemoveMember(ctx context.Context, w *write.Writer, approvals *auth.Service,
 		if err != nil {
 			return err
 		}
-		review, err := MemberReview(ctx, tx, organizationID, identityID, at)
+		review, err := MemberReview(ctx, tx, rootKEK, organizationID, identityID, at)
 		if err != nil {
 			return err
 		}

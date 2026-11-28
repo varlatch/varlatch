@@ -84,7 +84,9 @@ type mapping struct {
 	Functions map[string]target   `json:"functions"`
 	SeedRows  map[string]target   `json:"seedRows"`
 	Added     struct {
-		Tables   map[string]string `json:"tables"`
+		Tables map[string]string `json:"tables"`
+		// Columns are by table.column, on a table PostgreSQL has.
+		Columns  map[string]string `json:"columns"`
 		Indexes  map[string]string `json:"indexes"`
 		Triggers map[string]string `json:"triggers"`
 	} `json:"added"`
@@ -766,8 +768,9 @@ func TestMapping(t *testing.T) {
 			continue
 		}
 		for c := range lt.columns {
-			if !usedColumns[name+"."+c] {
-				t.Errorf("column %s.%s: no PostgreSQL column maps to it", name, c)
+			_, added := m.Added.Columns[name+"."+c]
+			if added == usedColumns[name+"."+c] {
+				t.Errorf("column %s.%s: must be either mapped from PostgreSQL or listed as added, not both or neither", name, c)
 			}
 		}
 		for ix, info := range lt.indexes {
@@ -790,6 +793,16 @@ func TestMapping(t *testing.T) {
 	for name := range m.Added.Tables {
 		if lite.tables[name] == nil {
 			t.Errorf("table %s: listed as added, but schema.sql has no such table", name)
+		}
+	}
+	for name := range m.Added.Columns {
+		table, column, _ := strings.Cut(name, ".")
+		if lt := lite.tables[table]; lt == nil {
+			t.Errorf("column %s: listed as added, but schema.sql has no such table", name)
+		} else if _, ok := lt.columns[column]; !ok {
+			t.Errorf("column %s: listed as added, but schema.sql has no such column", name)
+		} else if _, whole := m.Added.Tables[table]; whole {
+			t.Errorf("column %s: its whole table is listed as added", name)
 		}
 	}
 	for name := range m.Added.Indexes {

@@ -83,7 +83,7 @@ WHERE c.organization_id = sqlc.arg(organization_id) AND (c.created_by = sqlc.arg
 ORDER BY c.created_at, c.id;
 
 -- name: ReviewWebhooks :many
-SELECT id, url, revoked_at FROM webhooks WHERE organization_id = ? AND created_by = ? ORDER BY created_at, id;
+SELECT id, url, url_envelope, revoked_at FROM webhooks WHERE organization_id = ? AND created_by = ? ORDER BY created_at, id;
 
 -- name: ReviewOIDCBindings :many
 SELECT b.id, b.identity_id, i.name AS identity_name, b.issuer, b.revoked_at
