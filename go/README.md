@@ -1488,6 +1488,18 @@ of `<seconds>.<body>` with the webhook's secret).
   bytes) is sealed under the Organization KEK (`webhook-secret`) and shown
   once. `IdempotentProtected` (the claim inside the approval gate) moved
   from server/access to server/security, which both use.
+- **The URL rests sealed too** (schema version 8, Go only,
+  `webhooks/url.go`): `url_envelope`, under the Organization KEK
+  (`webhook-url`, bound to the Organization and the webhook). Create and
+  update write it and the plaintext `url`, which the release before reads
+  after a rollback; every reader (`List`, the update's read, delivery,
+  `people.MemberReview`'s host) takes the envelope, and `url` only for a row
+  with none. `SealURLs` runs first in every delivery pass, so at start and
+  after a restore or a migration: it seals each row with no envelope, or
+  one that does not hold its `url` (an older release changed the URL),
+  in batches whose writes hold only while the row is as read; one that
+  does not open is reported and left. A reverse carries `url`, and the
+  migration check opens every envelope against it (`check.TargetOnlyClassNames`).
 - **Delivery.** A pass at once, then every 30 seconds
   (feature-parity decision 10), skipped while the maintenance admission
   is closed. Per live webhook of a live Organization, not suspended by a

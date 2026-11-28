@@ -25,6 +25,7 @@ type world struct {
 	store     *storage.DB
 	w         *write.Writer
 	approvals *auth.Service
+	rootKEK   []byte
 	org       string
 }
 
@@ -46,7 +47,7 @@ func newWorld(t *testing.T) *world {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wd.org = org.ID
+	wd.org, wd.rootKEK = org.ID, rootKEK
 	wd.exec(`INSERT INTO org_memberships (organization_id, identity_id, role) VALUES (?, 'idn_b', 'admin')`, wd.org)
 	public, _ := url.Parse("http://127.0.0.1:8686")
 	wd.approvals = auth.New(store, auth.Options{PublicURL: public, RootKEK: rootKEK, PersonGate: wd.w.Gates.PersonGate})
@@ -132,7 +133,7 @@ func TestRemovalAndRoleChangeSerialize(t *testing.T) {
 	}
 	removed := make(chan error, 1)
 	go func() {
-		_, _, err := people.RemoveMember(ctx, wd.w, wd.approvals, people.Request{Principal: person("idn_a")}, wd.org, "idn_c", time.Now)
+		_, _, err := people.RemoveMember(ctx, wd.w, wd.approvals, wd.rootKEK, people.Request{Principal: person("idn_a")}, wd.org, "idn_c", time.Now)
 		removed <- err
 	}()
 	waitingFor(wd, write.Person("idn_c", write.Shared))
@@ -165,7 +166,7 @@ func TestNonAdminDoesNotHoldTheTargetsGate(t *testing.T) {
 	deadline, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	var de *domainerr.Error
-	if _, _, err := people.RemoveMember(deadline, wd.w, wd.approvals, people.Request{Principal: person("idn_m")}, wd.org, "idn_b", time.Now); !errors.As(err, &de) || de.Code != "PERMISSION_DENIED" {
+	if _, _, err := people.RemoveMember(deadline, wd.w, wd.approvals, wd.rootKEK, people.Request{Principal: person("idn_m")}, wd.org, "idn_b", time.Now); !errors.As(err, &de) || de.Code != "PERMISSION_DENIED" {
 		t.Errorf("a member removing an admin: %v", err)
 	}
 	if _, _, err := people.ChangeMemberRole(deadline, wd.w, wd.approvals, people.Request{Principal: person("idn_m")}, wd.org, "idn_b", "member", time.Now); !errors.As(err, &de) || de.Code != "PERMISSION_DENIED" {

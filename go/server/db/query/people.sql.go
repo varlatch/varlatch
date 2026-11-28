@@ -573,7 +573,7 @@ func (q *Queries) ReviewSyncTargets(ctx context.Context, arg ReviewSyncTargetsPa
 }
 
 const reviewWebhooks = `-- name: ReviewWebhooks :many
-SELECT id, url, revoked_at FROM webhooks WHERE organization_id = ? AND created_by = ? ORDER BY created_at, id
+SELECT id, url, url_envelope, revoked_at FROM webhooks WHERE organization_id = ? AND created_by = ? ORDER BY created_at, id
 `
 
 type ReviewWebhooksParams struct {
@@ -582,9 +582,10 @@ type ReviewWebhooksParams struct {
 }
 
 type ReviewWebhooksRow struct {
-	ID        string
-	Url       string
-	RevokedAt sql.NullInt64
+	ID          string
+	Url         string
+	UrlEnvelope sql.NullString
+	RevokedAt   sql.NullInt64
 }
 
 func (q *Queries) ReviewWebhooks(ctx context.Context, arg ReviewWebhooksParams) ([]ReviewWebhooksRow, error) {
@@ -596,7 +597,12 @@ func (q *Queries) ReviewWebhooks(ctx context.Context, arg ReviewWebhooksParams) 
 	var items []ReviewWebhooksRow
 	for rows.Next() {
 		var i ReviewWebhooksRow
-		if err := rows.Scan(&i.ID, &i.Url, &i.RevokedAt); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.Url,
+			&i.UrlEnvelope,
+			&i.RevokedAt,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

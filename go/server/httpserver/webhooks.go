@@ -84,7 +84,7 @@ func (o *operations) ListWebhooks(ctx context.Context, _ api.ListWebhooksRequest
 	if err != nil {
 		return nil, err
 	}
-	items, err := webhooks.List(ctx, o.s.opts.Auth.Store().Reader(), q.org.ID)
+	items, err := webhooks.List(ctx, o.s.opts.Auth.Store().Reader(), o.s.opts.RootKEK, q.org.ID)
 	if err != nil {
 		return nil, err
 	}

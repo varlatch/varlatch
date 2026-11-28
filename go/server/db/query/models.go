@@ -861,4 +861,5 @@ type Webhook struct {
 	UpdatedAt           sql.NullInt64
 	CursorOrder         int64
 	SuspendedByDeletion sql.NullString
+	UrlEnvelope         sql.NullString
 }

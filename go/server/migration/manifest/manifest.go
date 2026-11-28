@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/varlatch/varlatch/go/server/migration/canonical"
 )
@@ -23,10 +24,11 @@ import (
 // V1 is the manifest's text. The TypeScript server's copy
 // (services/varlatchd/src/migration/manifest-v1.json, release/0.22) is the
 // same but for the target's side, which only varlatchd reads: its
-// target.schemaVersion and targetOnly tables follow schema.sql (since
-// schema version 2, certificate_issuances; since 4, exercise_credentials and
-// oidc_token_uses; since 5, one_time_codes_given; since 6, oauth_connections
-// and oauth_authorizations; since 7, entry_links), while the bundle header names
+// target.schemaVersion and targetOnly tables and columns follow schema.sql
+// (since schema version 2, certificate_issuances; since 4,
+// exercise_credentials and oidc_token_uses; since 5, one_time_codes_given;
+// since 6, oauth_connections and oauth_authorizations; since 7, entry_links;
+// since 8, the column webhooks.url_envelope), while the bundle header names
 // the manifest version, 1 in both, and every source table and column is
 // the same.
 //
@@ -57,6 +59,9 @@ type Manifest struct {
 	Tables      []Table `json:"tables"`
 	TargetOnly  struct {
 		Tables map[string]string `json:"tables"`
+		// Columns are varlatchd's own columns (table.column) of a target
+		// table: an import writes none (NULL), and a reverse carries none.
+		Columns map[string]string `json:"columns"`
 	} `json:"targetOnly"`
 	Transformations []struct {
 		ID   string `json:"id"`
@@ -162,6 +167,14 @@ func (m *Manifest) check() error {
 	for name, why := range m.TargetOnly.Tables {
 		if why == "" {
 			add("target-only table %s: a reason is required", name)
+		}
+	}
+	for name, why := range m.TargetOnly.Columns {
+		if table, column, ok := strings.Cut(name, "."); !ok || table == "" || column == "" {
+			add("target-only column %q: named table.column", name)
+		}
+		if why == "" {
+			add("target-only column %s: a reason is required", name)
 		}
 	}
 	sources, targets := map[string]bool{}, map[string]string{}

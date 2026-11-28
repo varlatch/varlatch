@@ -172,15 +172,22 @@ func fromRow(id, url string, types sql.NullString, createdAt, failures int64, at
 		LastStatus: status, Version: version, UpdatedAt: updated}, err
 }
 
-// List is listWebhooks: the Organization's live webhooks, oldest first.
-func List(ctx context.Context, db query.DBTX, organizationID string) ([]any, error) {
+// List is listWebhooks: the Organization's live webhooks, oldest first,
+// each URL its envelope's (URLs).
+func List(ctx context.Context, db query.DBTX, rootKEK []byte, organizationID string) ([]any, error) {
 	rows, err := query.New(db).OrganizationWebhooks(ctx, organizationID)
 	if err != nil {
 		return nil, err
 	}
+	urls := NewURLs(rootKEK, db)
+	defer urls.Close()
 	out := make([]any, 0, len(rows))
 	for _, r := range rows {
-		w, err := fromRow(r.ID, r.Url, r.EventTypes, r.CreatedAt, r.FailureCount, r.LastAttemptAt, r.LastStatus, r.Version, r.UpdatedAt)
+		url, err := urls.Of(ctx, r.OrganizationID, r.ID, r.Url, r.UrlEnvelope)
+		if err != nil {
+			return nil, err
+		}
+		w, err := fromRow(r.ID, url, r.EventTypes, r.CreatedAt, r.FailureCount, r.LastAttemptAt, r.LastStatus, r.Version, r.UpdatedAt)
 		if err != nil {
 			return nil, err
 		}
@@ -190,8 +197,8 @@ func List(ctx context.Context, db query.DBTX, organizationID string) ([]any, err
 }
 
 // read is readWebhook (and updateWebhook's row read): a live webhook of
-// the Organization; nil when there is none.
-func read(ctx context.Context, db query.DBTX, organizationID, webhookID string) (*Webhook, error) {
+// the Organization, its URL its envelope's; nil when there is none.
+func read(ctx context.Context, db query.DBTX, rootKEK []byte, organizationID, webhookID string) (*Webhook, error) {
 	r, err := query.New(db).LiveWebhook(ctx, query.LiveWebhookParams{ID: webhookID, OrganizationID: organizationID})
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -199,7 +206,13 @@ func read(ctx context.Context, db query.DBTX, organizationID, webhookID string) 
 	if err != nil {
 		return nil, err
 	}
-	w, err := fromRow(r.ID, r.Url, r.EventTypes, r.CreatedAt, r.FailureCount, r.LastAttemptAt, r.LastStatus, r.Version, r.UpdatedAt)
+	urls := NewURLs(rootKEK, db)
+	defer urls.Close()
+	url, err := urls.Of(ctx, r.OrganizationID, r.ID, r.Url, r.UrlEnvelope)
+	if err != nil {
+		return nil, err
+	}
+	w, err := fromRow(r.ID, url, r.EventTypes, r.CreatedAt, r.FailureCount, r.LastAttemptAt, r.LastStatus, r.Version, r.UpdatedAt)
 	return &w, err
 }
 
@@ -306,14 +319,7 @@ func NewSecret() string {
 // orgKEK is orgKekOf, read in db: a deleted Organization's KEK is
 // destroyed, so it fails closed.
 func (s *Service) orgKEK(organizationID string, wrapped sql.NullString) ([]byte, error) {
-	if !wrapped.Valid {
-		return nil, domainerr.New("ORGANIZATION_DELETED", "This Organization was deleted: its key is destroyed")
-	}
-	var env envelope.Envelope
-	if err := json.Unmarshal([]byte(wrapped.String), &env); err != nil {
-		return nil, err
-	}
-	return envelope.UnwrapOrgKEK(s.RootKEK, env, organizationID)
+	return unwrapOrgKEK(s.RootKEK, organizationID, wrapped)
 }
 
 // Created is createWebhook's answer: the webhook and its signing secret,
@@ -365,6 +371,10 @@ func (s *Service) Create(ctx context.Context, req Request, org authz.Organizatio
 	if err != nil {
 		return Created{}, nil, err
 	}
+	sealedURL, err := SealURL(kek, org.ID, id, url)
+	if err != nil {
+		return Created{}, nil, err
+	}
 	r := req.security(s.Approvals)
 	var out Created
 	var reports []auth.PendingReport
@@ -406,7 +416,7 @@ func (s *Service) Create(ctx context.Context, req Request, org authz.Organizatio
 		}
 		at := recorded[0].OccurredAt
 		if err := query.New(tx).InsertWebhook(ctx, query.InsertWebhookParams{
-			ID: id, OrganizationID: org.ID, Url: stored, EventTypes: types, SecretEnvelope: string(sealedText),
+			ID: id, OrganizationID: org.ID, Url: stored, UrlEnvelope: sql.NullString{String: sealedURL, Valid: true}, EventTypes: types, SecretEnvelope: string(sealedText),
 			CreatedBy: sql.NullString{String: actor, Valid: true}, CreatedAt: at,
 			CursorOccurredAt: at, CursorEventID: recorded[0].ID, CursorOrder: recorded[0].Position,
 		}); err != nil {
@@ -460,9 +470,19 @@ func (s *Service) Update(ctx context.Context, req Request, organizationID, webho
 		if err := ValidateURL(*patch.URL); err != nil {
 			return write.Response{}, nil, err
 		}
-		stored, err := query.New(s.store().Reader()).StoredWebhookURL(ctx, query.StoredWebhookURLParams{ID: webhookID, OrganizationID: organizationID})
+		reader := s.store().Reader()
+		row, err := query.New(reader).StoredWebhookURL(ctx, query.StoredWebhookURLParams{ID: webhookID, OrganizationID: organizationID})
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return write.Response{}, nil, err
+		}
+		stored := ""
+		if err == nil {
+			urls := NewURLs(s.RootKEK, reader)
+			stored, err = urls.Of(ctx, organizationID, webhookID, row.Url, row.UrlEnvelope)
+			urls.Close()
+			if err != nil {
+				return write.Response{}, nil, err
+			}
 		}
 		if err != nil || stored != *patch.URL {
 			if err := s.refuseOutbound(ctx, organizationID, *patch.URL, webhookID, actor, req.IdempotencyKey == ""); err != nil {
@@ -486,14 +506,14 @@ func (s *Service) Update(ctx context.Context, req Request, organizationID, webho
 			Scope:  write.Scope{OrganizationID: organizationID},
 			Checks: []security.Check{{Control: security.AdminStepUp, Operation: "webhook.update"}},
 			Preflight: func(ctx context.Context, db query.DBTX) error {
-				w, err := read(ctx, db, organizationID, webhookID)
+				w, err := read(ctx, db, s.RootKEK, organizationID, webhookID)
 				if err == nil && w == nil {
 					err = notFound()
 				}
 				return err
 			},
 			Binding: func(ctx context.Context, db query.DBTX, _ *int64) (*auth.Binding, error) {
-				current, err := read(ctx, db, organizationID, webhookID)
+				current, err := read(ctx, db, s.RootKEK, organizationID, webhookID)
 				switch {
 				case err != nil:
 					return nil, err
@@ -514,7 +534,7 @@ func (s *Service) Update(ctx context.Context, req Request, organizationID, webho
 			return write.Response{}, err
 		}
 		*reports = p.Access
-		row, err := read(ctx, tx, organizationID, webhookID)
+		row, err := read(ctx, tx, s.RootKEK, organizationID, webhookID)
 		switch {
 		case err != nil:
 			return write.Response{}, err
@@ -536,8 +556,23 @@ func (s *Service) Update(ctx context.Context, req Request, organizationID, webho
 		if err != nil {
 			return write.Response{}, err
 		}
+		// Both forms of the URL, the envelope sealed again whatever changed.
+		o, err := query.New(tx).RetrievalOrganization(ctx, organizationID)
+		if err != nil {
+			return write.Response{}, err
+		}
+		kek, err := s.orgKEK(organizationID, o.WrappedOrgKek)
+		if err != nil {
+			return write.Response{}, err
+		}
+		sealedURL, err := SealURL(kek, organizationID, webhookID, url)
+		clear(kek)
+		if err != nil {
+			return write.Response{}, err
+		}
 		at := s.now().UnixMicro()
-		updated, err := query.New(tx).UpdateWebhook(ctx, query.UpdateWebhookParams{Url: stored, EventTypes: storedTypes, UpdatedAt: sql.NullInt64{Int64: at, Valid: true}, ID: webhookID})
+		updated, err := query.New(tx).UpdateWebhook(ctx, query.UpdateWebhookParams{Url: stored, UrlEnvelope: sql.NullString{String: sealedURL, Valid: true},
+			EventTypes: storedTypes, UpdatedAt: sql.NullInt64{Int64: at, Valid: true}, ID: webhookID})
 		if err != nil {
 			return write.Response{}, err
 		}
@@ -595,14 +630,14 @@ func (s *Service) Revoke(ctx context.Context, req Request, organizationID, webho
 			Scope:  write.Scope{OrganizationID: organizationID},
 			Checks: []security.Check{{Control: security.AdminStepUp, Operation: "webhook.delete"}},
 			Preflight: func(ctx context.Context, db query.DBTX) error {
-				w, err := read(ctx, db, organizationID, webhookID)
+				w, err := read(ctx, db, s.RootKEK, organizationID, webhookID)
 				if err == nil && w == nil {
 					err = notFound()
 				}
 				return err
 			},
 			Binding: func(ctx context.Context, db query.DBTX, _ *int64) (*auth.Binding, error) {
-				w, err := read(ctx, db, organizationID, webhookID)
+				w, err := read(ctx, db, s.RootKEK, organizationID, webhookID)
 				switch {
 				case err != nil:
 					return nil, err
@@ -618,7 +653,7 @@ func (s *Service) Revoke(ctx context.Context, req Request, organizationID, webho
 		}
 		reports = p.Access
 		if p.Binding != nil {
-			locked, err := read(ctx, tx, organizationID, webhookID)
+			locked, err := read(ctx, tx, s.RootKEK, organizationID, webhookID)
 			switch {
 			case err != nil:
 				return err

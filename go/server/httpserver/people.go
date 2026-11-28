@@ -317,7 +317,7 @@ func (o *operations) ReviewMember(ctx context.Context, _ api.ReviewMemberRequest
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	review, err := people.PreviewReview(ctx, tx, q.org.ID, member, q.p, o.s.opts.Now().UnixMicro())
+	review, err := people.PreviewReview(ctx, tx, o.s.opts.RootKEK, q.org.ID, member, q.p, o.s.opts.Now().UnixMicro())
 	if err != nil {
 		return nil, o.memberDenied(ctx, q, member, err)
 	}
@@ -339,7 +339,7 @@ func (o *operations) RemoveMember(ctx context.Context, _ api.RemoveMemberRequest
 		reports []auth.PendingReport
 	}
 	res, err := security.WithApproval(ctx, o.s.opts.Auth, auth.RequesterOf(q.p), func() (result, error) {
-		out, reports, err := people.RemoveMember(ctx, o.s.opts.Writer, o.s.opts.Auth, q.peopleRequest(ctx), q.org.ID, member, o.s.opts.Now)
+		out, reports, err := people.RemoveMember(ctx, o.s.opts.Writer, o.s.opts.Auth, o.s.opts.RootKEK, q.peopleRequest(ctx), q.org.ID, member, o.s.opts.Now)
 		return result{out, reports}, err
 	})
 	if err != nil {
@@ -463,7 +463,7 @@ func (o *operations) MemberExposure(ctx context.Context, _ api.MemberExposureReq
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	report, err := people.MemberExposure(ctx, tx, q.org.ID, member, o.s.opts.Now().UnixMicro())
+	report, err := people.MemberExposure(ctx, tx, o.s.opts.RootKEK, q.org.ID, member, o.s.opts.Now().UnixMicro())
 	if err != nil {
 		return nil, err
 	}

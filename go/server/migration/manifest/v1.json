@@ -61,7 +61,7 @@
     ]
   },
   "target": {
-    "schemaVersion": 7
+    "schemaVersion": 8
   },
   "foreignKeys": "The schema's foreign keys form cycles (identities and organization_deletions refer to each other), so no table order satisfies them all: tables are listed by name, the import defers foreign keys and checks every one before it commits.",
   "tables": [
@@ -1182,6 +1182,9 @@
       "oauth_authorizations": "OAuth authorizations in progress (ADR-0062), schema version 6: varlatchd's own, kept ten minutes. An import writes no row, and a reverse carries none.",
       "entry_links": "Links a person enters one item's value with, once (ADR-0063), schema version 7: varlatchd's own, an hour at most. An import writes no row, and a reverse carries none: the TypeScript server knows no such link. A value that was entered is a value version and is carried.",
       "schema_version": "Written by the import: the target schema version above."
+    },
+    "columns": {
+      "webhooks.url_envelope": "The webhook's URL sealed under the Organization KEK (envelope purpose webhook-url), schema version 8: varlatchd's own. An import leaves it NULL and varlatchd seals it from url when it starts; a reverse carries url, which this release keeps filled, and not the envelope."
     }
   },
   "transformations": [

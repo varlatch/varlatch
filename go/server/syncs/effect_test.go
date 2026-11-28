@@ -270,7 +270,7 @@ func TestRemovalOfTheRequesterDuringACheck(t *testing.T) {
 	id := wd.connection("GitHub", "github_pat_effect")
 	release, done := wd.effect(bob, id, false)
 	defer release()
-	if _, _, err := people.RemoveMember(context.Background(), wd.w, wd.approvals, people.Request{Principal: alice, RequestID: "req_r"}, wd.org.ID, "idn_b", time.Now); err != nil {
+	if _, _, err := people.RemoveMember(context.Background(), wd.w, wd.approvals, wd.s.RootKEK, people.Request{Principal: alice, RequestID: "req_r"}, wd.org.ID, "idn_b", time.Now); err != nil {
 		t.Fatalf("the removal: %v", err)
 	}
 	release()

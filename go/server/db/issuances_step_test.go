@@ -15,7 +15,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/db/schemadiff"
 )
 
-// What starts what schema versions 2 to 6 added to schema.sql: what comes
+// What starts what schema versions 2 to 8 added to schema.sql: what comes
 // before is the version before's schema (0.50.0-rc.1's is version 1, 0.50.0's
 // version 2, 0.50.2's version 3; CI's G6 job checks against a tag's own
 // file).
@@ -26,6 +26,7 @@ const (
 	v4Marker  = "\n-- One-time codes given (ADR-0061)"
 	v5Marker  = "\n-- OAuth connections"
 	v6Marker  = "\n-- Entry links (ADR-0063)"
+	v7Marker  = "\n-- Webhook URLs under the Organization KEK"
 )
 
 // schemaBefore is schema.sql as released before marker's section.
@@ -117,7 +118,7 @@ func TestV2DatabaseUpgradesToVersion3(t *testing.T) {
 // adds is a step of its own, never more of that one.
 func TestEveryEarlierVersionUpgrades(t *testing.T) {
 	ctx := context.Background()
-	markers := []string{rc1Marker, v2Marker, v3Marker, v4Marker, v5Marker, v6Marker}
+	markers := []string{rc1Marker, v2Marker, v3Marker, v4Marker, v5Marker, v6Marker, v7Marker}
 	if len(markers) != SchemaVersion-1 {
 		t.Fatalf("%d markers for schema version %d", len(markers), SchemaVersion)
 	}
@@ -142,7 +143,9 @@ func TestEveryEarlierVersionUpgrades(t *testing.T) {
 		// The new tables take rows, checked.
 		key := strings.Repeat("0f", 32)
 		exec(t, older, "INSERT INTO oidc_token_uses (token_key, used_at, expires_at) VALUES ('"+key+"', 1, 2)")
+		exec(t, older, "SELECT url_envelope FROM webhooks")
 		for _, bad := range []string{
+			"INSERT INTO webhooks (id, organization_id, url, secret_envelope, cursor_occurred_at, url_envelope) VALUES ('whk', 'org_none', 'https://a.test', '{}', 1, 'not json')",
 			"INSERT INTO oidc_token_uses (token_key, used_at, expires_at) VALUES ('" + key + "', 1, 2)",
 			"INSERT INTO oidc_token_uses (token_key, used_at, expires_at) VALUES ('jti', 1, 2)",
 			"INSERT INTO exercise_credentials (credential_id, oidc_binding_id) VALUES ('crd_none', 'oib_none')",

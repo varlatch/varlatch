@@ -80,6 +80,22 @@ fixes.
   `backups.bucket-key-read`, asks the destination whether the key may
   read archives, with one `HEAD` request that downloads nothing.
   [Scoping destination credentials](docs/operations/backup.md#scoping-destination-credentials-per-provider)
+- **Webhook URLs are stored encrypted (the Go server only; database schema
+  8).** A webhook's URL may carry a token, so it now rests sealed under its
+  Organization's key, as its signing secret does. Every reader (the API,
+  delivery, the member review, the audit events' redaction) takes the URL
+  from its envelope. At each start, and on every delivery pass, `varlatchd`
+  seals the URL of every webhook that has none yet: existing ones, imported
+  ones, and ones a restore brings in. This release still keeps the
+  plaintext copy beside it, so the release before works after a rollback;
+  the next release removes it.
+
+### Upgrading
+
+- Schema 8 is rollback-safe: it adds one column. The container image
+  upgrades it at start; a systemd host runs `varlatch upgrade`. Rolling
+  back to 0.51.0 keeps every webhook working. A URL changed there is
+  sealed again when this release starts.
 
 ## 0.51.0 (2026-11-27)
 

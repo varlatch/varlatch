@@ -140,4 +140,12 @@ CREATE INDEX entry_links_environment ON entry_links (environment_id, created_at)
 CREATE INDEX entry_links_requested_by ON entry_links (requested_by, created_at);
 CREATE INDEX entry_links_expires ON entry_links (expires_at);
 `},
+	// 8: webhook URLs under the Organization KEK. A new nullable column only,
+	// so rollback-safe: an older varlatchd never reads it, and url, which it
+	// reads and writes, stays filled. A URL it changes leaves an envelope of
+	// the old one, which this release seals again when it starts
+	// (webhooks.SealURLs).
+	{To: 8, CompatibleFrom: 1, SQL: `
+ALTER TABLE webhooks ADD COLUMN url_envelope TEXT CHECK (json_valid(url_envelope));
+`},
 }
