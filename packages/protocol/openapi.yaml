@@ -6209,6 +6209,95 @@ components:
         unreadable:
           type: boolean
           description: True when a record exists on the host but cannot be read.
+        deployment:
+          type: string
+          enum: [systemd, image]
+          description: >
+            How varlatchd runs: from the systemd unit `install.sh --server`
+            installs, or as the single-container image. Known, not chosen.
+            The Go server only, as the members below.
+        schemaVersion:
+          type: integer
+          description: This server's database schema version.
+        target:
+          description: >
+            What the host's check verified of the newer release (its signed
+            SHA256SUMS, release.json and varlatchd-image.txt), or why it
+            could not; null when no newer release is known or the check
+            recorded no verification of it. Display state: an upgrade
+            verifies the release again.
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/ReleaseTarget"
+        rollbackSafe:
+          type: [boolean, "null"]
+          description: >
+            Whether the target is rollback-safe for this release, as
+            `varlatch upgrade` judges it: it declares itself rollback-safe,
+            checked against exactly this release, and its compatibleFrom is at
+            or below this server's schema. Null until the target is verified.
+        preflight:
+          description: >
+            The upgrade's pre-flight checklist for the newer release, in
+            order; null when no newer release is known.
+          oneOf:
+            - type: "null"
+            - type: array
+              items: { $ref: "#/components/schemas/UpgradePreflightLine" }
+    ReleaseTargetFailure:
+      type: string
+      description: Why the host could not verify the newer release.
+      enum: [unreachable, rate-limited, not-found, not-verified, invalid-release]
+    ReleaseTarget:
+      type: object
+      required: [version, checkedAt, failed, verified]
+      properties:
+        version: { type: string }
+        checkedAt: { type: string, format: date-time }
+        failed:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/ReleaseTargetFailure"
+        verified:
+          description: What the verified release declares; null when it failed.
+          oneOf:
+            - type: "null"
+            - type: object
+              required: [schemaVersion, compatibleFrom, rollbackSafe, previous, endsRollbackWindow, image]
+              properties:
+                schemaVersion: { type: integer }
+                compatibleFrom: { type: integer }
+                rollbackSafe:
+                  type: boolean
+                  description: The release's own declaration, checked against `previous` only.
+                previous:
+                  description: The release the declaration was checked against.
+                  oneOf:
+                    - type: "null"
+                    - type: object
+                      required: [version, schemaVersion]
+                      properties:
+                        version: { type: string }
+                        schemaVersion: { type: integer }
+                endsRollbackWindow: { type: boolean }
+                image:
+                  type: string
+                  description: The release's container image, by its tag and index digest.
+    UpgradePreflightLine:
+      type: object
+      required: [id, status, title, detail, remedy]
+      properties:
+        id:
+          type: string
+          enum: [release-check, backup, custody, disk, in-the-way, rollback-safe]
+        status:
+          type: string
+          enum: [pass, fail, unknown]
+        title: { type: string }
+        detail: { type: string }
+        remedy:
+          type: [string, "null"]
+          description: What to do; null when the line passes.
     ApiError:
       type: object
       required: [error]

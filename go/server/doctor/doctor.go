@@ -546,6 +546,10 @@ func configFile(in Inputs) Check {
 	return c
 }
 
+// FreeSpace is the space this process may still use on dir's filesystem,
+// as the disk check measures it.
+func FreeSpace(dir string) (uint64, error) { return freeSpace(dir) }
+
 // databaseBytes is the database's size with its WAL: what a snapshot
 // copies.
 func databaseBytes(in Inputs) int64 {

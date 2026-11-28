@@ -82,6 +82,40 @@ type journalHead struct {
 	WindowEnded *struct {
 		Release string `json:"release"`
 	} `json:"windowEnded"`
+	// History is the phases reached and when, for the rollback window's
+	// start (the switch).
+	History []struct {
+		Phase string `json:"phase"`
+		At    string `json:"at"`
+	} `json:"history"`
+}
+
+// migrationRollbackWindow is `varlatch migrate`'s RollbackWindow: how long
+// after its switch an open migration can still be reversed (decision 17).
+const migrationRollbackWindow = 30 * 24 * time.Hour
+
+// migrationWindowOpen is whether dataDir's migration is in its rollback
+// window at now, as `varlatch migrate`'s RollbackWindowOpen says it: open,
+// switched no more than 30 days ago and not ended by an upgrade, or a
+// reverse under way. No migration is not.
+func migrationWindowOpen(dataDir string, now time.Time) (bool, error) {
+	h, ok, err := readJournal(dataDir)
+	if err != nil || !ok {
+		return false, err
+	}
+	if slices.Contains(reversing, h.Phase) {
+		return true, nil
+	}
+	if h.Phase != "open" || h.WindowEnded != nil {
+		return false, nil
+	}
+	for _, s := range h.History {
+		if s.Phase == "switched" {
+			at, err := time.Parse(time.RFC3339Nano, s.At)
+			return err == nil && now.Sub(at) <= migrationRollbackWindow, nil
+		}
+	}
+	return false, nil
 }
 
 func parseJournal(b []byte) (journalHead, error) {

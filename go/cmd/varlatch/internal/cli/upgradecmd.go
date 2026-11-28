@@ -341,6 +341,11 @@ func (r *Run) upgradeCheck(ctx context.Context, u *upgrade.Upgrader, version str
 				return werr
 			}
 		}
+		if err == nil && plan.UpdateAvailable {
+			if werr := r.recordReleaseTarget(ctx, u, src, plan.Latest); werr != nil {
+				return werr
+			}
+		}
 	}
 	if err != nil {
 		return upgradeFailure(err)
@@ -376,6 +381,53 @@ func (r *Run) recordReleaseCheck(ctx context.Context, u *upgrade.Upgrader, plan 
 		args = append(args, "--failed", releaseCheckFailure(found))
 	}
 	return runQuiet(ctx, filepath.Join(u.BinDir, "varlatchd"), append(args, "--config", u.ConfigPath)...)
+}
+
+// targetImageAsset is the release's record of its container image, listed
+// in its signed SHA256SUMS.
+const targetImageAsset = "varlatchd-image.txt"
+
+// recordReleaseTarget verifies the release a check found newer as an upgrade
+// would (ADR-0065 Decision 3): its SHA256SUMS signed by the release workflow
+// for its tag, then its release.json and varlatchd-image.txt against it; and
+// records what they declare, or why they could not be verified, through
+// `varlatchd admin release-check record-target`. Neither changes what the
+// check found, and neither fails the check: a release that does not verify
+// is said on stderr. A varlatchd that does not know record-target yet
+// leaves the dashboard without the target.
+func (r *Run) recordReleaseTarget(ctx context.Context, u *upgrade.Upgrader, src selfupdate.Source, version string) error {
+	args := []string{"admin", "release-check", "record-target", "--version", version}
+	files, err := selfupdate.FetchAssets(ctx, src, version, []string{release.ManifestAsset, targetImageAsset}, "nothing was recorded")
+	var m release.Manifest
+	image := ""
+	if err == nil {
+		image = strings.TrimSuffix(string(files[targetImageAsset]), "\n")
+		if m, err = release.ParseManifest(files[release.ManifestAsset]); err != nil {
+			err = fmt.Errorf("%v; nothing was recorded", err)
+		} else if m.Version != version {
+			err = fmt.Errorf("the manifest of %s is for %s; nothing was recorded", version, m.Version)
+		} else if !release.ValidImageReference(version, image) {
+			err = fmt.Errorf("%s of %s names no varlatchd image of %s by its digest; nothing was recorded", targetImageAsset, version, version)
+		}
+	}
+	if err != nil {
+		var se *selfupdate.Error
+		args = append(args, "--failed", release.TargetFailure(err, errors.As(err, &se) && se.Unreachable))
+		if werr := r.warn("varlatch upgrade --check: " + version + " could not be verified as an upgrade would verify it: " + err.Error()); werr != nil {
+			return werr
+		}
+	} else {
+		t := release.VerifiedTargetOf(m, image)
+		args = append(args, "--schema-version", fmt.Sprint(t.SchemaVersion), "--compatible-from", fmt.Sprint(t.CompatibleFrom), "--rollback-safe", fmt.Sprint(t.RollbackSafe))
+		if p := t.Previous; p != nil {
+			args = append(args, "--previous", p.Version, "--previous-schema", fmt.Sprint(p.SchemaVersion))
+		}
+		args = append(args, "--ends-rollback-window", fmt.Sprint(t.EndsRollbackWindow), "--image", t.Image)
+	}
+	if rerr := runQuiet(ctx, filepath.Join(u.BinDir, "varlatchd"), append(args, "--config", u.ConfigPath)...); rerr != nil {
+		return r.warn("varlatch upgrade --check: the verified release is not recorded for the dashboard: " + rerr.Error())
+	}
+	return nil
 }
 
 // releaseCheckFailure names a failed look in the record's words.

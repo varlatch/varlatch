@@ -10,6 +10,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/api"
 	"github.com/varlatch/varlatch/go/server/domainerr"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
+	"github.com/varlatch/varlatch/go/server/upgradecheck"
 )
 
 // The installation reads of step 4.1c (ADR-0059): getInstallationRelease
@@ -72,10 +73,65 @@ func (o *operations) GetInstallationRelease(ctx context.Context, _ api.GetInstal
 			}
 		}
 	}
-	return ok(jsvalue.Object{
+	doc := jsvalue.Object{
 		{Key: "running", Value: running}, {Key: "newer", Value: newer}, {Key: "latest", Value: latest},
 		{Key: "lastAttempt", Value: lastAttempt}, {Key: "unreadable", Value: unreadable},
-	}), nil
+	}
+	if o.s.opts.UpgradeHost != nil {
+		doc = append(doc, o.upgradePreflight(ctx, check, running)...)
+	}
+	return ok(doc), nil
+}
+
+// upgradePreflight is the Release tab's pre-flight (ADR-0065 phase 1;
+// server/upgradecheck): the deployment kind, this server's schema, the
+// verified target of the newer release, whether it is rollback-safe for
+// this release as `varlatch upgrade` judges it, and the checklist. Only the
+// Go server answers these members.
+func (o *operations) upgradePreflight(ctx context.Context, check *release.ReleaseCheck, running string) jsvalue.Object {
+	host := o.s.opts.UpgradeHost(ctx)
+	in := upgradecheck.Input{Now: o.s.opts.Now(), Running: running, Check: check, Host: host}
+	if dir := o.s.opts.ReleaseCheckDir; dir != "" {
+		in.Target, in.TargetErr = release.ReadReleaseTarget(dir)
+	}
+	r := upgradecheck.Judge(in)
+	var target, safe, lines any
+	if t := r.Target; t != nil {
+		failed := any(nil)
+		if t.Failed != nil {
+			failed = *t.Failed
+		}
+		var verified any
+		if v := t.Verified; v != nil {
+			previous := any(nil)
+			if p := v.Previous; p != nil {
+				previous = jsvalue.Object{{Key: "version", Value: p.Version}, {Key: "schemaVersion", Value: p.SchemaVersion}}
+			}
+			verified = jsvalue.Object{
+				{Key: "schemaVersion", Value: v.SchemaVersion}, {Key: "compatibleFrom", Value: v.CompatibleFrom}, {Key: "rollbackSafe", Value: v.RollbackSafe},
+				{Key: "previous", Value: previous}, {Key: "endsRollbackWindow", Value: v.EndsRollbackWindow}, {Key: "image", Value: v.Image},
+			}
+		}
+		target = jsvalue.Object{{Key: "version", Value: t.Version}, {Key: "checkedAt", Value: t.CheckedAt}, {Key: "failed", Value: failed}, {Key: "verified", Value: verified}}
+	}
+	if r.RollbackSafe != nil {
+		safe = *r.RollbackSafe
+	}
+	if r.Lines != nil {
+		list := make([]any, 0, len(r.Lines))
+		for _, l := range r.Lines {
+			remedy := any(nil)
+			if l.Remedy != "" {
+				remedy = l.Remedy
+			}
+			list = append(list, jsvalue.Object{{Key: "id", Value: l.ID}, {Key: "status", Value: string(l.Status)}, {Key: "title", Value: l.Title}, {Key: "detail", Value: l.Detail}, {Key: "remedy", Value: remedy}})
+		}
+		lines = list
+	}
+	return jsvalue.Object{
+		{Key: "deployment", Value: string(host.Deployment)}, {Key: "schemaVersion", Value: host.Schema},
+		{Key: "target", Value: target}, {Key: "rollbackSafe", Value: safe}, {Key: "preflight", Value: lines},
+	}
 }
 
 // GetInstallationBackups is GET /v1/installation/backups (backupStatus):

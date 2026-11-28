@@ -15,6 +15,10 @@ var GoOnlyEventTypes = []string{
 	// The host operator ended a restore's hold (`varlatchd admin restore
 	// resume`).
 	"installation.restore_resumed",
+	// An upgrade the host made (`varlatch upgrade`), recorded once per
+	// journal id by the release it upgraded to, from root's upgrade journal
+	// (ADR-0065 Decision 7).
+	"installation.upgraded",
 	// The host re-pinned the tailnet, reopened tailnet access on its pin,
 	// or adopted the tailnet an enrolled node without a pin is on
 	// (`varlatchd admin tailnet repin --yes`, step 6.2b).

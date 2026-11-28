@@ -87,6 +87,47 @@ func TestAdminReleaseCheck(t *testing.T) {
 	}
 }
 
+// admin release-check record-target writes what the check verified of the
+// release it found (ADR-0065 Decision 3), or why it could not, beside the
+// release check's record, which it leaves as it is.
+func TestAdminReleaseCheckRecordTarget(t *testing.T) {
+	in := newInstall(t, "")
+	image := "ghcr.io/varlatch/varlatchd:0.52.0@sha256:" + strings.Repeat("0123456789abcdef", 4)
+	code, out, errOut := runAdmin(t, "release-check", "record-target", "--version", "0.52.0", "--schema-version", "8", "--compatible-from", "7", "--rollback-safe", "true",
+		"--previous", "0.51.0", "--previous-schema", "7", "--ends-rollback-window", "false", "--image", image, "--config", in.conf)
+	if code != ExitOK || !strings.Contains(out, `"version":"0.52.0"`) {
+		t.Fatalf("verified: %d %q %q", code, out, errOut)
+	}
+	tg, err := release.ReadReleaseTarget(in.data)
+	if err != nil || tg.Verified == nil || !tg.Verified.Declaration().SafeFor("0.51.0", 7) || tg.Verified.Image != image {
+		t.Fatalf("the target: %+v, %v", tg, err)
+	}
+	if rc, err := release.ReadReleaseCheck(in.data); rc != nil || err != nil {
+		t.Fatalf("the release check's record was written: %+v, %v", rc, err)
+	}
+	if code, _, errOut = runAdmin(t, "release-check", "record-target", "--version", "0.52.1", "--failed", "not-verified", "--config", in.conf); code != ExitOK {
+		t.Fatalf("failed: %d %q", code, errOut)
+	}
+	if tg, err := release.ReadReleaseTarget(in.data); err != nil || tg.Failed == nil || *tg.Failed != "not-verified" || tg.Version != "0.52.1" {
+		t.Fatalf("the failed target: %+v, %v", tg, err)
+	}
+	for _, args := range [][]string{
+		{"release-check", "record-target"},
+		{"release-check", "record-target", "--version", "0.52.0", "--failed", "unreachable", "--image", image},
+		{"release-check", "record-target", "--version", "0.52.0", "--schema-version", "8", "--compatible-from", "7", "--rollback-safe", "yes", "--ends-rollback-window", "false", "--image", image},
+		{"release-check", "record-target", "--version", "0.52.0", "--schema-version", "8", "--compatible-from", "7", "--rollback-safe", "true", "--previous", "0.51.0", "--ends-rollback-window", "false", "--image", image},
+		{"release-check", "record-target", "--version", "0.52.0", "--schema-version", "eight", "--compatible-from", "7", "--rollback-safe", "false", "--ends-rollback-window", "false", "--image", image},
+	} {
+		if code, _, errOut := runAdmin(t, append(args, "--config", in.conf)...); code != 64 || !strings.Contains(errOut, releaseCheckUsage) {
+			t.Errorf("%v: %d %q", args, code, errOut)
+		}
+	}
+	if code, _, errOut := runAdmin(t, "release-check", "record-target", "--version", "0.52.0", "--schema-version", "8", "--compatible-from", "7", "--rollback-safe", "true",
+		"--ends-rollback-window", "false", "--image", "ghcr.io/varlatch/varlatchd:0.52.0", "--config", in.conf); code != ExitFailure || !strings.Contains(errOut, "nothing was written") {
+		t.Errorf("an image without a digest: %d %q", code, errOut)
+	}
+}
+
 // admin schema upgrade --database upgrades a copy, beside a running
 // varlatchd too; the live database under another name is not a copy.
 func TestAdminSchemaUpgradeOfACopy(t *testing.T) {

@@ -1727,6 +1727,24 @@ func (e InstallationRefusedDestinationScheme) Valid() bool {
 	}
 }
 
+// Defines values for InstallationReleaseDeployment.
+const (
+	Image   InstallationReleaseDeployment = "image"
+	Systemd InstallationReleaseDeployment = "systemd"
+)
+
+// Valid indicates whether the value is a known member of the InstallationReleaseDeployment enum.
+func (e InstallationReleaseDeployment) Valid() bool {
+	switch e {
+	case Image:
+		return true
+	case Systemd:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for InvitationOrgRole.
 const (
 	InvitationOrgRoleAdmin  InvitationOrgRole = "admin"
@@ -2549,6 +2567,33 @@ func (e ReleaseCheckFailure) Valid() bool {
 	}
 }
 
+// Defines values for ReleaseTargetFailure.
+const (
+	ReleaseTargetFailureInvalidRelease ReleaseTargetFailure = "invalid-release"
+	ReleaseTargetFailureNotFound       ReleaseTargetFailure = "not-found"
+	ReleaseTargetFailureNotVerified    ReleaseTargetFailure = "not-verified"
+	ReleaseTargetFailureRateLimited    ReleaseTargetFailure = "rate-limited"
+	ReleaseTargetFailureUnreachable    ReleaseTargetFailure = "unreachable"
+)
+
+// Valid indicates whether the value is a known member of the ReleaseTargetFailure enum.
+func (e ReleaseTargetFailure) Valid() bool {
+	switch e {
+	case ReleaseTargetFailureInvalidRelease:
+		return true
+	case ReleaseTargetFailureNotFound:
+		return true
+	case ReleaseTargetFailureNotVerified:
+		return true
+	case ReleaseTargetFailureRateLimited:
+		return true
+	case ReleaseTargetFailureUnreachable:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for RequirementKind.
 const (
 	RequirementKindTailnet RequirementKind = "tailnet"
@@ -3053,6 +3098,57 @@ func (e Tier) Valid() bool {
 	case TierProduction:
 		return true
 	case TierStaging:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for UpgradePreflightLineId.
+const (
+	Backup       UpgradePreflightLineId = "backup"
+	Custody      UpgradePreflightLineId = "custody"
+	Disk         UpgradePreflightLineId = "disk"
+	InTheWay     UpgradePreflightLineId = "in-the-way"
+	ReleaseCheck UpgradePreflightLineId = "release-check"
+	RollbackSafe UpgradePreflightLineId = "rollback-safe"
+)
+
+// Valid indicates whether the value is a known member of the UpgradePreflightLineId enum.
+func (e UpgradePreflightLineId) Valid() bool {
+	switch e {
+	case Backup:
+		return true
+	case Custody:
+		return true
+	case Disk:
+		return true
+	case InTheWay:
+		return true
+	case ReleaseCheck:
+		return true
+	case RollbackSafe:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for UpgradePreflightLineStatus.
+const (
+	UpgradePreflightLineStatusFail    UpgradePreflightLineStatus = "fail"
+	UpgradePreflightLineStatusPass    UpgradePreflightLineStatus = "pass"
+	UpgradePreflightLineStatusUnknown UpgradePreflightLineStatus = "unknown"
+)
+
+// Valid indicates whether the value is a known member of the UpgradePreflightLineStatus enum.
+func (e UpgradePreflightLineStatus) Valid() bool {
+	switch e {
+	case UpgradePreflightLineStatusFail:
+		return true
+	case UpgradePreflightLineStatusPass:
+		return true
+	case UpgradePreflightLineStatusUnknown:
 		return true
 	default:
 		return false
@@ -5063,6 +5159,9 @@ type InstallationRefusedDestinationScheme string
 
 // InstallationRelease defines model for InstallationRelease.
 type InstallationRelease struct {
+	// Deployment How varlatchd runs: from the systemd unit `install.sh --server` installs, or as the single-container image. Known, not chosen. The Go server only, as the members below.
+	Deployment *InstallationReleaseDeployment `json:"deployment,omitempty"`
+
 	// LastAttempt The last check, successful or not, or null.
 	LastAttempt nullable.Nullable[struct {
 		CheckedAt time.Time                              `json:"checkedAt"`
@@ -5089,12 +5188,27 @@ type InstallationRelease struct {
 	// Newer Whether the last successful check found a release newer than `running`; null without one. A check's age does not expire true.
 	Newer nullable.Nullable[bool] `json:"newer"`
 
+	// Preflight The upgrade's pre-flight checklist for the newer release, in order; null when no newer release is known.
+	Preflight nullable.Nullable[[]UpgradePreflightLine] `json:"preflight,omitempty"`
+
+	// RollbackSafe Whether the target is rollback-safe for this release, as `varlatch upgrade` judges it: it declares itself rollback-safe, checked against exactly this release, and its compatibleFrom is at or below this server's schema. Null until the target is verified.
+	RollbackSafe nullable.Nullable[bool] `json:"rollbackSafe,omitempty"`
+
 	// Running This server's version.
 	Running string `json:"running"`
+
+	// SchemaVersion This server's database schema version.
+	SchemaVersion *int `json:"schemaVersion,omitempty"`
+
+	// Target What the host's check verified of the newer release (its signed SHA256SUMS, release.json and varlatchd-image.txt), or why it could not; null when no newer release is known or the check recorded no verification of it. Display state: an upgrade verifies the release again.
+	Target nullable.Nullable[ReleaseTarget] `json:"target,omitempty"`
 
 	// Unreadable True when a record exists on the host but cannot be read.
 	Unreadable bool `json:"unreadable"`
 }
+
+// InstallationReleaseDeployment How varlatchd runs: from the systemd unit `install.sh --server` installs, or as the single-container image. Known, not chosen. The Go server only, as the members below.
+type InstallationReleaseDeployment string
 
 // Invitation An organization invitation (capability invitations.manage). Never contains the invitation's token or anything derived from it: the token is returned once, at creation, and stored only hashed.
 type Invitation struct {
@@ -5992,6 +6106,35 @@ type RefusedDestinations struct {
 // ReleaseCheckFailure Why the host's last check found no answer; never GitHub's own text.
 type ReleaseCheckFailure string
 
+// ReleaseTarget defines model for ReleaseTarget.
+type ReleaseTarget struct {
+	CheckedAt time.Time                               `json:"checkedAt"`
+	Failed    nullable.Nullable[ReleaseTargetFailure] `json:"failed"`
+
+	// Verified What the verified release declares; null when it failed.
+	Verified nullable.Nullable[struct {
+		CompatibleFrom     int  `json:"compatibleFrom"`
+		EndsRollbackWindow bool `json:"endsRollbackWindow"`
+
+		// Image The release's container image, by its tag and index digest.
+		Image string `json:"image"`
+
+		// Previous The release the declaration was checked against.
+		Previous nullable.Nullable[struct {
+			SchemaVersion int    `json:"schemaVersion"`
+			Version       string `json:"version"`
+		}] `json:"previous"`
+
+		// RollbackSafe The release's own declaration, checked against `previous` only.
+		RollbackSafe  bool `json:"rollbackSafe"`
+		SchemaVersion int  `json:"schemaVersion"`
+	}] `json:"verified"`
+	Version string `json:"version"`
+}
+
+// ReleaseTargetFailure Why the host could not verify the newer release.
+type ReleaseTargetFailure string
+
 // Requirement A restrictive authorization object evaluated after Grants; may only reduce the set of successful operations, never create permission.
 type Requirement struct {
 	CreatedAt *time.Time      `json:"createdAt,omitempty"`
@@ -6527,6 +6670,23 @@ type TailnetSelector struct {
 
 // Tier defines model for Tier.
 type Tier string
+
+// UpgradePreflightLine defines model for UpgradePreflightLine.
+type UpgradePreflightLine struct {
+	Detail string                 `json:"detail"`
+	Id     UpgradePreflightLineId `json:"id"`
+
+	// Remedy What to do; null when the line passes.
+	Remedy nullable.Nullable[string]  `json:"remedy"`
+	Status UpgradePreflightLineStatus `json:"status"`
+	Title  string                     `json:"title"`
+}
+
+// UpgradePreflightLineId defines model for UpgradePreflightLine.Id.
+type UpgradePreflightLineId string
+
+// UpgradePreflightLineStatus defines model for UpgradePreflightLine.Status.
+type UpgradePreflightLineStatus string
 
 // ValidationReport defines model for ValidationReport.
 type ValidationReport struct {

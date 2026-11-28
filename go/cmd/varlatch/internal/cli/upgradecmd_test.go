@@ -112,7 +112,8 @@ func TestUpgradeCommandOnAHost(t *testing.T) {
 		}
 		manifest, _ := m.Bytes()
 		cli, server, name := upgrade.Assets("0.50.0-rc.5", runtime.GOARCH)
-		srv.Publish("0.50.0-rc.5", &fakerelease.Release{Files: map[string][]byte{cli: []byte("#!/bin/sh\necho varlatch 0.50.0-rc.5\n"), server: varlatchd, name: manifest}})
+		image := []byte("ghcr.io/varlatch/varlatchd:0.50.0-rc.5@sha256:" + strings.Repeat("0123456789abcdef", 4) + "\n")
+		srv.Publish("0.50.0-rc.5", &fakerelease.Release{Files: map[string][]byte{cli: []byte("#!/bin/sh\necho varlatch 0.50.0-rc.5\n"), server: varlatchd, name: manifest, targetImageAsset: image}})
 	}
 	// The rc.4 build is on this checkout's schema; rc.5's G6 fixture step
 	// adds one.
@@ -187,6 +188,11 @@ func TestUpgradeCommandOnAHost(t *testing.T) {
 	rc, err := release.ReadReleaseCheck(h.data)
 	if err != nil || rc == nil || rc.LastSuccess == nil || rc.LastSuccess.Latest.Version != "0.50.0-rc.5" || rc.LastAttempt.Failed != nil {
 		t.Fatalf("the release check: %+v, %v", rc, err)
+	}
+	// And the verified target, by the varlatchd installed (ADR-0065
+	// Decision 3).
+	if tg, err := release.ReadReleaseTarget(h.data); err != nil || tg == nil || tg.Version != "0.50.0-rc.5" || tg.Verified == nil || !tg.Verified.Declaration().SafeFor("0.50.0-rc.4", fromSchema) {
+		t.Fatalf("the release target: %+v, %v", tg, err)
 	}
 	if code, out, errs = runUpgrade(t, MapEnv{"PATH": h.bin}, "--config", h.conf); code != ExitFailure || !strings.Contains(errs, "not a terminal: pass --yes") {
 		t.Fatalf("no --yes off a terminal: %d %q %q", code, out, errs)
