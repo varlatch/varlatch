@@ -741,7 +741,7 @@ func formatWhoamiHuman(server string, caller any) (string, error) {
 	kind, _ := field(identity, "kind")
 	id, _ := field(identity, "id")
 	lines := []string{"Identity      " + name + " (" + kind + ", " + id + ")"}
-	if email, ok := jsval.Get(identity, "email"); ok && jsjson.Truthy(email) {
+	if email, ok := jsval.Get(identity, "email"); ok && jsjson.Truthy(email) && !placeholderEmail(email) {
 		lines = append(lines, "Email         "+shownValue(jsjson.String(email)))
 	}
 	lines = append(lines, "Organization  "+org)
@@ -773,6 +773,19 @@ func formatWhoamiHuman(server string, caller any) (string, error) {
 		lines[i] = Printable(line)
 	}
 	return strings.Join(lines, "\n"), nil
+}
+
+// placeholderEmail is whether email is the address the server stores for a
+// person whose account has no email, as every passkey-only account has
+// none (`<identity>@varlatch.placeholder.invalid`, ADR-0006): an address under
+// `.invalid`, the top-level domain RFC 6761 reserves so that no real
+// address can end in it. Human output leaves it out, as the web app's
+// displayEmail does; --json keeps the field as the server sent it.
+func placeholderEmail(email any) bool {
+	const tld = ".invalid"
+	s, ok := email.(string)
+	// ASCII letters only, as the web app's /\.invalid$/i matches.
+	return ok && len(s) >= len(tld) && strings.ToLower(s[len(s)-len(tld):]) == tld
 }
 
 // describeDevice is whoami.ts's describeDevice: the tailnet device the

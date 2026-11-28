@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/varlatch/varlatch/go/lib/jsjson"
 )
 
 // TestSessionExplanationsSurvive: login, logout and whoami name a server
@@ -55,6 +57,49 @@ func TestSessionExplanationsSurvive(t *testing.T) {
 		Main(c.args, env, IO{Stdin: strings.NewReader(""), Stdout: &stdout, Stderr: &stderr})
 		if stderr.String() != c.want || strings.Contains(stdout.String()+stderr.String(), "fake@") {
 			t.Errorf("%q with %s: stderr\n%q\nwant\n%q", c.args, c.config, stderr.String(), c.want)
+		}
+	}
+}
+
+// TestWhoamiLeavesOutAPlaceholderEmail: a passkey-only account's email is
+// the server's placeholder (`<identity>@varlatch.placeholder.invalid`),
+// never an address; whoami's human output leaves the Email line out, as
+// the web app does, and shows every other address.
+func TestWhoamiLeavesOutAPlaceholderEmail(t *testing.T) {
+	for _, c := range []struct {
+		email any
+		shown bool
+	}{
+		{"idn_abc@varlatch.placeholder.invalid", false},
+		{"IDN_ABC@VARLATCH.PLACEHOLDER.INVALID", false},
+		{"someone@other.invalid", false},
+		{"ada@example.com", true},
+		{"ada@invalid.example", true},
+		{"ada@example.invalidx", true},
+		{"ada@example.ınvalid", true}, // dotless i: not ASCII, as /\.invalid$/i reads it
+		{".invali", true},
+		{nil, false},
+		{"", false},
+	} {
+		caller := jsjson.Object{
+			{Key: "identity", Value: jsjson.Object{{Key: "id", Value: "idn_abc"}, {Key: "name", Value: "Ada"}, {Key: "kind", Value: "human"}, {Key: "email", Value: c.email}}},
+			{Key: "organization", Value: nil},
+			{Key: "credential", Value: jsjson.Object{{Key: "id", Value: "cred_1"}, {Key: "name", Value: "laptop"}, {Key: "kind", Value: "cli"}, {Key: "expiresAt", Value: nil}}},
+			{Key: "listener", Value: "ordinary"},
+		}
+		text, err := formatWhoamiHuman("https://h.example", caller)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := "Identity      Ada (human, idn_abc)\n"
+		if c.shown {
+			want += "Email         " + c.email.(string) + "\n"
+		}
+		want += "Organization  none: a person joins organizations as a member (varlatch org list)\n" +
+			"Credential    laptop (cli, cred_1), no expiry\n" +
+			"Server        https://h.example (ordinary listener)"
+		if text != want {
+			t.Errorf("email %q:\n%s\nwant\n%s", c.email, text, want)
 		}
 	}
 }
