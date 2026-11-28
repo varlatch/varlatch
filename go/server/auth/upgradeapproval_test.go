@@ -222,6 +222,12 @@ func TestACancelAfterTheTakeIsTooLate(t *testing.T) {
 	if st, _ := w.svc.Read(w.e.ctx); st.State != "taken" || !st.NoAnswer {
 		t.Fatalf("%+v", st)
 	}
+	// Past its expiry with no word at all: over, and another may be filed.
+	w.e.clock.add(8 * time.Minute)
+	if st, _ := w.svc.Read(w.e.ctx); st.State != "interrupted" || !st.Final() {
+		t.Fatalf("never answered: %+v", st)
+	}
+	w.file(t, requestID("b"))
 }
 
 // The watch: an expired request is removed and recorded once; a refusal
