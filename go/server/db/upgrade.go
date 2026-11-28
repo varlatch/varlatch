@@ -20,6 +20,10 @@ type Step struct {
 	// CompatibleFrom is the oldest schema version whose varlatchd may open
 	// the database after this step: To-1's (or earlier) for a rollback-safe
 	// step, To for any other. It never goes down from one step to the next.
+	// A rollback-safe step may only make the changes a rollback-safe
+	// release may (server/db/schemadiff): G6's release check holds every
+	// step to its own declaration, against the schema just before it, as
+	// varlatchd serve applies a rollback-safe upgrade at start in the image.
 	CompatibleFrom int64
 	SQL            string
 }

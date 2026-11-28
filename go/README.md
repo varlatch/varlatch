@@ -4169,7 +4169,14 @@ migrations.
   varlatchd runs or a restore is unfinished (`varlatch upgrade` runs it on
   a copy first). Until the first Go release `schema.sql` still changes in
   place under version 1; from it on, every change raises `SchemaVersion`
-  with its step.
+  with its step. Each step declares its own `CompatibleFrom`: below its
+  version (rollback-safe: the varlatchd of the version before it still
+  opens the result) only for a change a rollback-safe release may make,
+  its own version for any other. In the single-container image,
+  `varlatchd serve` applies a pending upgrade at start when it is
+  rollback-safe for the database (`db.UpgradeIfRollbackSafe`), so a step
+  declared wrongly would be applied there; G6's check below judges every
+  step's declaration.
 - The release's rollback-safety declaration (ADR-0059 Decision 8, G6):
   `go/release/release.json` says the schema version, `compatibleFrom`,
   whether the release is rollback-safe and the previous release it was
@@ -4179,7 +4186,13 @@ migrations.
   release's schema as additive, review (an enumeration that only gains
   values) or breaking, and `server/db/releasecheck` fails CI when the
   declaration does not hold: a breaking change in a release declared
-  rollback-safe, or a changed schema that keeps its version. G6's run
+  rollback-safe, or a changed schema that keeps its version. It then runs
+  this build's upgrade steps after the previous release's schema version,
+  one by one, on the previous release's schema (`schemadiff.DiffSteps`),
+  and fails CI when a step that declares itself rollback-safe makes a
+  breaking change to the schema just before it (`schemadiff.JudgeSteps`,
+  naming the step and the change), or when the schema the steps give is
+  not the one the declaration was held against. G6's run
   (`go/release/g6.sh`, go-binary shard 1) serves the previous release on
   a database the new one upgraded, with the conformance suites, then the
   new release on what the previous one wrote. What the schema does not

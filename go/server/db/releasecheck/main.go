@@ -12,7 +12,11 @@
 //	    the same checks, then the release's release.json on standard output
 //	releasecheck schema --previous <schema.sql> [--current <schema.sql>] [--declaration <file>] [--json]
 //	    the changes from the previous release's schema to this one's (or to
-//	    --current), held against the declaration (schemadiff.Judge)
+//	    --current), held against the declaration (schemadiff.Judge); then
+//	    this build's upgrade steps after the previous release's schema
+//	    version, run in turn on its schema: each step's changes held
+//	    against the step's own compatibleFrom (schemadiff.JudgeSteps), and
+//	    the schema they give is the one checked (schema.sql, or --current)
 //	releasecheck previous --tags <file> [--declaration <file>]
 //	    the declaration's previous release is the last Go release among
 //	    the tags in the file (one per line: the v* tags reachable from
@@ -48,6 +52,10 @@ const (
 )
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
+
+// upgradeSteps are this build's schema upgrade steps (db.Steps); the
+// tests replace them.
+var upgradeSteps = db.Steps
 
 // goLine is the first Go release's lowest version: tags below it are the
 // TypeScript server's (0.22, 0.23), never a Go release's previous.
@@ -207,13 +215,22 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return fail("%v", err)
 		}
 		problems, notes := schemadiff.Judge(changes, decl)
+		steps, stepProblems, stepNotes, err := judgeSteps(context.Background(), decl, string(older), newer)
+		if err != nil {
+			return fail("%v", err)
+		}
+		problems, notes = append(problems, stepProblems...), append(notes, stepNotes...)
 		if *asJSON {
 			doc := struct {
-				Previous string              `json:"previous"`
-				Changes  []schemadiff.Change `json:"changes"`
-				Problems []string            `json:"problems"`
-				Notes    []string            `json:"notes"`
-			}{previousName(decl), nonNil(changes), nonNil(problems), nonNil(notes)}
+				Previous string                   `json:"previous"`
+				Changes  []schemadiff.Change      `json:"changes"`
+				Steps    []schemadiff.StepChanges `json:"steps"`
+				Problems []string                 `json:"problems"`
+				Notes    []string                 `json:"notes"`
+			}{previousName(decl), nonNil(changes), nonNil(steps), nonNil(problems), nonNil(notes)}
+			for i := range doc.Steps {
+				doc.Steps[i].Changes = nonNil(doc.Steps[i].Changes)
+			}
 			enc := json.NewEncoder(stdout)
 			enc.SetIndent("", "  ")
 			if err := enc.Encode(doc); err != nil {
@@ -234,6 +251,40 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return exitOK
 	}
 	return exitUsage // not reached: the switch above took every command
+}
+
+// judgeSteps holds this build's upgrade steps after the previous release's
+// schema version to their own declarations: each is run in turn on older
+// (the previous release's schema), its changes judged against its
+// compatibleFrom (schemadiff.JudgeSteps), and the schema the last one
+// leaves must be newer's, the schema the declaration was held against;
+// otherwise what the upgrade runs is not what was judged. Without a
+// previous release there is nothing to start from (Judge says so), and
+// steps that do not reach the declaration's schema version are not this
+// declaration's (a --current schema of another version): a note says they
+// are not judged.
+func judgeSteps(ctx context.Context, d release.Declaration, older, newer string) ([]schemadiff.StepChanges, []string, []string, error) {
+	if d.Previous == nil {
+		return nil, nil, nil, nil
+	}
+	all := upgradeSteps()
+	if reached := int64(len(all)) + 1; reached != d.SchemaVersion {
+		return nil, nil, []string{fmt.Sprintf("this build's upgrade steps reach schema %d, not the declaration's %d: they are not judged", reached, d.SchemaVersion)}, nil
+	}
+	from := d.Previous.SchemaVersion // between 1 and SchemaVersion (release.ParseDeclaration)
+	var steps []schemadiff.Step
+	for _, st := range all[from-1:] {
+		steps = append(steps, schemadiff.Step{To: st.To, CompatibleFrom: st.CompatibleFrom, SQL: st.SQL})
+	}
+	judged, rest, err := schemadiff.DiffSteps(ctx, older, steps, newer)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	problems, notes := schemadiff.JudgeSteps(judged)
+	for _, c := range rest {
+		problems = append(problems, fmt.Sprintf("the upgrade steps from schema %d do not give the schema checked here (a step is missing, or does other than the schema shows): %s", from, c))
+	}
+	return judged, problems, notes, nil
 }
 
 // windowName is what the declaration says of a migration's rollback window
