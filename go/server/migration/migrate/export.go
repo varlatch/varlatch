@@ -114,6 +114,12 @@ func ExportReverse(ctx context.Context, out io.Writer, o Options) (Result, error
 		if err := tx.QueryRowContext(actx, "SELECT count(*) FROM auth_sessions").Scan(&res.SessionsEnded); err != nil {
 			return err
 		}
+		// An upgrade's approvals (ADR-0065) are varlatchd's alone: the
+		// TypeScript server's operation CHECK refuses them. Each lasts two
+		// minutes, and its challenges go with it.
+		if _, err := tx.ExecContext(actx, "DELETE FROM approval_intents WHERE operation = 'installation.upgrade'"); err != nil {
+			return err
+		}
 		revoked, err := revokedBy(actx, tx, func() error {
 			_, err := tx.ExecContext(actx, "DELETE FROM auth_sessions")
 			return err

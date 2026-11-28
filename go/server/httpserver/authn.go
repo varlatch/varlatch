@@ -285,6 +285,10 @@ var noStore = map[string]bool{
 	"POST /v1/me/approvals/{approval}/options":            true,
 	"POST /v1/me/approvals/{approval}/approve":            true,
 	"POST /v1/me/approvals/{approval}/cancel":             true,
+	// The web upgrade's request (ADR-0065 phase 2).
+	"GET /v1/installation/upgrade-request":                          true,
+	"POST /v1/installation/upgrade-request":                         true,
+	"POST /v1/installation/upgrade-request/{upgradeRequest}/cancel": true,
 }
 
 // ignoresQuery are the operations whose query the TypeScript server never

@@ -58,6 +58,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/servecli"
 	"github.com/varlatch/varlatch/go/server/syncs"
 	"github.com/varlatch/varlatch/go/server/tailnet"
+	"github.com/varlatch/varlatch/go/server/upgraderequests"
 	"github.com/varlatch/varlatch/go/server/values"
 	"github.com/varlatch/varlatch/go/server/web"
 	"github.com/varlatch/varlatch/go/server/webhooks"
@@ -364,16 +365,14 @@ func serve(opts Options, h *hooks) int {
 		// done (ADR-0065 Decision 7): this release serves after it.
 		upgraded := &write.Writer{Store: store, Gates: gates}
 		go endUpgradeHold(ctx, configDir, admission, log, func(j *upgradejournal.Journal) {
-			if recorded, err := recordUpgraded(ctx, upgraded, j, buildinfo.Version, inst.ID); err != nil {
-				log.Warn("the upgrade could not be recorded in the audit log; the next start records it", "event", UpgradedEvent, "journal", j.ID, "error", err)
-			} else if recorded {
-				log.Info("recorded the upgrade in the audit log", "event", UpgradedEvent, "from", j.From, "to", j.To, "journal", j.ID)
-			}
+			// Or its installation.upgrade_undone, on the release an undo
+			// went back to (phase 2).
+			noteJournal(ctx, upgraded, j, cfg.DataDir, buildinfo.Version, inst.ID, log)
 		})
 	} else if inst.ID != "" {
 		// An upgrade done since the last start that this database has not
 		// recorded yet (a start after the upgrade's own, or after a crash).
-		noteUpgraded(ctx, &write.Writer{Store: store, Gates: gates}, configDir, buildinfo.Version, inst.ID, log)
+		noteUpgraded(ctx, &write.Writer{Store: store, Gates: gates}, configDir, cfg.DataDir, buildinfo.Version, inst.ID, log)
 	}
 	// A restore's hold (backup.Hold): the workers that deliver or destroy
 	// (below, admission.EnterWork) wait until the host operator resumes.
@@ -632,11 +631,26 @@ func serve(opts Options, h *hooks) int {
 	if u := cfg.PublicURL; u != nil && net.ParseIP(u.Hostname()) != nil {
 		log.Warn("public_url names an IP address, which browsers refuse as a passkey's relying party: the dashboard cannot sign in at it. Use a host name, such as http://localhost:8686 on this machine", "publicUrl", u.String())
 	}
+	// Upgrades asked for in the web app (ADR-0065 phase 2), on a systemd
+	// host only: the request route, and its watch (expiry, the helper's
+	// refusals, the restart notice to every dashboard).
+	var upgradeRequests *upgraderequests.Service
+	if !inImage() {
+		upgradeRequests = &upgraderequests.Service{
+			DataDir: cfg.DataDir, ConfigDir: configDir, Version: buildinfo.Version, Writer: writer, Approvals: approvals,
+			Installation: (&backend{store: store, rootKEK: rootKEK}).InstallationID, Preflight: preflightOf(env, configDir, buildinfo.Version),
+			Announce: hub.Announce, Now: time.Now, Log: log,
+		}
+		watchDone := make(chan struct{})
+		go func() { defer close(watchDone); upgradeRequests.Watch(ctx, admission.Enter) }()
+		defer func() { cancel(); <-watchDone }()
+	}
 	hopts := httpserver.Options{
 		Outbound:        policy,
 		Version:         buildinfo.Version,
 		ReleaseCheckDir: cfg.DataDir,
 		UpgradeHost:     upgradeHost(env, configDir),
+		UpgradeRequests: upgradeRequests,
 		PublicURL:       cfg.PublicURL,
 		Sync:            cfg.Sync,
 		AuditExportOff:  !cfg.AuditExport,

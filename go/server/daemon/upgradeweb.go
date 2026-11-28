@@ -8,14 +8,17 @@ import (
 	"os"
 	"time"
 
+	"github.com/varlatch/varlatch/go/lib/release"
 	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/lib/upgradejournal"
+	"github.com/varlatch/varlatch/go/lib/upgraderequest"
 	"github.com/varlatch/varlatch/go/server/audit"
 	"github.com/varlatch/varlatch/go/server/custody"
 	"github.com/varlatch/varlatch/go/server/db"
 	"github.com/varlatch/varlatch/go/server/doctor"
 	"github.com/varlatch/varlatch/go/server/jsvalue"
 	"github.com/varlatch/varlatch/go/server/upgradecheck"
+	"github.com/varlatch/varlatch/go/server/upgraderequests"
 	"github.com/varlatch/varlatch/go/server/write"
 )
 
@@ -76,7 +79,28 @@ func upgradeHost(env *hostEnv, configDir string) func(ctx context.Context) upgra
 			h.Maintenance = true
 		}
 		h.WindowOpen, h.WindowErr = migrationWindowOpen(env.cfg.DataDir, time.Now())
+		// The host helper's record of itself (phase 2): display state.
+		if rec, err := upgraderequest.ReadHelper(env.cfg.DataDir); err != nil {
+			h.Helper.Err = err
+		} else if rec != nil {
+			h.Helper = upgradecheck.Helper{Present: true, Enabled: rec.Enabled, Version: rec.Version, At: rec.Heartbeat(), Problem: rec.Problem}
+		}
 		return h
+	}
+}
+
+// preflightOf is the Release tab's judgement now, as GET
+// /v1/installation/release makes it: the upgrade request's route offers
+// only what it offers.
+func preflightOf(env *hostEnv, configDir string, version string) func(ctx context.Context) upgradecheck.Report {
+	host := upgradeHost(env, configDir)
+	return func(ctx context.Context) upgradecheck.Report {
+		in := upgradecheck.Input{Now: time.Now(), Running: version, Host: host(ctx)}
+		if check, err := release.ReadReleaseCheck(env.cfg.DataDir); err == nil {
+			in.Check = check
+		}
+		in.Target, in.TargetErr = release.ReadReleaseTarget(env.cfg.DataDir)
+		return upgradecheck.Judge(in)
 	}
 }
 
@@ -93,7 +117,10 @@ const UpgradedEvent = "installation.upgraded"
 // upgrade from the terminal is the host's (source host). Whether this
 // journal id was recorded is read in the same write job, from the events
 // themselves, so a restored database that lacks the event gets it again.
-func recordUpgraded(ctx context.Context, w *write.Writer, j *upgradejournal.Journal, version, installation string) (bool, error) {
+// requestID is the web request whose helper ran this journal (its status
+// record names the journal id), "" for an upgrade from the terminal: then
+// source is host, else web (phase 2).
+func recordUpgraded(ctx context.Context, w *write.Writer, j *upgradejournal.Journal, version, installation, requestID string) (bool, error) {
 	if j == nil || j.Kind != upgradejournal.Upgrade || j.State != upgradejournal.Done || j.To != version ||
 		installation == "" || j.Installation != "" && j.Installation != installation {
 		return false, nil
@@ -118,8 +145,8 @@ func recordUpgraded(ctx context.Context, w *write.Writer, j *upgradejournal.Jour
 			{Key: "from", Value: j.From}, {Key: "to", Value: j.To}, {Key: "journalId", Value: j.ID},
 			{Key: "varlatchSha256", Value: cli}, {Key: "varlatchdSha256", Value: server}, {Key: "snapshotArchiveId", Value: orNil(j.SnapshotArchive)},
 			{Key: "startedAt", Value: orNil(j.StartedAt)}, {Key: "finishedAt", Value: orNil(j.UpdatedAt)},
-			{Key: "source", Value: "host"}, {Key: "requestId", Value: nil},
 		}
+		meta = append(meta, sourceOf(requestID)...)
 		if _, err := audit.Record(ctx, tx, audit.Event{Type: UpgradedEvent, Decision: audit.Info, Metadata: meta}); err != nil {
 			return err
 		}
@@ -129,18 +156,71 @@ func recordUpgraded(ctx context.Context, w *write.Writer, j *upgradejournal.Jour
 	return recorded, err
 }
 
-// noteUpgraded is recordUpgraded for the journal in configDir as it is now,
-// logged: a failure to record leaves the event to the next start.
-func noteUpgraded(ctx context.Context, w *write.Writer, configDir, version, installation string, log *slog.Logger) {
+// sourceOf is an event's source and request: web and its id, or host.
+func sourceOf(requestID string) jsvalue.Object {
+	if requestID == "" {
+		return jsvalue.Object{{Key: "source", Value: "host"}, {Key: "requestId", Value: nil}}
+	}
+	return jsvalue.Object{{Key: "source", Value: "web"}, {Key: "requestId", Value: requestID}}
+}
+
+// recordUndone records installation.upgrade_undone for root's journal j,
+// once per journal id (ADR-0065 Decision 7): an upgrade's, undone after
+// it stopped varlatchd (a check failed, or a step after the stop), from
+// this release (version), which serves again, of this installation. The
+// reason is the journal's (the failing check), root's. An upgrade undone
+// before the stop (its snapshot or upload failed) never restarted
+// anything and records none.
+func recordUndone(ctx context.Context, w *write.Writer, j *upgradejournal.Journal, version, installation, requestID string) (bool, error) {
+	if j == nil || j.Kind != upgradejournal.Upgrade || j.State != upgradejournal.Undone || j.From != version || !j.Reached(upgradejournal.Stopping) ||
+		installation == "" || j.Installation != "" && j.Installation != installation {
+		return false, nil
+	}
+	recorded := false
+	err := w.Job(ctx, nil, func(ctx context.Context, tx *storage.Tx) error {
+		var n int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM audit_events WHERE event_type = ? AND json_extract(metadata, '$.journalId') = ?`, upgraderequests.UndoneEvent, j.ID).Scan(&n); err != nil || n > 0 {
+			return err
+		}
+		meta := jsvalue.Object{{Key: "from", Value: j.From}, {Key: "to", Value: j.To}, {Key: "journalId", Value: j.ID}, {Key: "reason", Value: j.Reason}}
+		meta = append(meta, sourceOf(requestID)...)
+		if _, err := audit.Record(ctx, tx, audit.Event{Type: upgraderequests.UndoneEvent, Decision: audit.Info, Metadata: meta}); err != nil {
+			return err
+		}
+		recorded = true
+		return nil
+	})
+	return recorded, err
+}
+
+// noteJournal records what root's journal j says ended (installation.
+// upgraded on the release upgraded to, installation.upgrade_undone on the
+// one it went back to), with the web request whose helper ran it, logged: a
+// failure to record leaves the event to the next start.
+func noteJournal(ctx context.Context, w *write.Writer, j *upgradejournal.Journal, dataDir, version, installation string, log *slog.Logger) {
+	if j == nil {
+		return
+	}
+	request := upgraderequests.RequestOf(dataDir, j.ID)
+	for _, e := range []struct {
+		event  string
+		record func(context.Context, *write.Writer, *upgradejournal.Journal, string, string, string) (bool, error)
+	}{{UpgradedEvent, recordUpgraded}, {upgraderequests.UndoneEvent, recordUndone}} {
+		recorded, err := e.record(ctx, w, j, version, installation, request)
+		switch {
+		case err != nil:
+			log.Warn("the upgrade could not be recorded in the audit log; the next start records it", "event", e.event, "journal", j.ID, "error", err)
+		case recorded:
+			log.Info("recorded the upgrade in the audit log", "event", e.event, "from", j.From, "to", j.To, "journal", j.ID)
+		}
+	}
+}
+
+// noteUpgraded is noteJournal for the journal in configDir as it is now.
+func noteUpgraded(ctx context.Context, w *write.Writer, configDir, dataDir, version, installation string, log *slog.Logger) {
 	j, err := readUpgrade(configDir)
 	if err != nil {
 		return
 	}
-	recorded, err := recordUpgraded(ctx, w, j, version, installation)
-	switch {
-	case err != nil:
-		log.Warn("the upgrade could not be recorded in the audit log; the next start records it", "event", UpgradedEvent, "journal", j.ID, "error", err)
-	case recorded:
-		log.Info("recorded the upgrade in the audit log", "event", UpgradedEvent, "from", j.From, "to", j.To, "journal", j.ID)
-	}
+	noteJournal(ctx, w, j, dataDir, version, installation, log)
 }

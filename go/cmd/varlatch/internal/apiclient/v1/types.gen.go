@@ -2032,19 +2032,19 @@ func (e MemberReviewSyncTargetsState) Valid() bool {
 
 // Defines values for OAuthAuthMethod.
 const (
-	ClientSecretBasic OAuthAuthMethod = "client_secret_basic"
-	ClientSecretPost  OAuthAuthMethod = "client_secret_post"
-	None              OAuthAuthMethod = "none"
+	OAuthAuthMethodClientSecretBasic OAuthAuthMethod = "client_secret_basic"
+	OAuthAuthMethodClientSecretPost  OAuthAuthMethod = "client_secret_post"
+	OAuthAuthMethodNone              OAuthAuthMethod = "none"
 )
 
 // Valid indicates whether the value is a known member of the OAuthAuthMethod enum.
 func (e OAuthAuthMethod) Valid() bool {
 	switch e {
-	case ClientSecretBasic:
+	case OAuthAuthMethodClientSecretBasic:
 		return true
-	case ClientSecretPost:
+	case OAuthAuthMethodClientSecretPost:
 		return true
-	case None:
+	case OAuthAuthMethodNone:
 		return true
 	default:
 		return false
@@ -3109,6 +3109,7 @@ const (
 	Backup       UpgradePreflightLineId = "backup"
 	Custody      UpgradePreflightLineId = "custody"
 	Disk         UpgradePreflightLineId = "disk"
+	Helper       UpgradePreflightLineId = "helper"
 	InTheWay     UpgradePreflightLineId = "in-the-way"
 	ReleaseCheck UpgradePreflightLineId = "release-check"
 	RollbackSafe UpgradePreflightLineId = "rollback-safe"
@@ -3122,6 +3123,8 @@ func (e UpgradePreflightLineId) Valid() bool {
 	case Custody:
 		return true
 	case Disk:
+		return true
+	case Helper:
 		return true
 	case InTheWay:
 		return true
@@ -3149,6 +3152,81 @@ func (e UpgradePreflightLineStatus) Valid() bool {
 	case UpgradePreflightLineStatusPass:
 		return true
 	case UpgradePreflightLineStatusUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for UpgradeRequestStateState.
+const (
+	UpgradeRequestStateStateBackingUp   UpgradeRequestStateState = "backing-up"
+	UpgradeRequestStateStateCancelled   UpgradeRequestStateState = "cancelled"
+	UpgradeRequestStateStateChecking    UpgradeRequestStateState = "checking"
+	UpgradeRequestStateStateDone        UpgradeRequestStateState = "done"
+	UpgradeRequestStateStateExpired     UpgradeRequestStateState = "expired"
+	UpgradeRequestStateStateFailed      UpgradeRequestStateState = "failed"
+	UpgradeRequestStateStateInterrupted UpgradeRequestStateState = "interrupted"
+	UpgradeRequestStateStateNone        UpgradeRequestStateState = "none"
+	UpgradeRequestStateStateRefused     UpgradeRequestStateState = "refused"
+	UpgradeRequestStateStateRestarting  UpgradeRequestStateState = "restarting"
+	UpgradeRequestStateStateTaken       UpgradeRequestStateState = "taken"
+	UpgradeRequestStateStateUndone      UpgradeRequestStateState = "undone"
+	UpgradeRequestStateStateVerifying   UpgradeRequestStateState = "verifying"
+	UpgradeRequestStateStateWaiting     UpgradeRequestStateState = "waiting"
+)
+
+// Valid indicates whether the value is a known member of the UpgradeRequestStateState enum.
+func (e UpgradeRequestStateState) Valid() bool {
+	switch e {
+	case UpgradeRequestStateStateBackingUp:
+		return true
+	case UpgradeRequestStateStateCancelled:
+		return true
+	case UpgradeRequestStateStateChecking:
+		return true
+	case UpgradeRequestStateStateDone:
+		return true
+	case UpgradeRequestStateStateExpired:
+		return true
+	case UpgradeRequestStateStateFailed:
+		return true
+	case UpgradeRequestStateStateInterrupted:
+		return true
+	case UpgradeRequestStateStateNone:
+		return true
+	case UpgradeRequestStateStateRefused:
+		return true
+	case UpgradeRequestStateStateRestarting:
+		return true
+	case UpgradeRequestStateStateTaken:
+		return true
+	case UpgradeRequestStateStateUndone:
+		return true
+	case UpgradeRequestStateStateVerifying:
+		return true
+	case UpgradeRequestStateStateWaiting:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for UpgradeRequestStateUnreadable.
+const (
+	LastJson    UpgradeRequestStateUnreadable = "last.json"
+	RequestJson UpgradeRequestStateUnreadable = "request.json"
+	StatusJson  UpgradeRequestStateUnreadable = "status.json"
+)
+
+// Valid indicates whether the value is a known member of the UpgradeRequestStateUnreadable enum.
+func (e UpgradeRequestStateUnreadable) Valid() bool {
+	switch e {
+	case LastJson:
+		return true
+	case RequestJson:
+		return true
+	case StatusJson:
 		return true
 	default:
 		return false
@@ -3436,22 +3514,22 @@ func (e RotateGitHubAppKey200JSONResponseBody0Outcome) Valid() bool {
 
 // Defines values for DiscardGitHubAppRegistration200JSONResponseBodyState.
 const (
-	Attached  DiscardGitHubAppRegistration200JSONResponseBodyState = "attached"
-	Discarded DiscardGitHubAppRegistration200JSONResponseBodyState = "discarded"
-	Ended     DiscardGitHubAppRegistration200JSONResponseBodyState = "ended"
-	Waiting   DiscardGitHubAppRegistration200JSONResponseBodyState = "waiting"
+	DiscardGitHubAppRegistration200JSONResponseBodyStateAttached  DiscardGitHubAppRegistration200JSONResponseBodyState = "attached"
+	DiscardGitHubAppRegistration200JSONResponseBodyStateDiscarded DiscardGitHubAppRegistration200JSONResponseBodyState = "discarded"
+	DiscardGitHubAppRegistration200JSONResponseBodyStateEnded     DiscardGitHubAppRegistration200JSONResponseBodyState = "ended"
+	DiscardGitHubAppRegistration200JSONResponseBodyStateWaiting   DiscardGitHubAppRegistration200JSONResponseBodyState = "waiting"
 )
 
 // Valid indicates whether the value is a known member of the DiscardGitHubAppRegistration200JSONResponseBodyState enum.
 func (e DiscardGitHubAppRegistration200JSONResponseBodyState) Valid() bool {
 	switch e {
-	case Attached:
+	case DiscardGitHubAppRegistration200JSONResponseBodyStateAttached:
 		return true
-	case Discarded:
+	case DiscardGitHubAppRegistration200JSONResponseBodyStateDiscarded:
 		return true
-	case Ended:
+	case DiscardGitHubAppRegistration200JSONResponseBodyStateEnded:
 		return true
-	case Waiting:
+	case DiscardGitHubAppRegistration200JSONResponseBodyStateWaiting:
 		return true
 	default:
 		return false
@@ -6673,8 +6751,10 @@ type Tier string
 
 // UpgradePreflightLine defines model for UpgradePreflightLine.
 type UpgradePreflightLine struct {
-	Detail string                 `json:"detail"`
-	Id     UpgradePreflightLineId `json:"id"`
+	Detail string `json:"detail"`
+
+	// Id The line, in the order the tab shows them. helper (the host helper, ADR-0065 phase 2) is only on a systemd host.
+	Id UpgradePreflightLineId `json:"id"`
 
 	// Remedy What to do; null when the line passes.
 	Remedy nullable.Nullable[string]  `json:"remedy"`
@@ -6682,11 +6762,51 @@ type UpgradePreflightLine struct {
 	Title  string                     `json:"title"`
 }
 
-// UpgradePreflightLineId defines model for UpgradePreflightLine.Id.
+// UpgradePreflightLineId The line, in the order the tab shows them. helper (the host helper, ADR-0065 phase 2) is only on a systemd host.
 type UpgradePreflightLineId string
 
 // UpgradePreflightLineStatus defines model for UpgradePreflightLine.Status.
 type UpgradePreflightLineStatus string
+
+// UpgradeRequestState An upgrade request from the web app and what the host did with it (ADR-0065). Display state, written by varlatchd and by the host helper through it; root's upgrade journal says whether an upgrade it ran is done or undone. A record that cannot be read is named in unreadable, never an error.
+type UpgradeRequestState struct {
+	// Cancelled Only in a cancel's answer, whether it removed the request (false when the host had taken it)
+	Cancelled *bool `json:"cancelled,omitempty"`
+
+	// JournalId The id of root's upgrade journal the host ran
+	JournalId nullable.Nullable[string] `json:"journalId"`
+
+	// NoAnswer The host has not answered for 2 minutes since the request (or since it took it)
+	NoAnswer bool `json:"noAnswer"`
+
+	// Reason The class of a refusal (disabled, expired, not-newer, prerelease, superseded, not-latest, not-rollback-safe, ends-rollback-window, undone, held, pending, maintenance, schema, no-backup-destination, unreachable), of a failure (verification, backup, error, undo) or of an undo (health); never free text.
+	Reason  nullable.Nullable[string] `json:"reason"`
+	Request nullable.Nullable[struct {
+		ExpiresAt time.Time `json:"expiresAt"`
+
+		// From The release that served when it was asked for
+		From        string    `json:"from"`
+		Id          string    `json:"id"`
+		RequestedAt time.Time `json:"requestedAt"`
+
+		// RequestedBy The Installation Admin's identity id
+		RequestedBy nullable.Nullable[string] `json:"requestedBy"`
+		Version     string                    `json:"version"`
+	}] `json:"request"`
+
+	// State waiting: the host has not taken it yet. taken to checking: the host's steps. done, refused, failed (nothing changed unless reason is undo), undone (a health check failed: the previous release serves). interrupted: the host stopped mid-way and finishes or undoes it at its next start or sudo varlatch upgrade. cancelled by an admin, or expired before the host took it.
+	State UpgradeRequestStateState `json:"state"`
+
+	// Unreadable The records in the data directory's upgrade-request directory that are there but cannot be read. The state is what the others say: with last.json among them, which request it was is not known (request is null), and a new request may replace it once nothing is waiting or running.
+	Unreadable []UpgradeRequestStateUnreadable `json:"unreadable"`
+	UpdatedAt  nullable.Nullable[time.Time]    `json:"updatedAt"`
+}
+
+// UpgradeRequestStateState waiting: the host has not taken it yet. taken to checking: the host's steps. done, refused, failed (nothing changed unless reason is undo), undone (a health check failed: the previous release serves). interrupted: the host stopped mid-way and finishes or undoes it at its next start or sudo varlatch upgrade. cancelled by an admin, or expired before the host took it.
+type UpgradeRequestStateState string
+
+// UpgradeRequestStateUnreadable defines model for UpgradeRequestState.Unreadable.
+type UpgradeRequestStateUnreadable string
 
 // ValidationReport defines model for ValidationReport.
 type ValidationReport struct {
@@ -6925,6 +7045,20 @@ type SubmitEntryLinkJSONBody struct {
 
 // SubmitEntryLink200JSONResponseBodyStatus defines parameters for SubmitEntryLink.
 type SubmitEntryLink200JSONResponseBodyStatus string
+
+// RequestInstallationUpgradeJSONBody defines parameters for RequestInstallationUpgrade.
+type RequestInstallationUpgradeJSONBody struct {
+	RequestId string `json:"requestId"`
+
+	// Version The release to upgrade to
+	Version string `json:"version"`
+}
+
+// RequestInstallationUpgradeParams defines parameters for RequestInstallationUpgrade.
+type RequestInstallationUpgradeParams struct {
+	// VarlatchApproval The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session.
+	VarlatchApproval *ApprovalHeader `json:"Varlatch-Approval,omitempty"`
+}
 
 // ApproveApprovalJSONBody defines parameters for ApproveApproval.
 type ApproveApprovalJSONBody struct {
@@ -8026,6 +8160,9 @@ type LookupEntryLinkJSONRequestBody LookupEntryLinkJSONBody
 
 // SubmitEntryLinkJSONRequestBody defines body for SubmitEntryLink for application/json ContentType.
 type SubmitEntryLinkJSONRequestBody SubmitEntryLinkJSONBody
+
+// RequestInstallationUpgradeJSONRequestBody defines body for RequestInstallationUpgrade for application/json ContentType.
+type RequestInstallationUpgradeJSONRequestBody RequestInstallationUpgradeJSONBody
 
 // ApproveApprovalJSONRequestBody defines body for ApproveApproval for application/json ContentType.
 type ApproveApprovalJSONRequestBody ApproveApprovalJSONBody

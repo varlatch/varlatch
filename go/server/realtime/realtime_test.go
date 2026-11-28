@@ -778,3 +778,43 @@ func TestMergeSignals(t *testing.T) {
 		t.Fatalf("%+v", got)
 	}
 }
+
+// The installation's notice (ADR-0065 Decision 8) reaches every stream,
+// whatever its Organizations, and a stream that opens while it stands;
+// withdrawn, every stream hears that, and a new one hears nothing.
+func TestAnnounceReachesEveryStream(t *testing.T) {
+	w := newWorld(t, Options{})
+	a, b := w.subscribe("alice", w.session("alice")), w.subscribe("bob", w.session("bob"))
+	next := func(s *Stream) string {
+		select {
+		case m := <-s.Messages():
+			if len(m) != 1 || m[0].Event != InstallationEvent {
+				t.Fatalf("%+v", m)
+			}
+			return string(m[0].Data)
+		case <-time.After(2 * time.Second):
+			return ""
+		}
+	}
+	w.hub.Announce(&Notice{Kind: NoticeUpgradeRestarting, Version: "0.52.0"})
+	want := `{"notice":"upgrade-restarting","version":"0.52.0"}`
+	if next(a) != want || next(b) != want {
+		t.Fatal("not every stream heard the notice")
+	}
+	c := w.subscribe("carol", w.session("carol"))
+	if next(c) != want {
+		t.Fatal("a stream opened while it stands did not hear it")
+	}
+	w.hub.Announce(nil)
+	for _, s := range []*Stream{a, b, c} {
+		if got := next(s); got != `{"notice":null}` {
+			t.Fatalf("withdrawn: %q", got)
+		}
+	}
+	d := w.subscribe("alice", w.session("alice"))
+	select {
+	case m := <-d.Messages():
+		t.Fatalf("a new stream heard %+v", m)
+	case <-time.After(100 * time.Millisecond):
+	}
+}

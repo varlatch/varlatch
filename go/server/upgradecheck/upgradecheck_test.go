@@ -43,7 +43,8 @@ func ready() Input {
 		Host: Host{Deployment: Systemd, Schema: 7,
 			Backups: Backups{Destination: "offsite", Last: now.Add(-2 * time.Hour), Delivered: now.Add(-2 * time.Hour)},
 			Custody: Custody{RootKEKVersion: 1, RootKEK: true, BackupKey: true},
-			Disk:    Disk{Free: 10 << 30, Database: 100 << 20}}}
+			Disk:    Disk{Free: 10 << 30, Database: 100 << 20},
+			Helper:  Helper{Present: true, Enabled: true, Version: "0.51.0", At: now.Add(-3*time.Hour + time.Minute)}}}
 }
 
 func line(t *testing.T, r Report, id string) Line {
@@ -59,7 +60,7 @@ func line(t *testing.T, r Report, id string) Line {
 
 func TestEveryLinePasses(t *testing.T) {
 	r := Judge(ready())
-	if r.Target == nil || r.RollbackSafe == nil || !*r.RollbackSafe || len(r.Lines) != 6 {
+	if r.Target == nil || r.RollbackSafe == nil || !*r.RollbackSafe || len(r.Lines) != 7 || !r.All() {
 		t.Fatalf("%+v", r)
 	}
 	for _, l := range r.Lines {
@@ -240,10 +241,85 @@ func TestInTheWay(t *testing.T) {
 	}
 }
 
+// Decision 6 in the pre-flight, by the host helper's own rule: a target
+// root's journal says was undone after the stop, or rolled back from, is
+// not offered again; one undone before the stop (its backup failed), or
+// another version, is.
+func TestAnUndoneVersionIsNotOffered(t *testing.T) {
+	undone := &upgradejournal.Journal{ID: "a", Kind: upgradejournal.Upgrade, From: "0.51.0", To: "0.52.0", State: upgradejournal.Undone, Step: upgradejournal.Started}
+	for name, c := range map[string]struct {
+		journal *upgradejournal.Journal
+		fail    string
+	}{
+		"undone after the stop": {undone, "The host undid an upgrade to 0.52.0 after it stopped Varlatch for it: an undone version is not offered again from the web."},
+		"rolled back from": {&upgradejournal.Journal{ID: "b", Kind: upgradejournal.Rollback, From: "0.52.0", To: "0.51.0", State: upgradejournal.Done,
+			Upgraded: &upgradejournal.Journal{To: "0.52.0"}}, "The host rolled back from 0.52.0: an undone version is not offered again from the web."},
+		"undone before the stop": {&upgradejournal.Journal{ID: "c", Kind: upgradejournal.Upgrade, From: "0.51.0", To: "0.52.0", State: upgradejournal.Undone, Step: upgradejournal.Verified}, ""},
+		"another version undone": {&upgradejournal.Journal{ID: "d", Kind: upgradejournal.Upgrade, From: "0.50.2", To: "0.51.0", State: upgradejournal.Undone, Step: upgradejournal.Started}, ""},
+	} {
+		in := ready()
+		in.Host.Upgrade = c.journal
+		r := Judge(in)
+		l := line(t, r, LineInTheWay)
+		if c.fail == "" {
+			if l.Status != Pass || !r.All() {
+				t.Errorf("%s: %+v", name, l)
+			}
+			continue
+		}
+		if l.Status != Fail || l.Detail != c.fail || !strings.Contains(l.Remedy, "sudo varlatch upgrade 0.52.0") || r.All() {
+			t.Errorf("%s: %+v", name, l)
+		}
+	}
+}
+
 func TestAgo(t *testing.T) {
 	for want, d := range map[string]time.Duration{"just now": 10 * time.Second, "1 minute ago": time.Minute, "5 hours ago": 5 * time.Hour, "47 hours ago": 47 * time.Hour, "3 days ago": 72 * time.Hour} {
 		if got := Ago(now, now.Add(-d)); got != want {
 			t.Errorf("%v: %q, want %q", d, got, want)
 		}
+	}
+}
+
+// Line 7 (phase 2): the host helper, on a systemd host only; the button
+// (All) needs every line, this one among them.
+func TestTheHelperLine(t *testing.T) {
+	for name, c := range map[string]struct {
+		set    func(in *Input)
+		status Status
+		detail string
+	}{
+		"not installed":               {func(in *Input) { in.Host.Helper = Helper{} }, Fail, "not installed"},
+		"turned off":                  {func(in *Input) { in.Host.Helper.Enabled = false }, Fail, "turned off"},
+		"a stale heartbeat":           {func(in *Input) { in.Host.Helper.At = now.Add(-37 * time.Hour) }, Fail, "last answered 37 hours ago"},
+		"not the last check's":        {func(in *Input) { in.Host.Helper.At = now.Add(-4 * time.Hour) }, Fail, "ran without the host helper"},
+		"a record that is wrong":      {func(in *Input) { in.Host.Helper.Err = errors.New("not a helper record") }, Unknown, "cannot be read"},
+		"a request it could not take": {func(in *Input) { in.Host.Helper.Problem = "take" }, Fail, "could not take the last request (2 hours ago): a directory on the way"},
+	} {
+		in := ready()
+		c.set(&in)
+		r := Judge(in)
+		if l := line(t, r, LineHelper); l.Status != c.status || !strings.Contains(l.Detail, c.detail) || l.Remedy == "" {
+			t.Errorf("%s: %+v", name, l)
+		}
+		if r.All() {
+			t.Errorf("%s: one click offered", name)
+		}
+	}
+	in := ready()
+	in.Host.Deployment = Image
+	r := Judge(in)
+	for _, l := range r.Lines {
+		if l.ID == LineHelper {
+			t.Fatal("a helper line in the image")
+		}
+	}
+	if len(r.Lines) != 6 || r.All() {
+		t.Fatalf("the image: %d lines, all %v", len(r.Lines), r.All())
+	}
+	in = ready()
+	in.Target = target(now.Add(-time.Hour), "0.51.1")
+	if Judge(in).All() {
+		t.Fatal("one click for a jump")
 	}
 }

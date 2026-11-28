@@ -8,9 +8,10 @@
 // display state that varlatchd can write: an upgrade verifies the release
 // again from scratch, and the engine refuses for itself what this says.
 //
-// Phase 1 has no host helper, so its line (Decision 8's seventh) is not
-// here: the checklist is the gate the later phases reuse, and the tab shows
-// commands.
+// On a systemd host the seventh line (phase 2) is the host helper's: it
+// is installed, accepts requests, and its heartbeat comes from the last
+// release check. The image has no helper (phase 3), so no such line. The
+// upgrade button is offered only when every line passes (All).
 package upgradecheck
 
 import (
@@ -69,7 +70,33 @@ const (
 	LineDisk         = "disk"
 	LineInTheWay     = "in-the-way"
 	LineRollbackSafe = "rollback-safe"
+	LineHelper       = "helper"
 )
+
+// HeartbeatSlack is how much earlier than the release check's last attempt
+// the helper's heartbeat may be and still count as that check's: the same
+// run records both, the heartbeat after the check.
+const HeartbeatSlack = 10 * time.Minute
+
+// Helper is the host helper's record of itself (upgrade-request/
+// helper.json), display state.
+type Helper struct {
+	// Err is a record that cannot be read; Present whether there is one.
+	Err     error
+	Present bool
+	Enabled bool
+	Version string
+	At      time.Time
+	// Problem is why its last run could not take a request, one of
+	// upgraderequest.HelperProblems, "" for none.
+	Problem string
+}
+
+// problemText is the helper's problems, as the tab words them.
+var problemText = map[string]string{
+	"data-directory": "varlatchd's configuration named no data directory it could use",
+	"take":           "a directory on the way (the data directory's upgrade-request directory, or /var/lib/varlatch-upgrade/taken) is not what it must be",
+}
 
 // Backups is what the server knows of its backups.
 type Backups struct {
@@ -117,6 +144,8 @@ type Host struct {
 	// WindowErr a migration journal that cannot be read.
 	WindowOpen bool
 	WindowErr  error
+	// Helper is the web upgrade's host helper (systemd only).
+	Helper Helper
 }
 
 // Input is everything Judge reads.
@@ -173,10 +202,63 @@ func Judge(in Input) Report {
 		backupLine(in),
 		custodyLine(in),
 		diskLine(in),
-		inTheWayLine(in, r.Target),
+		inTheWayLine(in, newer, r.Target),
 		rollbackLine(in, newer, r.Target),
 	}
+	if in.Host.Deployment == Systemd {
+		r.Lines = append(r.Lines, helperLine(in))
+	}
 	return r
+}
+
+// All is whether the report offers one click: a checklist whose every line
+// passes, the helper's among them (a systemd host).
+func (r Report) All() bool {
+	helper := false
+	for _, l := range r.Lines {
+		if l.Status != Pass {
+			return false
+		}
+		helper = helper || l.ID == LineHelper
+	}
+	return helper && r.Target != nil && r.Target.Verified != nil
+}
+
+// Line 7: the host helper is installed, accepts requests, could take the
+// last request, and its heartbeat comes from the last release check.
+func helperLine(in Input) Line {
+	l := Line{ID: LineHelper, Title: "The host helper is installed and answered at the last release check"}
+	enable := "To upgrade from here, install it on the host: sudo varlatch upgrade --enable-web (docs: Upgrading from the web app). Or upgrade with the commands below."
+	h := in.Host.Helper
+	switch {
+	case h.Err != nil:
+		l.Status, l.Detail, l.Remedy = Unknown, "Its record cannot be read: "+h.Err.Error(), "Run sudo varlatch upgrade --enable-web again"
+	case !h.Present:
+		l.Status, l.Detail, l.Remedy = Fail, "The host helper is not installed: this installation shows upgrade commands only", enable
+	case !h.Enabled:
+		l.Status, l.Detail, l.Remedy = Fail, "The host helper was turned off (sudo varlatch upgrade --disable-web)", enable
+	case h.Problem != "":
+		why, ok := problemText[h.Problem]
+		if !ok {
+			why = h.Problem
+		}
+		l.Status, l.Detail = Fail, "The host helper could not take the last request ("+Ago(in.Now, h.At)+"): "+why+". It tries again until the request expires."
+		l.Remedy = "Read why: sudo journalctl -u varlatch-upgrade.service. Put it right, then clear this with a release check: sudo systemctl start varlatch-release-check.service"
+	case in.Now.Sub(h.At) > CheckMaxAge:
+		l.Status, l.Detail, l.Remedy = Fail, "The host helper last answered "+Ago(in.Now, h.At), "Run sudo systemctl enable --now varlatch-release-check.timer (or sudo varlatch upgrade --enable-web again)"
+	default:
+		attempt, ok := time.Time{}, false
+		if in.Check != nil {
+			attempt, ok = parse(in.Check.LastAttempt.CheckedAt)
+		}
+		if ok && h.At.Before(attempt.Add(-HeartbeatSlack)) {
+			l.Status, l.Detail, l.Remedy = Fail, "The last release check ("+Ago(in.Now, attempt)+") ran without the host helper, which last answered "+Ago(in.Now, h.At),
+				"Run the release check through the helper's timer: sudo systemctl start varlatch-release-check.service"
+			return l
+		}
+		l.Status, l.Detail = Pass, "Version "+h.Version+", last answered "+Ago(in.Now, h.At)
+	}
+	return l
 }
 
 // command is a host command as this installation runs it.
@@ -371,8 +453,9 @@ func size(n uint64) string {
 }
 
 // Line 5: no upgrade, rollback, restore hold, maintenance or rollback
-// window in the way.
-func inTheWayLine(in Input, target *release.Target) Line {
+// window in the way, and newer is not a version the host undid after its
+// stop, or rolled back from (Decision 6).
+func inTheWayLine(in Input, newer string, target *release.Target) Line {
 	h := in.Host
 	l := Line{ID: LineInTheWay, Title: "No upgrade, rollback, restore hold, maintenance or rollback window in the way"}
 	var details, remedies []string
@@ -392,6 +475,15 @@ func inTheWayLine(in Input, target *release.Target) Line {
 			details = append(details, fmt.Sprintf("The %s from %s to %s is not over (its last step is %q).", what, j.From, j.To, string(j.Step)))
 		}
 		remedies = append(remedies, "sudo varlatch upgrade finishes or undoes it")
+	case j.Undid(newer):
+		// Decision 6, by the rule the host helper refuses by: root's
+		// journal, which varlatchd cannot write.
+		what := "The host undid an upgrade to " + newer + " after it stopped Varlatch for it"
+		if j.Kind == upgradejournal.Rollback {
+			what = "The host rolled back from " + newer
+		}
+		details = append(details, what+": an undone version is not offered again from the web.")
+		remedies = append(remedies, "Read why (sudo cat /etc/varlatch/upgrade.json); once it is put right, upgrade by hand: sudo varlatch upgrade "+newer+", which writes a new journal and clears this")
 	}
 	if h.RestoreHeld {
 		details = append(details, "This installation was restored from an archive and is held.")

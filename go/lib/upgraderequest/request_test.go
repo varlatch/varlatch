@@ -81,6 +81,85 @@ func TestWriteAndCancel(t *testing.T) {
 	}
 }
 
+// A symlinked upgrade-request directory (or a file in its place, or a
+// symlinked request.json) is refused: nothing outside the directory is
+// read, written or removed.
+func TestCancelRefusesSymlink(t *testing.T) {
+	r := NewRequest(testID, "0.52.0", testIdentity, testNow)
+	raw, err := r.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A plain file where upgrade-request belongs is refused.
+	fileData := t.TempDir()
+	if err := os.WriteFile(filepath.Join(fileData, Dir), []byte("not a dir"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := CancelRequest(fileData, r.ID); !errors.Is(err, ErrNotDirectory) {
+		t.Fatalf("regular file as upgrade-request: %v", err)
+	}
+
+	// A symlinked upgrade-request directory: refused, target untouched.
+	elsewhere := t.TempDir()
+	targetReq := filepath.Join(elsewhere, RequestFile)
+	if err := os.WriteFile(targetReq, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	at := testNow.Format(TimeLayout)
+	linkData := t.TempDir()
+	if err := os.Symlink(elsewhere, filepath.Join(linkData, Dir)); err != nil {
+		if runtime.GOOS == "windows" {
+			t.Skipf("symlinks unavailable on this Windows host: %v", err)
+		}
+		t.Fatal(err)
+	}
+	if err := CancelRequest(linkData, r.ID); !errors.Is(err, ErrNotDirectory) {
+		t.Fatalf("symlinked directory cancel: %v", err)
+	}
+	if got, err := os.ReadFile(targetReq); err != nil || string(got) != string(raw) {
+		t.Fatalf("target request touched: %q %v", got, err)
+	}
+	if _, err := ReadRequest(linkData); !errors.Is(err, ErrNotDirectory) {
+		t.Fatalf("symlinked directory ReadRequest: %v", err)
+	}
+	if _, err := ReadStatus(linkData); !errors.Is(err, ErrNotDirectory) {
+		t.Fatalf("symlinked directory ReadStatus: %v", err)
+	}
+	if _, err := ReadHelper(linkData); !errors.Is(err, ErrNotDirectory) {
+		t.Fatalf("symlinked directory ReadHelper: %v", err)
+	}
+	if err := WriteRequest(linkData, r); !errors.Is(err, ErrNotDirectory) {
+		t.Fatalf("symlinked directory WriteRequest: %v", err)
+	}
+	if err := WriteStatus(linkData, Status{Format: Format, RequestID: r.ID, Phase: Taken, UpdatedAt: at}); !errors.Is(err, ErrNotDirectory) {
+		t.Fatalf("symlinked directory WriteStatus: %v", err)
+	}
+	if err := WriteHelper(linkData, Helper{Format: Format, Version: "0.52.0", Enabled: true, HeartbeatAt: at}); !errors.Is(err, ErrNotDirectory) {
+		t.Fatalf("symlinked directory WriteHelper: %v", err)
+	}
+
+	// A symlinked request.json inside a real upgrade-request directory:
+	// refused, link and target both untouched.
+	realData := t.TempDir()
+	if err := MakeDir(realData); err != nil {
+		t.Fatal(err)
+	}
+	reqLink := filepath.Join(realData, Dir, RequestFile)
+	if err := os.Symlink(targetReq, reqLink); err != nil {
+		t.Fatal(err)
+	}
+	if err := CancelRequest(realData, r.ID); err == nil {
+		t.Fatal("symlinked request.json was cancelled")
+	}
+	if _, err := os.Lstat(reqLink); err != nil {
+		t.Fatalf("symlinked request.json was removed: %v", err)
+	}
+	if got, err := os.ReadFile(targetReq); err != nil || string(got) != string(raw) {
+		t.Fatalf("target request touched through file link: %q %v", got, err)
+	}
+}
+
 func TestStatusAndHelperRecords(t *testing.T) {
 	dir := t.TempDir()
 	at := testNow.Format(TimeLayout)

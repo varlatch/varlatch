@@ -141,7 +141,10 @@
         "approval_intents_close_reason_check": "check",
         "approval_intents_credential_id_fkey": "foreign key",
         "approval_intents_identity_id_fkey": "foreign key",
-        "approval_intents_operation_check": "check",
+        "approval_intents_operation_check": {
+          "sqlite": "check",
+          "rewritten": "PostgreSQL's list and one more operation, installation.upgrade (schema version 8, ADR-0065): an Installation Admin's step-up approval for an upgrade asked for in the web app, which only varlatchd has. A reverse carries no such intent."
+        },
         "approval_intents_organization_id_fkey": "foreign key",
         "approval_intents_origin_check": "check",
         "approval_intents_pkey": "primary key",
