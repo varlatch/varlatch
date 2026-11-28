@@ -4,6 +4,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -11,11 +12,14 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/clientctx"
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/webupgrade"
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
 	"github.com/varlatch/varlatch/go/lib/jsjson"
 	journal "github.com/varlatch/varlatch/go/lib/upgradejournal"
+	"github.com/varlatch/varlatch/go/lib/upgraderequest"
 )
 
 // `varlatch doctor` (internal docs/design/go-step6.md, slice 6.5): a Go
@@ -219,7 +223,36 @@ func doctorCLIChecks(report doctorReport, config string) []doctorCheck {
 		config = DefaultVarlatchdConfig
 	}
 	pending, err := journal.Read(filepath.Dir(config))
-	return []doctorCheck{running, pendingUpgrade(facts.ServerVersion, pending, err)}
+	checks := []doctorCheck{running, pendingUpgrade(facts.ServerVersion, pending, err)}
+	// Only on a host that accepts requests from the web app (ADR-0065).
+	if on, err := upgraderequest.Accepting(filepath.Dir(config)); err == nil && on {
+		checks = append(checks, webUpgradeUnits(webUnitFailures()))
+	}
+	return checks
+}
+
+// webUnitFailures are the web upgrade's units systemd failed for good; only
+// the tests replace it.
+var webUnitFailures = func() []string {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return webupgrade.Failed(ctx, webupgrade.SystemHost{})
+}
+
+// webUpgradeUnits is release.web-upgrade-units: none of the units
+// --enable-web installed has failed for good, as a helper that hit its
+// start limit has. Then no request from the web app is taken, and the
+// dashboard only says the host did not answer.
+func webUpgradeUnits(failed []string) doctorCheck {
+	c := doctorCheck{ID: "release.web-upgrade-units", Title: "the web upgrade's units on this host have not failed", Class: "advisory"}
+	if len(failed) == 0 {
+		c.Status, c.Detail = "pass", "the request's path unit, its service, the boot recovery and the release check's timer have not failed"
+		return c
+	}
+	c.Status = "fail"
+	c.Detail = strings.Join(failed, ", ") + " failed: no upgrade request from the web app is taken until they are reset"
+	c.Remedy = "Read why (journalctl -u " + webupgrade.ServiceUnit + "), put it right, then run sudo systemctl reset-failed " + strings.Join(failed, " ") + " and sudo systemctl start " + webupgrade.PathUnit
+	return c
 }
 
 // pendingUpgrade is release.pending-upgrade: no upgrade or rollback is left

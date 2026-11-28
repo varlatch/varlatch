@@ -800,6 +800,9 @@ jobs:
       # directory's owner, and the host's upgrade. In temporary directories,
       # nothing of the host's touched; the tests skip for anyone else. Go's
       # cache, which the builds they make fill, is this user's again after.
+      # TestUnitSandboxLetsVarlatchdDrop runs the web upgrade helper's unit
+      # sandbox on this runner's systemd (transient units, systemd-run), so
+      # it needs VARLATCH_TEST_DISPOSABLE_ROOT, as the systemd steps above.
       - name: The tests that need root
         if: runner.environment == 'github-hosted' && !vars.CI_RUNNER
         working-directory: go
@@ -809,11 +812,11 @@ jobs:
           set -o pipefail
           cache=$(go env GOCACHE) mod=$(go env GOMODCACHE)
           trap 'sudo chown -R "$(id -u):$(id -g)" "$cache" "$mod"' EXIT
-          names="$(grep -hoE '^func (TestAdminAsRoot|TestMigrate)[A-Za-z]*AsRoot?[A-Za-z]*|^func TestAdminAsRoot[A-Za-z]*' server/daemon/privileges_test.go | sed 's/^func //' | sort -u) TestUpgradeAsRootWorksAsTheOwner TestARollbackAsRootGivesTheServerItsDatabase TestUpgradeCommandOnAHost TestUpgradeBelowTheDatabasesSchema"
+          names="$(grep -hoE '^func (TestAdminAsRoot|TestMigrate)[A-Za-z]*AsRoot?[A-Za-z]*|^func TestAdminAsRoot[A-Za-z]*' server/daemon/privileges_test.go | sed 's/^func //' | sort -u) TestUpgradeAsRootWorksAsTheOwner TestARollbackAsRootGivesTheServerItsDatabase TestUpgradeCommandOnAHost TestUpgradeBelowTheDatabasesSchema TestUpgradeFromARequestOnAHost TestTakeChecksTheOwnerAsRoot TestUnitSandboxLetsVarlatchdDrop"
           status=0
           # shellcheck disable=SC2086 # one word per test
-          sudo env PATH="$PATH" HOME="$RUNNER_TEMP" GOCACHE="$cache" GOMODCACHE="$mod" GOFLAGS=-buildvcs=false CGO_ENABLED=0 \
-            go test -count=1 -v -run "^($(echo $names | tr ' ' '|'))\$" ./server/daemon ./cmd/varlatch/internal/upgrade ./cmd/varlatch/internal/cli > "$RUNNER_TEMP/root-tests.log" 2>&1 || status=$?
+          sudo env PATH="$PATH" HOME="$RUNNER_TEMP" GOCACHE="$cache" GOMODCACHE="$mod" GOFLAGS=-buildvcs=false CGO_ENABLED=0 VARLATCH_TEST_DISPOSABLE_ROOT=1 \
+            go test -count=1 -v -run "^($(echo $names | tr ' ' '|'))\$" ./server/daemon ./cmd/varlatch/internal/upgrade ./cmd/varlatch/internal/cli ./cmd/varlatch/internal/webupgrade > "$RUNNER_TEMP/root-tests.log" 2>&1 || status=$?
           cat "$RUNNER_TEMP/root-tests.log"
           [ "$status" -eq 0 ] || exit "$status"
           for name in $names; do
@@ -986,7 +989,9 @@ jobs:
     needs: changes
     if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    # A run with an evicted build cache takes about 40 minutes (37 measured
+    # on 2026-11-28); a warm one about 30.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 

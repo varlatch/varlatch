@@ -226,7 +226,10 @@ func setupCommand(r *Run) (bool, error) {
 	var usageErr *setup.UsageError
 	switch {
 	case err == nil:
-		return true, r.out("Setup is done: the installation runs, its first administrator has a passkey, the keys' custody is attested and the first backup is verified.\n")
+		if err := r.out("Setup is done: the installation runs, its first administrator has a passkey, the keys' custody is attested and the first backup is verified.\n"); err != nil {
+			return true, err
+		}
+		return true, r.setupWebUpgrade(o.Ask, varlatchd)
 	case errors.Is(err, setup.ErrPending):
 		return true, Fail("varlatch "+strings.TrimPrefix(err.Error(), "setup: "), ExitTempfail)
 	case errors.Is(err, setup.ErrDoctor):

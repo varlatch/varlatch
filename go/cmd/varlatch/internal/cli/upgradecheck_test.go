@@ -3,15 +3,20 @@
 package cli
 
 import (
+	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/selfupdate"
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/selfupdate/fakerelease"
+	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/upgrade"
 	"github.com/varlatch/varlatch/go/lib/release"
+	"github.com/varlatch/varlatch/go/lib/upgraderequest"
 )
 
 // `varlatch upgrade --check` records the verified target (ADR-0065
@@ -106,6 +111,37 @@ func TestUpgradeCheckRecordsTheVerifiedTarget(t *testing.T) {
 	code, out, errs = runUpgrade(t, MapEnv{"PATH": bin}, "--check", "--config", conf)
 	if code != ExitOK || !strings.Contains(out, "0.52.0 is available") || !strings.Contains(errs, "the verified release is not recorded for the dashboard") {
 		t.Fatalf("an older varlatchd: %d %q %q", code, out, errs)
+	}
+
+	// Run as root on a host that accepts web requests: the helper's
+	// heartbeat follows the record (ADR-0065 Decision 1). Without
+	// web-upgrade.conf, or not as root, none.
+	defer func(f func() bool) { asRoot = f }(asRoot)
+	var stderr bytes.Buffer
+	run := &Run{IO: IO{Stderr: &stderr}}
+	u := &upgrade.Upgrader{BinDir: bin, ConfigPath: conf}
+	beat := func() bool {
+		standIn(0)
+		if err := run.heartbeatAfterCheck(context.Background(), u); err != nil || stderr.Len() != 0 {
+			t.Fatalf("%v %q", err, stderr.String())
+		}
+		return slices.ContainsFunc(admin(), func(l string) bool {
+			return strings.HasPrefix(l, "admin upgrade-request heartbeat --helper-version ") && strings.HasSuffix(l, " --enabled true --config "+conf)
+		})
+	}
+	asRoot = func() bool { return true }
+	if beat() {
+		t.Fatal("a heartbeat without web-upgrade.conf")
+	}
+	if err := os.WriteFile(filepath.Join(dir, upgraderequest.ConfFile), upgraderequest.EncodeConf(true), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !beat() {
+		t.Fatalf("no heartbeat:\n%s", strings.Join(admin(), "\n"))
+	}
+	asRoot = func() bool { return false }
+	if beat() {
+		t.Fatal("a heartbeat not as root")
 	}
 
 	// Nothing newer: no target is looked at.

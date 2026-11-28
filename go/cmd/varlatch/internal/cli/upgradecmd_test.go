@@ -69,6 +69,11 @@ func TestUpgradeUsageAndPrivilege(t *testing.T) {
 		{[]string{"--rollback", "--check"}, "--rollback returns to the last upgrade's previous release"},
 		{[]string{"--rollback", "0.50.0"}, "--rollback returns to the last upgrade's previous release"},
 		{[]string{"--accept-data-loss"}, "--accept-data-loss goes with --rollback"},
+		{[]string{"--enable-web", "--disable-web"}, "each go alone, with --config only"},
+		{[]string{"--from-request", "0.52.0"}, "each go alone, with --config only"},
+		{[]string{"--from-request", "--accept-not-rollback-safe"}, "each go alone, with --config only"},
+		{[]string{"--recover", "--yes"}, "each go alone, with --config only"},
+		{[]string{"--enable-web", "--check"}, "each go alone, with --config only"},
 	} {
 		if code, _, errs := runUpgrade(t, nil, c.args...); code != ExitUsage || !strings.Contains(errs, c.want) {
 			t.Errorf("%v: %d %q", c.args, code, errs)
@@ -84,6 +89,11 @@ func TestUpgradeUsageAndPrivilege(t *testing.T) {
 	asRoot = func() bool { return false }
 	if code, _, errs := runUpgrade(t, nil, "--yes"); code != ExitDenied || !strings.Contains(errs, "needs root: run it as sudo varlatch upgrade") {
 		t.Fatalf("not root: %d %q", code, errs)
+	}
+	for _, form := range webForms {
+		if code, _, errs := runUpgrade(t, nil, form); code != ExitDenied || !strings.Contains(errs, "run it as sudo varlatch upgrade "+form) {
+			t.Fatalf("%s, not root: %d %q", form, code, errs)
+		}
 	}
 }
 
@@ -387,6 +397,13 @@ type cliHost struct {
 
 func newCLIHost(t *testing.T, varlatchd []byte) *cliHost {
 	t.Helper()
+	return newCLIHostServing(t, varlatchd, "0.50.0-rc.4")
+}
+
+// newCLIHostServing is newCLIHost for a varlatchd of another version, which
+// it waits for.
+func newCLIHostServing(t *testing.T, varlatchd []byte, version string) *cliHost {
+	t.Helper()
 	dir := t.TempDir()
 	h := &cliHost{bin: filepath.Join(dir, "usr", "local", "bin"), conf: filepath.Join(dir, "etc", "varlatch", "varlatchd.conf"), data: filepath.Join(dir, "data")}
 	for _, d := range []string{h.bin, filepath.Dir(h.conf), h.data, filepath.Join(dir, "keys")} {
@@ -448,7 +465,7 @@ func newCLIHost(t *testing.T, varlatchd []byte) *cliHost {
 	if err := h.svc.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	h.serves(t, "0.50.0-rc.4")
+	h.serves(t, version)
 	return h
 }
 

@@ -82,6 +82,8 @@ func run(varlatch, enroll, connect, publicURL, linkFile string) (string, int, er
 		{"Where do backups go?", "1"},
 		{"Continue on this disk anyway?", "y"},
 		{"Are both keys stored off this host", "y"},
+		// The web upgrade (ADR-0065): its default, no.
+		{"upgrade Varlatch to the next release from the web app?", ""},
 	}
 	var all, unanswered strings.Builder
 	enrolled := false

@@ -215,10 +215,12 @@ sudo rm -r /var/lib/varlatch/upgrades/<id>/original
 
 ## Newer releases in the dashboard
 
-The dashboard never upgrades Varlatch, and neither `varlatchd` nor the
-browser looks for releases. `sudo varlatch upgrade --check` on the host
+The dashboard never upgrades Varlatch itself, and neither `varlatchd` nor
+the browser looks for releases. `sudo varlatch upgrade --check` on the host
 does. It records what it found, and Installation Admins see it under
-**Installation settings**, then **Release**.
+**Installation settings**, then **Release**. On a host where you
+[allow it](#upgrading-from-the-web-app), the dashboard can ask the host to
+upgrade to the next release; the host decides and acts.
 
 When it finds a newer release, it also downloads that release's
 `SHA256SUMS`, its signature, `release.json` and `varlatchd-image.txt`, and
@@ -246,8 +248,10 @@ snapshot's archive, when it started and ended, and `source: host`.
 
 ## Scheduling the release check
 
-Nothing schedules the check for you yet. Run it once a day, as its own job,
-so that GitHub being unreachable fails nothing else.
+[`sudo varlatch upgrade --enable-web`](#upgrading-from-the-web-app)
+installs and enables the timer below for you. Without it, nothing schedules
+the check: run it once a day, as its own job, so that GitHub being
+unreachable fails nothing else.
 
 On a systemd host, a timer runs it daily at a random time in its first
 hour, and at the next boot when the host was off then. Create the two
@@ -269,6 +273,12 @@ NoNewPrivileges=yes
 PrivateTmp=yes
 ExecStart=/usr/local/bin/varlatch upgrade --check
 ```
+
+Keep `NoNewPrivileges=yes` out of this unit if you add settings that
+install a system call filter (`ProtectKernelModules=`, `ProtectClock=`,
+`RestrictRealtime=`, `LockPersonality=`, `SystemCallFilter=` and the
+like): on some hosts the two together keep `varlatchd admin` from becoming
+the data directory's owner, and the check records nothing.
 
 `/etc/systemd/system/varlatch-release-check.timer`
 
@@ -344,8 +354,166 @@ unknown, and each failure says what to do:
    `sudo varlatch upgrade <version>` for each, oldest first, keeps each step
    rollback-safe where each release declares it.
 
+7. **The host helper** is installed
+   ([`sudo varlatch upgrade --enable-web`](#upgrading-from-the-web-app)),
+   accepts requests, and its heartbeat comes from the last release check.
+   This line is only on systemd hosts.
+
 The checklist judges; it starts nothing. `varlatch upgrade` refuses for
 itself what it must, whatever the checklist says.
+
+## Upgrading from the web app
+
+On a systemd host you can let Installation Admins upgrade to the next
+release from the dashboard. The dashboard only asks; a helper on the host,
+which you install, checks everything again and runs the same upgrade as
+`sudo varlatch upgrade`. It is off until you turn it on:
+
+```sh
+sudo varlatch upgrade --enable-web    # allow it
+sudo varlatch upgrade --disable-web   # stop allowing it
+```
+
+`varlatch setup` asks the same question at its end, with no as the default.
+
+### What `--enable-web` installs
+
+- `/var/lib/varlatch-upgrade/taken`, a directory only root can read. It
+  must be on the same file system as the data directory
+  (`/var/lib/varlatch`), because taking a request is a rename; otherwise
+  `--enable-web` refuses.
+- In `/etc/systemd/system`, all run as root, each a oneshot with a private
+  `/tmp`, no access to home directories, no kernel module, kernel log,
+  tunable, clock or host name changes, and no core dump. They do not set
+  `NoNewPrivileges`: together with those kernel settings it kept
+  `varlatchd admin` from becoming the data directory's owner on some
+  hosts, and a unit that is root with every capability gains nothing from
+  it:
+  - `varlatch-upgrade.path` and `varlatch-upgrade.service`: when
+    `varlatchd` writes a request, the service runs
+    `varlatch upgrade --from-request`. Nothing listens, and nothing runs
+    between requests.
+  - `varlatch-upgrade-recover.service`: at boot, after `varlatchd`, it
+    runs `varlatch upgrade --recover`, which finishes or undoes an
+    interrupted upgrade, so the installation does not stay unavailable
+    until someone logs in.
+  - `varlatch-release-check.timer` and its service: the
+    [daily release check](#scheduling-the-release-check), run once right
+    away. Each run also records that the helper is there (its heartbeat),
+    which the [pre-flight](#the-pre-flight-checklist) checks.
+- `/etc/varlatch/web-upgrade.conf`, which says that requests are accepted,
+  and nothing else.
+
+`--enable-web` writes `web-upgrade.conf` last, once the units are enabled;
+if a step fails, it removes what it installed and says so, so the host never
+claims to accept requests that nothing takes. `--disable-web` removes
+`web-upgrade.conf` and the units. Both refuse while the helper is taking or
+running a request. `--disable-web` does not stop a boot recovery that is
+running: it finishes or undoes its upgrade first. The taken requests stay in
+`/var/lib/varlatch-upgrade/taken` as a record. Without the helper, the
+dashboard shows the commands to run, whatever an admin clicks.
+
+### When the helper cannot take a request
+
+The helper can fail before it takes a request: `varlatchd`'s configuration
+names no data directory it can use, the `upgrade-request` directory was
+replaced by a link, or `/var/lib/varlatch-upgrade/taken` is no longer
+root's alone. The request then stays where it is. The helper records the
+problem in its heartbeat, so the pre-flight's helper line says it and the
+**Upgrade** button goes away, and it tries again once a minute until
+`varlatchd` removes the request when it expires, 10 minutes after it was
+made. `sudo journalctl -u varlatch-upgrade.service` says what failed. Put
+it right, then clear the problem with a release check:
+
+```sh
+sudo systemctl start varlatch-release-check.service
+```
+
+If the helper fails again and again at once (its binary is missing, for
+example), systemd stops starting it once it hits the service's start limit
+(20 starts in 10 minutes), and no request is taken until you reset it.
+`sudo varlatch doctor` reports that as `release.web-upgrade-units`. Once
+you have put the cause right:
+
+```sh
+sudo systemctl reset-failed varlatch-upgrade.service varlatch-upgrade.path
+sudo systemctl start varlatch-upgrade.path
+```
+
+### What happens when an admin asks
+
+The **Upgrade** button appears only when every line of the
+[pre-flight checklist](#the-pre-flight-checklist) passes, and only for one
+step: the newest release, when it declares itself rollback-safe for the
+release you run. A host that is two releases behind gets the commands, one
+release at a time.
+
+1. The admin confirms, with the downtime shown, and approves with a
+   trusted passkey and its PIN, fingerprint or face. The approval is for
+   that exact request (this installation, from this release, to that one,
+   its id) and is used once, within 2 minutes. A passkey added from a
+   signed-in session and never confirmed cannot approve it.
+2. `varlatchd` writes the request (only a version, its id, who asked, and
+   when it expires, 10 minutes later) into its data directory. One request
+   is pending at a time; any Installation Admin can cancel it until the
+   host takes it.
+3. The helper takes it, by moving it into its own directory, and reads it
+   as untrusted input. It refuses, and says why, when the request expired,
+   the host does not accept requests, the version is a prerelease or not
+   newer, it is not the newest release (it asks GitHub again itself), the
+   release is not rollback-safe for this one, it would end a migration's
+   rollback window, the host already undid an upgrade to that version (or
+   rolled back from it), another upgrade or rollback is not over, the
+   installation is held after a restore, a maintenance gate is set, or no
+   backup destination is configured.
+4. It verifies the release as `sudo varlatch upgrade` does, from the
+   pinned repository and signing identity, and runs the same steps with no
+   override: no `--accept-not-rollback-safe`, `--end-rollback-window` or
+   `--prerelease`.
+5. Its snapshot is made with `admin backup run --json --verify-remote`:
+   uploaded to your backup destination and downloaded back and checked,
+   while Varlatch still serves. If that fails, the upgrade ends before
+   anything stops.
+6. Every signed-in dashboard is told that Varlatch restarts. It is
+   unavailable for about a minute; CLI commands, Brokers and syncs that run
+   then fail or wait, and webhooks and syncs catch up after.
+7. When the new release's health checks pass, it opens; when one fails, the
+   previous release serves again, and the dashboard says which check
+   failed.
+
+The admin's tab shows each step. The audit log records
+`installation.upgrade_requested`, `installation.upgrade_cancelled` (by an
+admin, or when the request expired), `installation.upgrade_cancel_too_late`,
+`installation.upgrade_refused` (with the reason's class),
+`installation.upgraded` (with the request's id and `source: web`) and
+`installation.upgrade_undone`.
+
+A version the host undid is not offered again from the web: run
+`sudo varlatch upgrade` after reading why (`sudo cat
+/etc/varlatch/upgrade.json`), which also clears it. A newer release is
+offered again as usual. Going back (`--rollback`) is not offered from the
+web.
+
+### Trust model
+
+The web app never upgrades anything, and `varlatchd` gains no privilege:
+it can only write a request that names a version, in its own data
+directory. The helper decides everything else itself: which release is the
+newest, from the pinned repository; whether it is signed by the release
+workflow; whether it is one rollback-safe step; whether a backup reached
+your destination and checks out. What `varlatchd` recorded (the release
+check, the request's status, the helper's heartbeat) is display only: a
+forged file can make the button appear, never make an upgrade happen.
+
+The helper cannot check the admin's passkey itself: the passkeys are in the
+database `varlatchd` controls. So a compromised `varlatchd` can file a
+request no admin made. What it gets is bounded: an upgrade to the newest
+genuine, signed release, one step from the installed one and rollback-safe
+for it, with a backup first and the undo armed. A compromised browser
+session gets less: every request needs a fresh passkey approval for it.
+The actor recorded with a request is as trustworthy as `varlatchd`; the
+releases, the outcome and the snapshot in `installation.upgraded` and
+`installation.upgrade_undone` come from root's journal.
 
 ## The CLI on other machines
 

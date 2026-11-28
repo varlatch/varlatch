@@ -45,6 +45,30 @@ fixes.
   --json` is unchanged: `identity.email` still holds what the server sent,
   and a script tells a placeholder by its `.invalid` ending.
 
+- **A host helper for upgrades asked for in the web app (ADR-0065, phase
+  2; systemd hosts only, off unless you turn it on).** `sudo varlatch
+  upgrade --enable-web` installs root oneshot units: `varlatch-upgrade.path`
+  and `.service`, which run `varlatch upgrade --from-request` when
+  `varlatchd` writes a request; `varlatch-upgrade-recover.service`, which
+  finishes or undoes an interrupted upgrade at boot (`varlatch upgrade
+  --recover`); and the daily release check's timer, which also records the
+  helper's heartbeat. It writes `/etc/varlatch/web-upgrade.conf` and makes
+  the root-only `/var/lib/varlatch-upgrade/taken`, and refuses when that is
+  not on the data directory's file system. `--disable-web` removes them.
+  The helper takes a request by renaming it into that directory, reads it
+  as untrusted input, finds and verifies the newest release itself, refuses
+  what `sudo varlatch upgrade <version> --yes` would not do without an
+  override (and a version the host undid, or when no backup destination is
+  configured), and runs the same engine with its snapshot uploaded and
+  checked off the host before anything stops (`admin backup run --json
+  --verify-remote`). It records each step for the dashboard through the
+  new `varlatchd admin upgrade-request record`. A run that cannot take a
+  request leaves it in place, records the problem in the helper's
+  heartbeat and tries again a minute later; `varlatch doctor` reports a
+  unit systemd failed (`release.web-upgrade-units`). `varlatch setup` asks
+  whether to turn it on, default no.
+  [Upgrading from the web app](docs/operations/upgrade.md#upgrading-from-the-web-app)
+
 - **`varlatch upgrade --check` verifies the newer release it finds.** It
   downloads that release's `SHA256SUMS`, its signature, `release.json` and
   `varlatchd-image.txt`, verifies them as an upgrade would, and records
