@@ -205,6 +205,16 @@ type Upgrader struct {
 	// HealthTimeout bounds the wait for a started varlatchd's checks;
 	// zero is a minute.
 	HealthTimeout time.Duration
+	// VerifyRemote takes the pre-upgrade snapshot with `admin backup run
+	// --json --verify-remote`: refused without a backup destination, and
+	// failed unless the delivered copy, downloaded back, checks out. An
+	// upgrade the web app asked for sets it (ADR-0065 Decision 5); one
+	// from a terminal keeps the archive without a destination.
+	VerifyRemote bool
+	// OnStep, when set, is told each step a run records, once it is
+	// recorded, before the run goes on: the host helper's progress for the
+	// web app. It runs before the stop when told Snapshot.
+	OnStep func(j *journal.Journal, s journal.Step)
 	// ChildProgram is the program that runs the data directory's work as
 	// its owner; "" is this one.
 	ChildProgram string
@@ -448,6 +458,9 @@ func (u *Upgrader) reach(j *journal.Journal, s journal.Step) error {
 	if err := u.write(j); err != nil {
 		j.Step, j.Start = was, start
 		return err
+	}
+	if u.OnStep != nil {
+		u.OnStep(j, s)
 	}
 	return u.point(string(s))
 }
@@ -860,7 +873,11 @@ func (u *Upgrader) snapshot(ctx context.Context, j *journal.Journal) error {
 	if _, err := u.data(ctx, dataOp{Op: "begin", DataDir: j.DataDir, ID: j.ID}); err != nil {
 		return err
 	}
-	out, err := u.admin(ctx, u.varlatchd(), "admin", "backup", "run", "--json")
+	args := []string{"admin", "backup", "run", "--json"}
+	if u.VerifyRemote {
+		args = append(args, "--verify-remote")
+	}
+	out, err := u.admin(ctx, u.varlatchd(), args...)
 	if err != nil {
 		return err
 	}

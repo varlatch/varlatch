@@ -69,7 +69,7 @@ func admin(args []string, stdout, stderr io.Writer) int {
 	keys := sub == "kek" || sub == "custody"
 	move := isMoveCommand(sub) || sub == "config"
 	hold := sub == "restore"
-	if sub != "bootstrap" && sub != "recover" && sub != "outbound" && sub != "audit-export" && sub != "tailnet" && sub != "doctor" && sub != "bootstrap-status" && sub != "schema" && sub != "migrate" && sub != "certificate" && sub != "status" && sub != "release-check" && sub != "changes" && !conformance && !operator && !backup && !keys && !move && !hold {
+	if sub != "bootstrap" && sub != "recover" && sub != "outbound" && sub != "audit-export" && sub != "tailnet" && sub != "doctor" && sub != "bootstrap-status" && sub != "schema" && sub != "migrate" && sub != "certificate" && sub != "status" && sub != "release-check" && sub != "upgrade-request" && sub != "changes" && !conformance && !operator && !backup && !keys && !move && !hold {
 		return adminUsage(stderr, "unknown command "+sub)
 	}
 	// The one probe that needs no installation: nothing stands in front
@@ -149,6 +149,11 @@ func admin(args []string, stdout, stderr io.Writer) int {
 		}
 	case sub == "release-check":
 		if _, msg := releaseCheckArgs(rest); msg != "" {
+			fmt.Fprintln(stderr, msg)
+			return 64
+		}
+	case sub == "upgrade-request":
+		if _, msg := upgradeRequestArgs(rest); msg != "" {
 			fmt.Fprintln(stderr, msg)
 			return 64
 		}
@@ -273,6 +278,8 @@ func admin(args []string, stdout, stderr io.Writer) int {
 		return statusOnline(cfg, rest, stdout, stderr)
 	case sub == "release-check":
 		return runReleaseCheck(cfg, rest, stdout, stderr)
+	case sub == "upgrade-request":
+		return runUpgradeRequest(cfg, rest, stdout, stderr)
 	case sub == "changes":
 		return runChanges(cfg, rest, stdout, stderr)
 	}
@@ -291,7 +298,7 @@ func adminUsage(stderr io.Writer, msg string) int {
 		"varlatchd admin audit-export discard-plan --export <id> --reason <expired|unsupported-format> | varlatchd admin tailnet repin [--yes [--adopt] [--offer <token>]] [--json] | "+
 		"varlatchd admin schema status|upgrade [--json] [--database <file>] | varlatchd admin doctor [--json] | varlatchd admin certificate issuances [--all] [--json]|record --attempts <json> | "+
 		"varlatchd admin migrate import|check|export --reverse|keys|state|discard|open|barrier|release | "+
-		"varlatchd admin status [--json] | varlatchd admin changes --since <time> [--json] | varlatchd admin release-check record --repo <owner/name> (--version <version> [--published-at <time>] | --failed <reason>) | varlatchd admin release-check record-target --version <version> ... | "+
+		"varlatchd admin status [--json] | varlatchd admin changes --since <time> [--json] | varlatchd admin release-check record --repo <owner/name> (--version <version> [--published-at <time>] | --failed <reason>) | varlatchd admin release-check record-target --version <version> ... | varlatchd admin upgrade-request record|heartbeat ... | "+
 		"varlatchd admin reenroll (--all | --identity <id>...) [--hours <1-168>] [--json] | varlatchd admin public-url-changed --from <url> | "+
 		"varlatchd admin move-facts | varlatchd admin config check  (each with [--config <file>])\n", msg)
 	return 64

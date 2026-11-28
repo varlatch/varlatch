@@ -31,6 +31,7 @@ const upgradeUsage = `Usage:
   varlatch upgrade [<version>] [--prerelease] [--accept-not-rollback-safe] [--end-rollback-window] [--yes] [--config <file>]
   varlatch upgrade --check [--prerelease] [--json] [--config <file>]
   varlatch upgrade --rollback [--yes] [--accept-data-loss] [--config <file>]
+  varlatch upgrade --enable-web | --disable-web | --from-request | --recover [--config <file>]
                (a Go installation's upgrade, on its host, as root: downloads the release's varlatch, varlatchd and
                 release.json, checks that SHA256SUMS is signed by the release workflow of varlatch/varlatch for that
                 version, takes an encrypted snapshot kept 30 days, updates a copy of the database, swaps the binaries
@@ -41,7 +42,11 @@ const upgradeUsage = `Usage:
                 --check looks for a newer release and records what it found for the dashboard's notice. --rollback
                 returns to the release the last upgrade came from: keeping every change when that release opens the
                 database as it is, else restoring the pre-upgrade snapshot, after listing what is lost
-                (--accept-data-loss, for scripts). A Compose installation's upgrade is varlatch-ts upgrade)`
+                (--accept-data-loss, for scripts). --enable-web installs the units that let Installation Admins ask
+                for a one-click upgrade to the next release in the web app, which this host verifies, backs up off
+                the host and runs as varlatch upgrade does (--disable-web removes them); --from-request is what they
+                run, and --recover, at boot, finishes or undoes an interrupted upgrade and nothing else. A Compose
+                installation's upgrade is varlatch-ts upgrade)`
 
 // UpgradeHelp is upgradeUsage, for the transcripts' accepted difference.
 const UpgradeHelp = upgradeUsage
@@ -78,7 +83,7 @@ func upgradeCommand(r *Run) (bool, error) {
 func (r *Run) upgrade() error {
 	parsed, err := strictOptions("upgrade", r.Args, OptionSpec{
 		Values:      []string{"--config", "--repo"},
-		Booleans:    []string{"--check", "--json", "--yes", "--prerelease", "--accept-not-rollback-safe", "--end-rollback-window", "--rollback", "--accept-data-loss"},
+		Booleans:    []string{"--check", "--json", "--yes", "--prerelease", "--accept-not-rollback-safe", "--end-rollback-window", "--rollback", "--accept-data-loss", "--enable-web", "--disable-web", "--from-request", "--recover"},
 		Positionals: 1,
 	}, upgradeUsage)
 	if err != nil {
@@ -90,6 +95,10 @@ func (r *Run) upgrade() error {
 	}
 	if repo != "" && repo != release.Repository {
 		return UsageErrorWithUsage("varlatch upgrade: releases come from "+release.Repository+" only (the signature check pins its release workflow), not "+shownArgument(repo), "\n"+upgradeUsage)
+	}
+	web, alone := webForm(parsed)
+	if !alone {
+		return UsageErrorWithUsage("varlatch upgrade: --enable-web, --disable-web, --from-request and --recover each go alone, with --config only", "\n"+upgradeUsage)
 	}
 	check := parsed.Has("--check")
 	rollback := parsed.Has("--rollback")
@@ -117,6 +126,9 @@ func (r *Run) upgrade() error {
 		return Fail("varlatch upgrade: a Go installation's server runs on Linux; run this on its host", ExitUsage)
 	}
 	if !check && !asRoot() {
+		if web != "" {
+			return Fail("varlatch upgrade "+web+": this changes the host's units and upgrades: run it as sudo varlatch upgrade "+web+". Nothing was changed.", ExitDenied)
+		}
 		return Fail("varlatch upgrade: replacing varlatchd and its database needs root: run it as sudo varlatch upgrade. Nothing was changed.", ExitDenied)
 	}
 	varlatchd, err := r.locateVarlatchd("varlatch upgrade")
@@ -137,6 +149,9 @@ func (r *Run) upgrade() error {
 	}
 	if check {
 		return r.upgradeCheck(ctx, u, version, parsed.Has("--prerelease"), parsed.Has("--json"))
+	}
+	if web != "" {
+		return r.upgradeWeb(ctx, web, u, varlatchd, config)
 	}
 
 	// Held after a restore while an upgrade is pending: undoing it would put
@@ -340,6 +355,8 @@ func (r *Run) upgradeCheck(ctx context.Context, u *upgrade.Upgrader, version str
 			if werr := r.warn("varlatch upgrade --check: not recorded for the dashboard: " + rerr.Error()); werr != nil {
 				return werr
 			}
+		} else if werr := r.heartbeatAfterCheck(ctx, u); werr != nil {
+			return werr
 		}
 		if err == nil && plan.UpdateAvailable {
 			if werr := r.recordReleaseTarget(ctx, u, src, plan.Latest); werr != nil {
