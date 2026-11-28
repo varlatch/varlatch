@@ -230,6 +230,8 @@ test("expect/go-binary.json lacks every operation but the ones the Go server has
     "startOAuthAuthorization", "completeOAuthAuthorization", "refreshOAuthConnection", "disconnectOAuthConnection",
     // ADR-0063: entry links, which only the Go server has.
     "listEntryLinks", "createEntryLink", "getEntryLink", "cancelEntryLink", "lookupEntryLink", "submitEntryLink",
+    // ADR-0065 phase 2: upgrades asked for in the web app, which only the Go server has.
+    "getInstallationUpgradeRequest", "requestInstallationUpgrade", "cancelInstallationUpgradeRequest",
   ];
   for (const id of openapi.keys()) assert.equal(lacks.has(id), !built.includes(id), id);
   // No named operation is lacking: serving the CLI is built (step 6.8; the
