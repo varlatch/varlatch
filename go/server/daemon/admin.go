@@ -291,7 +291,7 @@ func adminUsage(stderr io.Writer, msg string) int {
 		"varlatchd admin audit-export discard-plan --export <id> --reason <expired|unsupported-format> | varlatchd admin tailnet repin [--yes [--adopt] [--offer <token>]] [--json] | "+
 		"varlatchd admin schema status|upgrade [--json] [--database <file>] | varlatchd admin doctor [--json] | varlatchd admin certificate issuances [--all] [--json]|record --attempts <json> | "+
 		"varlatchd admin migrate import|check|export --reverse|keys|state|discard|open|barrier|release | "+
-		"varlatchd admin status [--json] | varlatchd admin changes --since <time> [--json] | varlatchd admin release-check record --repo <owner/name> (--version <version> [--published-at <time>] | --failed <reason>) | "+
+		"varlatchd admin status [--json] | varlatchd admin changes --since <time> [--json] | varlatchd admin release-check record --repo <owner/name> (--version <version> [--published-at <time>] | --failed <reason>)|record-target --version <version> ... | "+
 		"varlatchd admin reenroll (--all | --identity <id>...) [--hours <1-168>] [--json] | varlatchd admin public-url-changed --from <url> | "+
 		"varlatchd admin move-facts | varlatchd admin config check  (each with [--config <file>])\n", msg)
 	return 64

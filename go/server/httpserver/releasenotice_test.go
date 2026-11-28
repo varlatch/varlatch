@@ -3,13 +3,16 @@
 package httpserver
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/varlatch/varlatch/go/lib/release"
+	"github.com/varlatch/varlatch/go/server/upgradecheck"
 )
 
 // GET /v1/installation/release reads the host's release check
@@ -66,5 +69,63 @@ func TestInstallationReleaseReadsTheReleaseCheck(t *testing.T) {
 	}
 	if doc := get(); doc["unreadable"] != true || doc["latest"] != nil || doc["newer"] != nil {
 		t.Fatalf("an unreadable record: %v", doc)
+	}
+}
+
+// With the host's facts (ADR-0065 phase 1), the release also says how
+// varlatchd runs, the verified target of the newer release, whether it is
+// rollback-safe for this one, and the pre-flight; without them (the
+// TypeScript fixtures' replay) it answers exactly as before.
+func TestInstallationReleasePreflight(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now().UTC()
+	host := upgradecheck.Host{Deployment: upgradecheck.Image, Schema: 7}
+	s, _, _, _, ta := newTestServerAuth(t, func(o *Options) {
+		o.ReleaseCheckDir, o.Version = dir, "0.51.0"
+		o.UpgradeHost = func(context.Context) upgradecheck.Host { return host }
+	})
+	get := func() map[string]any {
+		t.Helper()
+		w := do(s, "GET", "/v1/installation/release", "", map[string]string{"Authorization": "Bearer " + ta.tokens["valid"]})
+		var doc map[string]any
+		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &doc) != nil {
+			t.Fatalf("%d %s", w.Code, w.Body.String())
+		}
+		return doc
+	}
+	if doc := get(); doc["deployment"] != "image" || doc["schemaVersion"] != float64(7) || doc["target"] != nil || doc["rollbackSafe"] != nil || doc["preflight"] != nil {
+		t.Fatalf("nothing checked: %v", doc)
+	}
+	if _, err := release.RecordReleaseCheck(dir, release.CheckOutcome{Repo: "varlatch/varlatch", Latest: &release.Latest{Version: "0.52.0"}, ReleaseSet: true}, now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	image := "ghcr.io/varlatch/varlatchd:0.52.0@sha256:" + strings.Repeat("0123456789abcdef", 4)
+	if _, err := release.RecordReleaseTarget(dir, release.Target{Version: "0.52.0", Verified: &release.VerifiedTarget{SchemaVersion: 8, CompatibleFrom: 7, RollbackSafe: true,
+		Previous: &release.Previous{Version: "0.51.1", SchemaVersion: 7}, Image: image}}, now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	doc := get()
+	target, _ := doc["target"].(map[string]any)
+	verified, _ := target["verified"].(map[string]any)
+	lines, _ := doc["preflight"].([]any)
+	if target["version"] != "0.52.0" || verified["image"] != image || doc["rollbackSafe"] != false || len(lines) != 6 {
+		t.Fatalf("a jump, verified: %v", doc)
+	}
+	var safety map[string]any
+	for _, l := range lines {
+		if m := l.(map[string]any); m["id"] == "rollback-safe" {
+			safety = m
+		}
+	}
+	if safety["status"] != "fail" || safety["detail"] != "0.52.0 was checked against 0.51.1, not 0.51.0: upgrade one release at a time." {
+		t.Errorf("the rollback-safe line: %v", safety)
+	}
+
+	plain, _, _, _, tp := newTestServerAuth(t, func(o *Options) { o.ReleaseCheckDir, o.Version = dir, "0.51.0" })
+	w := do(plain, "GET", "/v1/installation/release", "", map[string]string{"Authorization": "Bearer " + tp.tokens["valid"]})
+	var bare map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &bare)
+	if _, has := bare["preflight"]; has || len(bare) != 5 {
+		t.Errorf("without the host: %v", bare)
 	}
 }

@@ -201,8 +201,129 @@ browser looks for releases. `sudo varlatch upgrade --check` on the host
 does. It records what it found, and Installation Admins see it under
 **Installation settings**, then **Release**.
 
-Run it on a schedule, as its own job, so that GitHub being unreachable
-fails nothing else. `--json` prints the result for a script.
+When it finds a newer release, it also downloads that release's
+`SHA256SUMS`, its signature, `release.json` and `varlatchd-image.txt`, and
+verifies them as an upgrade would: signed by the release workflow for that
+version's tag, each file matching. It records what they declare (the schema,
+whether the release is rollback-safe and against which release that was
+checked, its image by digest) in `release-target.json` beside the check's
+record, or why they could not be verified, which it also says on standard
+error. A check that finds no newer release downloads nothing more. `--json`
+prints the result for a script.
+
+The Release tab shows how `varlatchd` runs (the systemd unit, or the
+container image), the [pre-flight checklist](#the-pre-flight-checklist),
+and the exact commands for this installation: on a systemd host
+`sudo varlatch upgrade <version>`; for the image, the verified digest, the
+`admin schema status` check and the redeploy steps for Coolify and for
+Docker. What the check recorded is for display only: the upgrade verifies
+the release again from scratch.
+
+Every upgrade `varlatch upgrade` makes is recorded in the installation's
+audit log as `installation.upgraded`, once, by the release it upgraded to:
+from, to, the upgrade's id in `/etc/varlatch/upgrade.json`, the new
+binaries' SHA-256 as the signed `SHA256SUMS` gave them, the pre-upgrade
+snapshot's archive, when it started and ended, and `source: host`.
+
+## Scheduling the release check
+
+Nothing schedules the check for you yet. Run it once a day, as its own job,
+so that GitHub being unreachable fails nothing else.
+
+On a systemd host, a timer runs it daily at a random time in its first
+hour, and at the next boot when the host was off then. Create the two
+units:
+
+`/etc/systemd/system/varlatch-release-check.service`
+
+```ini
+[Unit]
+Description=Varlatch release check (varlatch upgrade --check)
+Documentation=https://docs.varlatch.com/operations/upgrade/
+Wants=network-online.target
+After=network-online.target varlatchd.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/varlatch upgrade --check
+```
+
+`/etc/systemd/system/varlatch-release-check.timer`
+
+```ini
+[Unit]
+Description=Daily Varlatch release check
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+Then enable the timer, and run the check once now:
+
+```sh
+sudo systemctl daemon-reload
+sudo systemctl enable --now varlatch-release-check.timer
+sudo systemctl start varlatch-release-check.service
+```
+
+`systemctl list-timers varlatch-release-check.timer` shows the next run, and
+`journalctl -u varlatch-release-check.service` what the last one said.
+
+Or with cron, as the file `/etc/cron.d/varlatch-release-check` (standard
+output is dropped; a warning on standard error is mailed or logged, as cron
+does):
+
+```text
+17 4 * * * root /usr/local/bin/varlatch upgrade --check > /dev/null
+```
+
+For the container image, schedule the same check on the Docker host, in the
+running container, with the same cron file (or a Coolify scheduled task
+that runs `varlatch upgrade --check` in it):
+
+```text
+17 4 * * * root docker exec <container> varlatch upgrade --check > /dev/null
+```
+
+## The pre-flight checklist
+
+When a newer release is known, the Release tab checks, line by line, what
+stands between this installation and it. Each line passes, fails or is
+unknown, and each failure says what to do:
+
+1. **The release check** ran in the last 36 hours (a daily schedule and its
+   slack) and verified the release. A check that never ran, or last ran
+   longer ago, fails: [schedule it](#scheduling-the-release-check). So does
+   a last check that failed, or one that recorded no verification (a
+   `varlatch` before this release ran it). A release whose signature or
+   checksums do not verify fails with that: do not install it, and
+   [verify it by hand](verify-release.md).
+2. **A backup destination** is configured (`backup_destination`), and the
+   last backup was delivered there in the last 24 hours
+   ([S3-compatible destinations](backup.md#s3-compatible-destinations)).
+3. **Both keys** have a Custody Attestation
+   (`varlatchd admin custody attest`).
+4. **Free space** in the data directory for the snapshot and the database
+   copy: about twice the database, plus 64 MiB.
+5. **Nothing in the way:** no upgrade or rollback that is not over, no
+   restore hold, no maintenance, and no open migration rollback window that
+   the release would end.
+6. **Rollback-safe for this release:** the release declares itself
+   rollback-safe, checked against exactly the release this installation
+   runs, and this release opens the upgraded database. A release declares
+   that only for the one before it, so an installation that is more than one
+   release behind fails this line ("0.52.0 was checked against 0.51.1, not
+   0.51.0: upgrade one release at a time"). Going one release at a time,
+   `sudo varlatch upgrade <version>` for each, oldest first, keeps each step
+   rollback-safe where each release declares it.
+
+The checklist judges; it starts nothing. `varlatch upgrade` refuses for
+itself what it must, whatever the checklist says.
 
 ## The CLI on other machines
 

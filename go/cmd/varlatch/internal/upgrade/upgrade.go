@@ -160,14 +160,14 @@ type Installed struct {
 // exactly that release (its previous). A release checked against another
 // one (an upgrade that skips releases) declares nothing about this one.
 func DeclaredRollbackSafe(m release.Manifest, installed Installed) bool {
-	return m.RollbackSafe && m.Previous != nil && m.Previous.Version == installed.Version
+	return m.Declaration.DeclaredFor(installed.Version)
 }
 
 // RollbackSafe is whether going back to the installed release would keep
 // the database: the release declares itself rollback-safe for it, and its
 // manifest lets the installed schema version open the upgraded database.
 func RollbackSafe(m release.Manifest, installed Installed) bool {
-	return DeclaredRollbackSafe(m, installed) && m.CompatibleFrom <= installed.Schema
+	return m.Declaration.SafeFor(installed.Version, installed.Schema)
 }
 
 // SchemaRefusal refuses a release whose schema is below the database's:

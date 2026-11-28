@@ -7,6 +7,33 @@ fixes.
 
 ## Unreleased
 
+### Dashboard
+
+- **The Release tab checks an upgrade before you run it (ADR-0065, phase
+  1; the Go server only).** When a newer release is known, the tab shows
+  whether it is rollback-safe for the release this installation runs, a
+  pre-flight checklist (the host's release check ran in the last 36 hours
+  and verified the release; a backup destination with a delivery in the
+  last 24 hours; a Custody Attestation for both keys; free space for the
+  snapshot and the database copy; no upgrade, rollback, restore hold,
+  maintenance or open rollback window in the way; the release declared
+  rollback-safe for exactly this one), each failure with what to do, and the
+  exact commands for this installation: `sudo varlatch upgrade <version>`
+  on a systemd host, one release at a time for a jump that skips releases;
+  the verified digest, the schema check and the redeploy steps for Coolify
+  and Docker. The server says how `varlatchd` runs, so the "as a service /
+  in a container" choice is gone from the tab. The dashboard still upgrades
+  nothing: there is no upgrade button.
+  [The pre-flight checklist](docs/operations/upgrade.md#the-pre-flight-checklist)
+
+### API
+
+- **`GET /v1/installation/release` answers more (the Go server only).**
+  New members, absent from a server that does not send them: `deployment`
+  (`systemd` or `image`), `schemaVersion`, `target` (what the host verified
+  of the newer release, or why it could not), `rollbackSafe` and
+  `preflight` (the checklist's lines). Existing members are unchanged.
+
 ### CLI
 
 - **`varlatch whoami` no longer shows a placeholder as your email.** An
@@ -17,6 +44,26 @@ fixes.
   line out for such an address, as the dashboard already did. `whoami
   --json` is unchanged: `identity.email` still holds what the server sent,
   and a script tells a placeholder by its `.invalid` ending.
+
+- **`varlatch upgrade --check` verifies the newer release it finds.** It
+  downloads that release's `SHA256SUMS`, its signature, `release.json` and
+  `varlatchd-image.txt`, verifies them as an upgrade would, and records
+  what they declare (or why they did not verify, which it also says on
+  standard error) through the new `varlatchd admin release-check
+  record-target`, in `release-target.json` beside the check's record. The
+  check's own answer and exit status are unchanged. Nothing schedules the
+  check yet:
+  [Scheduling the release check](docs/operations/upgrade.md#scheduling-the-release-check)
+  gives a systemd timer and a cron line.
+
+### Server
+
+- **A new audit event, `installation.upgraded`.** The release an upgrade
+  went to records it once per upgrade, from root's upgrade journal
+  (`/etc/varlatch/upgrade.json`), when it serves: from, to, the journal's
+  id, the new binaries' SHA-256, the pre-upgrade snapshot's archive, the
+  start and end times, and `source: host`. It has no actor and no
+  Organization; Installation Admins see it in the installation's audit log.
 
 ## 0.51.0 (2026-11-27)
 

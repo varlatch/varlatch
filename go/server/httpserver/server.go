@@ -50,6 +50,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/pgtime"
 	"github.com/varlatch/varlatch/go/server/realtime"
 	"github.com/varlatch/varlatch/go/server/servecli"
+	"github.com/varlatch/varlatch/go/server/upgradecheck"
 	"github.com/varlatch/varlatch/go/server/values"
 	"github.com/varlatch/varlatch/go/server/write"
 )
@@ -92,6 +93,13 @@ type Options struct {
 	// ADR-0049), which `varlatch upgrade --check` records and
 	// getInstallationRelease reads; "" when there is none to read.
 	ReleaseCheckDir string
+	// UpgradeHost, when set, is what varlatchd knows of its host for the
+	// Release tab's pre-flight (ADR-0065, server/upgradecheck), read at
+	// each request: getInstallationRelease then answers the deployment
+	// kind, the verified target, its rollback-safety and the checklist too.
+	// Unset (a server without a host, the TypeScript fixtures' replay), it
+	// answers as before.
+	UpgradeHost func(ctx context.Context) upgradecheck.Host
 	// PublicURL is the configured public URL; nil when not set.
 	PublicURL *url.URL
 	// Sync is the outbound sync installation switch; SyncAdapters narrows

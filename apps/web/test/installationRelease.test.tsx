@@ -26,7 +26,7 @@ vi.hoisted(() => {
 });
 vi.mock("../src/lib/session", () => ({ useSession: () => ({ api: fake.api }) }));
 
-import { checkLines, lastFailure, releaseSummary, upgradeLines } from "../src/features/installation/releaseStatus";
+import { checkLines, imageByDigest, lastFailure, releaseSummary, rollbackSentence, upgradeGuide } from "../src/features/installation/releaseStatus";
 import { ReleaseReport } from "../src/features/installation/ReleaseTab";
 import { useInstallationRelease } from "../src/features/installation/releaseNotice";
 import { InstallationPage } from "../src/features/installation/InstallationPage";
@@ -54,6 +54,29 @@ const release = (over: { newer?: boolean | null; checked?: number; repo?: string
   };
 };
 const none: InstallationRelease = { running: "0.18.1", newer: null, latest: null, lastAttempt: null, unreadable: false };
+
+const DIGEST = `sha256:${"0123456789abcdef".repeat(4)}`;
+const IMAGE = `ghcr.io/varlatch/varlatchd:0.19.0@${DIGEST}`;
+type Line = NonNullable<InstallationRelease["preflight"]>[number];
+const pass = (id: Line["id"]): Line => ({ id, status: "pass", title: `${id} title`, detail: `${id} passes.`, remedy: null });
+
+/** What the Go server answers with its host's facts (ADR-0065 phase 1): verified, against `previous`. */
+const preflighted = (over: { deployment?: "systemd" | "image"; previous?: string; lines?: Line[] } = {}): InstallationRelease => {
+  const previous = over.previous ?? "0.18.1";
+  return {
+    ...release(),
+    deployment: over.deployment ?? "systemd",
+    schemaVersion: 7,
+    target: {
+      version: "0.19.0",
+      checkedAt: ago(3600_000),
+      failed: null,
+      verified: { schemaVersion: 8, compatibleFrom: 7, rollbackSafe: true, previous: { version: previous, schemaVersion: 7 }, endsRollbackWindow: false, image: IMAGE },
+    },
+    rollbackSafe: previous === "0.18.1",
+    preflight: over.lines ?? (["release-check", "backup", "custody", "disk", "in-the-way", "rollback-safe"] as const).map(pass),
+  };
+};
 
 describe("releaseSummary", () => {
   it("says not checked, or unreadable, without a successful check", () => {
@@ -84,11 +107,41 @@ describe("releaseSummary", () => {
 });
 
 describe("the commands to copy", () => {
-  it("upgrades a service with varlatch upgrade, and an image by deploying the release's", () => {
-    expect(upgradeLines("host")).toEqual(["sudo varlatch upgrade"]);
-    expect(upgradeLines("container")).toBeNull();
+  it("checks on the host, or in the container", () => {
     expect(checkLines("host")).toEqual(["sudo varlatch upgrade --check"]);
     expect(checkLines("container")).toEqual(["docker exec <container> varlatch upgrade --check"]);
+  });
+
+  it("upgrades a service to the named release, one step at a time for a jump", () => {
+    const step = upgradeGuide(preflighted(), "host")!;
+    expect(step.oneAtATime).toBeNull();
+    expect(step.sections.flatMap((s) => s.steps.flatMap((x) => x.lines ?? []))).toEqual(["sudo varlatch upgrade 0.19.0"]);
+    const jump = upgradeGuide(preflighted({ previous: "0.18.2" }), "host")!;
+    expect(jump.oneAtATime).toMatch(/one release at a time \(sudo varlatch upgrade <version> for each release after 0\.18\.1, oldest first\)/);
+    expect(jump.sections[0]!.steps.map((x) => x.lines)).toEqual([["sudo varlatch upgrade <version>"], ["sudo varlatch upgrade 0.19.0"]]);
+    expect(upgradeGuide(none, "host")).toBeNull();
+  });
+
+  it("upgrades an image by the verified digest, on Coolify and with Docker", () => {
+    expect(imageByDigest(IMAGE)).toBe(`ghcr.io/varlatch/varlatchd@${DIGEST}`);
+    const guide = upgradeGuide(preflighted({ deployment: "image" }), "container")!;
+    const lines = (title: string) => guide.sections.find((s) => s.title === title)!.steps.flatMap((x) => x.lines ?? []);
+    expect(lines("Coolify")).toContain(`VARLATCH_VARLATCHD_DIGEST=${DIGEST}`);
+    expect(lines("Coolify")).toContain("docker exec <container> varlatchd admin backup run");
+    expect(lines("Coolify").join("\n")).toContain(`ghcr.io/varlatch/varlatchd@${DIGEST} admin schema status`);
+    expect(lines("Docker Compose or docker run")).toContain(`VARLATCH_VARLATCHD_DIGEST=${DIGEST} docker compose up -d`);
+    // Without a verified target, the digest is the release notes'.
+    expect(upgradeGuide(release(), "container")!.sections[0]!.steps.flatMap((x) => x.lines ?? [])).toContain(
+      "VARLATCH_VARLATCHD_DIGEST=sha256:<the digest its release notes name>",
+    );
+  });
+
+  it("says whether going back needs a restore", () => {
+    expect(rollbackSentence(preflighted())).toEqual({ tone: "ok", text: "Rollback-safe: going back needs no restore." });
+    expect(rollbackSentence(preflighted({ previous: "0.18.2" })).text).toBe(
+      "Not rollback-safe for 0.18.1: 0.19.0 was checked against 0.18.2. Upgrade one release at a time.",
+    );
+    expect(rollbackSentence(release()).tone).toBe("muted");
   });
 });
 
@@ -132,12 +185,54 @@ describe("Release tab", () => {
     expect(one("release-summary")).toContain("Not checked");
   });
 
-  it("points an installation in a container to deploying the new image", async () => {
+  it("points an installation in a container to deploying the new image, where the server does not say how it runs", async () => {
     await show(release());
     await act(async () => all("deployment-container")[0]!.props.onClick());
     expect(all("release-upgrade-command")).toHaveLength(0);
-    expect(one("release-upgrade-image")).toContain("pinned by the digest");
+    expect(one("release-guide-coolify")).toContain("VARLATCH_VARLATCHD_DIGEST=sha256:<the digest its release notes name>");
     expect(one("release-check-command")).toContain("docker exec <container> varlatch upgrade --check");
+  });
+
+  it("knows how varlatchd runs when the server says, and asks nothing", async () => {
+    await show(preflighted({ deployment: "image" }));
+    expect(all("deployment-container")).toHaveLength(0);
+    expect(one("release-deployment")).toContain("in a container");
+    expect(one("release-guide-docker")).toContain(`VARLATCH_VARLATCHD_DIGEST=${DIGEST} docker compose up -d`);
+    expect(one("release-check-command")).toContain("docker exec <container> varlatch upgrade --check");
+  });
+
+  it("shows the pre-flight checklist, each failure with what to do, and no upgrade button", async () => {
+    const lines = preflighted().preflight!.map((l) =>
+      l.id === "release-check"
+        ? { ...l, status: "fail" as const, detail: "The release check last ran 3 days ago.", remedy: "Schedule it on the host" }
+        : l.id === "disk"
+          ? { ...l, status: "unknown" as const, detail: "The data directory's free space cannot be read." }
+          : l,
+    );
+    await show(preflighted({ lines }));
+    expect(all("release-preflight")).toHaveLength(1);
+    expect(all("preflight-release-check")[0]!.props["data-status"]).toBe("fail");
+    expect(one("preflight-release-check")).toContain("The release check last ran 3 days ago.");
+    expect(one("preflight-release-check-remedy")).toContain("Schedule it on the host.");
+    expect(one("preflight-release-check-remedy")).toContain("Scheduling the release check");
+    expect(all("preflight-disk")[0]!.props["data-status"]).toBe("unknown");
+    expect(all("preflight-backup-remedy")).toHaveLength(0);
+    expect(one("release-rollback")).toContain("going back needs no restore");
+    expect(one("release-upgrade-command")).toBe("sudo varlatch upgrade 0.19.0");
+    const buttons = root!.root.findAll((n) => n.type === "button" && text(n).includes("Upgrade to"));
+    expect(buttons).toHaveLength(0);
+  });
+
+  it("tells a jump to go one release at a time", async () => {
+    const lines = preflighted().preflight!.map((l) =>
+      l.id === "rollback-safe"
+        ? { ...l, status: "fail" as const, detail: "0.19.0 was checked against 0.18.2, not 0.18.1: upgrade one release at a time.", remedy: "Upgrade one release at a time" }
+        : l,
+    );
+    await show(preflighted({ previous: "0.18.2", lines }));
+    expect(one("preflight-rollback-safe")).toContain("0.19.0 was checked against 0.18.2, not 0.18.1: upgrade one release at a time.");
+    expect(one("release-one-at-a-time")).toContain("for each release after 0.18.1, oldest first");
+    expect(one("release-guide-host")).toContain("sudo varlatch upgrade <version>");
   });
 
   it("shows a failed attempt next to the last success", async () => {

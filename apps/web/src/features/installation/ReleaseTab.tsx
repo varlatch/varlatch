@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import React, { useState } from "react";
 import { ArrowUpRight, Info, TriangleAlert } from "lucide-react";
-import type { InstallationRelease } from "@varlatch/protocol";
+import type { InstallationRelease, UpgradePreflightLine } from "@varlatch/protocol";
 import { formatDateTime, timeAgo, useNow } from "../../lib/time";
 import { Callout, SectionCard, Skeleton, Status } from "../../components/ui";
 import { CodeBlock } from "../../components/CodeBlock";
@@ -10,19 +10,27 @@ import { useInstallationRelease } from "./releaseNotice";
 import {
   DEFAULT_RELEASE_REPO,
   DOCS_CHECK_URL,
-  DOCS_IMAGE_UPGRADE_URL,
+  DOCS_DIGEST_URL,
+  DOCS_PREFLIGHT_URL,
+  DOCS_SCHEDULE_URL,
   DOCS_UPGRADE_URL,
   checkLines,
   lastFailure,
+  preflightDocs,
+  preflightTone,
   releaseSummary,
-  upgradeLines,
+  reportedDeployment,
+  rollbackSentence,
+  upgradeGuide,
+  type UpgradeGuide,
 } from "./releaseStatus";
 import { DeploymentChoice, type Deployment } from "./deployment";
 
 /**
- * Releases, for Installation Admins (ADR-0049): the host's last look for a
- * newer release and how to upgrade on the host. Read-only by design: the
- * dashboard never upgrades Varlatch (ADR-0019).
+ * Releases, for Installation Admins (ADR-0049, ADR-0065 phase 1): the host's
+ * last look for a newer release, what it verified of it, the upgrade's
+ * pre-flight checklist and the exact commands to run on the host. Read-only
+ * by design: the dashboard never upgrades Varlatch.
  */
 export function ReleaseTab({ admin, checking }: { admin: boolean; checking: boolean }) {
   const release = useInstallationRelease(admin);
@@ -49,7 +57,9 @@ export function ReleaseReport({ release, now }: { release: InstallationRelease; 
   const summary = releaseSummary(release, now);
   const failure = lastFailure(release, now);
   const { latest } = release;
-  const [deployment, setDeployment] = useState<Deployment>("host");
+  const reported = reportedDeployment(release);
+  const [chosen, setDeployment] = useState<Deployment>("host");
+  const deployment = reported ?? chosen;
   const repo = latest?.repo ?? release.lastAttempt?.repo ?? DEFAULT_RELEASE_REPO;
   return (
     <div className="space-y-6">
@@ -97,38 +107,25 @@ export function ReleaseReport({ release, now }: { release: InstallationRelease; 
         )}
       </SectionCard>
 
-      <DeploymentChoice value={deployment} onChange={setDeployment} />
-
-      {latest && release.newer && (
-        <SectionCard
-          title="Upgrade on the host"
-          description="Upgrading replaces varlatchd itself, so it runs on the host, never from the dashboard."
-          data-testid="release-upgrade"
-        >
-          <div className="space-y-3 px-5 py-4 text-[13px]">
-            {upgradeLines(deployment) ? (
-              <>
-                <CodeBlock lines={upgradeLines(deployment)!} data-testid="release-upgrade-command" />
-                <p className="text-muted">
-                  It verifies the release, takes an encrypted snapshot first, and keeps the new release only when its checks pass.{" "}
-                  <DocsLink href={DOCS_UPGRADE_URL}>Upgrading</DocsLink>
-                </p>
-              </>
-            ) : (
-              <p className="text-muted" data-testid="release-upgrade-image">
-                Deploy the new release&apos;s image, pinned by the digest its release notes name.{" "}
-                <DocsLink href={DOCS_IMAGE_UPGRADE_URL}>Upgrading the image</DocsLink>
-              </p>
-            )}
-          </div>
-        </SectionCard>
+      {reported ? (
+        <p className="text-[13px] text-muted" data-testid="release-deployment">
+          varlatchd runs {reported === "host" ? "as a service (the systemd unit)" : "in a container (the image)"}.
+        </p>
+      ) : (
+        <DeploymentChoice value={deployment} onChange={setDeployment} />
       )}
+
+      {latest && release.newer && <UpgradeCard release={release} deployment={deployment} repo={repo} />}
 
       <SectionCard title="Checking for releases" description="The host checks GitHub; this server and your browser never do." data-testid="release-check-how">
         <div className="space-y-3 px-5 py-4 text-[13px]">
-          <p className="text-muted">Run the check on the host, so this page stays current, and schedule it there:</p>
-          <CodeBlock lines={checkLines(deployment)} data-testid="release-check-command" />
           <p className="text-muted">
+            Run the check on the host, so this page stays current, and schedule it there once a day: it also verifies the newer release, as an
+            upgrade would, for the checklist above.
+          </p>
+          <CodeBlock lines={checkLines(deployment)} data-testid="release-check-command" />
+          <p className="flex flex-wrap gap-4 text-muted">
+            <DocsLink href={DOCS_SCHEDULE_URL}>Scheduling the release check</DocsLink>
             <DocsLink href={DOCS_CHECK_URL}>Newer releases in the dashboard</DocsLink>
           </p>
         </div>
@@ -137,6 +134,99 @@ export function ReleaseReport({ release, now }: { release: InstallationRelease; 
       <Callout tone="neutral" icon={<Info size={17} />}>
         Only the latest release receives fixes, security fixes included.
       </Callout>
+    </div>
+  );
+}
+
+/**
+ * The upgrade to the newer release (ADR-0065 Decision 8, phase 1): the
+ * target and its rollback-safety, the pre-flight checklist, and the exact
+ * commands for this installation. No button: the host runs them.
+ */
+function UpgradeCard({ release, deployment, repo }: { release: InstallationRelease; deployment: Deployment; repo: string }) {
+  const latest = release.latest!;
+  const rollback = rollbackSentence(release);
+  const guide = upgradeGuide(release, deployment);
+  return (
+    <SectionCard
+      title={`Upgrade to ${latest.version}`}
+      description="Upgrading replaces varlatchd itself, so it runs on the host, never from the dashboard."
+      data-testid="release-upgrade"
+    >
+      <div className="space-y-4 px-5 py-4 text-[13px]">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+          <a href={latest.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-accent hover:underline">
+            Release notes of {latest.version}
+            <ArrowUpRight size={13} />
+          </a>
+          <span data-testid="release-rollback" data-tone={rollback.tone}>
+            <Status tone={rollback.tone}>{rollback.text}</Status>
+          </span>
+        </div>
+        {release.preflight && <Preflight lines={release.preflight} />}
+        {guide && <Guide guide={guide} repo={repo} />}
+        <p className="text-muted">
+          The upgrade verifies the release again, takes an encrypted snapshot first, and keeps the new release only when its checks pass.{" "}
+          <DocsLink href={deployment === "host" ? DOCS_UPGRADE_URL : DOCS_DIGEST_URL}>{deployment === "host" ? "Upgrading" : "Upgrading by digest"}</DocsLink>
+        </p>
+      </div>
+    </SectionCard>
+  );
+}
+
+function Preflight({ lines }: { lines: UpgradePreflightLine[] }) {
+  return (
+    <div className="rounded-lg border border-bd" data-testid="release-preflight">
+      <div className="flex items-center justify-between border-b border-bd px-4 py-2">
+        <span className="font-medium">Before you upgrade</span>
+        <DocsLink href={DOCS_PREFLIGHT_URL}>The pre-flight checklist</DocsLink>
+      </div>
+      <ul className="divide-y divide-bd">
+        {lines.map((line) => {
+          const docs = line.status === "pass" ? null : preflightDocs(line);
+          return (
+            <li key={line.id} className="space-y-1 px-4 py-2.5" data-testid={`preflight-${line.id}`} data-status={line.status}>
+              <Status tone={preflightTone(line)}>
+                <span className="text-fg">{line.title}</span>
+                <span className="sr-only"> ({line.status})</span>
+              </Status>
+              <p className="pl-3.5 text-muted">{line.detail}</p>
+              {line.remedy && (
+                <p className="pl-3.5" data-testid={`preflight-${line.id}-remedy`}>
+                  {line.remedy}.{docs && <> <DocsLink href={docs.href}>{docs.label}</DocsLink></>}
+                </p>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+function Guide({ guide, repo }: { guide: UpgradeGuide; repo: string }) {
+  return (
+    <div className="space-y-4">
+      {guide.oneAtATime && (
+        <Callout tone="warn" icon={<TriangleAlert size={17} />} data-testid="release-one-at-a-time" title="Upgrade one release at a time">
+          {guide.oneAtATime}{" "}
+          <DocsLink href={`https://github.com/${repo}/releases`}>The releases in between</DocsLink>
+        </Callout>
+      )}
+      {guide.sections.map((section) => (
+        <div key={section.testId} className="space-y-2" data-testid={section.testId}>
+          <p className="font-medium">{section.title}</p>
+          <ol className="list-decimal space-y-2 pl-5">
+            {section.steps.map((step, i) => (
+              <li key={i} className="space-y-1.5">
+                <span className="text-muted">{step.title}</span>
+                {step.lines && <CodeBlock lines={step.lines} data-testid={section.testId === "release-guide-host" && i === section.steps.length - 1 ? "release-upgrade-command" : undefined} />}
+                {step.note && <span className="block text-muted">{step.note}</span>}
+              </li>
+            ))}
+          </ol>
+        </div>
+      ))}
     </div>
   );
 }

@@ -49,6 +49,23 @@ type Declaration struct {
 	EndsRollbackWindow bool      `json:"endsRollbackWindow"`
 }
 
+// DeclaredFor is whether the declaration says its release is rollback-safe
+// for the installed release: rollbackSafe, checked against exactly that
+// release (its previous). A release checked against another one (an upgrade
+// that skips releases) declares nothing about this one.
+func (d Declaration) DeclaredFor(installed string) bool {
+	return d.RollbackSafe && d.Previous != nil && d.Previous.Version == installed
+}
+
+// SafeFor is whether going back to the installed release, of schema
+// version schema, would keep the database: the declaration says so for it
+// (DeclaredFor), and its compatibleFrom lets that schema version open the
+// upgraded database. `varlatch upgrade` and the dashboard's pre-flight
+// (ADR-0065 Decision 4) both judge by it.
+func (d Declaration) SafeFor(installed string, schema int64) bool {
+	return d.DeclaredFor(installed) && d.CompatibleFrom <= schema
+}
+
 // Previous is the release a declaration was checked against: the release
 // before it on the Go line.
 type Previous struct {

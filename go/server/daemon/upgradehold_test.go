@@ -320,7 +320,7 @@ func TestEndUpgradeHold(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	writeUpgrade(t, dir, upgradeTo(0, upgradejournal.InProgress, upgradejournal.Started, nil))
-	go func() { endUpgradeHold(ctx, dir, a, log); close(done) }()
+	go func() { endUpgradeHold(ctx, dir, a, log, nil); close(done) }()
 	time.Sleep(3 * upgradeHoldEvery)
 	if !a.Isolated() {
 		t.Fatal("lifted while the journal holds")

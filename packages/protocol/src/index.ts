@@ -145,6 +145,11 @@ export type SyncLedgerName = components["schemas"]["SyncLedgerName"];
 export type InstallationBackups = components["schemas"]["InstallationBackups"];
 export type InstallationRelease = components["schemas"]["InstallationRelease"];
 export type ReleaseCheckFailure = components["schemas"]["ReleaseCheckFailure"];
+/** What the host's check verified of the newer release (ADR-0065 Decision 3). */
+export type ReleaseTarget = components["schemas"]["ReleaseTarget"];
+export type ReleaseTargetFailure = components["schemas"]["ReleaseTargetFailure"];
+/** One line of the upgrade's pre-flight checklist (ADR-0065 Decision 8). */
+export type UpgradePreflightLine = components["schemas"]["UpgradePreflightLine"];
 export type InstallationListeners = components["schemas"]["InstallationListeners"];
 export type TailnetListenerReport = components["schemas"]["TailnetListenerReport"];
 export type ObservedCheck = components["schemas"]["ObservedCheck"];

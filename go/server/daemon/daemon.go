@@ -32,6 +32,7 @@ import (
 	"github.com/varlatch/varlatch/go/lib/keyenv"
 	"github.com/varlatch/varlatch/go/lib/release"
 	"github.com/varlatch/varlatch/go/lib/storage"
+	"github.com/varlatch/varlatch/go/lib/upgradejournal"
 	"github.com/varlatch/varlatch/go/server/audit"
 	"github.com/varlatch/varlatch/go/server/auditexport"
 	"github.com/varlatch/varlatch/go/server/auth"
@@ -359,7 +360,20 @@ func serve(opts Options, h *hooks) int {
 	if upgrading {
 		admission.HoldForUpgrade()
 		log.Warn("an upgrade is checking this varlatchd: it answers 503 MAINTENANCE and does nothing else until the upgrade is over; when none runs any more, sudo varlatch upgrade finishes or undoes it")
-		go endUpgradeHold(ctx, configDir, admission, log)
+		// The upgrade's installation.upgraded, once its journal says it is
+		// done (ADR-0065 Decision 7): this release serves after it.
+		upgraded := &write.Writer{Store: store, Gates: gates}
+		go endUpgradeHold(ctx, configDir, admission, log, func(j *upgradejournal.Journal) {
+			if recorded, err := recordUpgraded(ctx, upgraded, j, buildinfo.Version, inst.ID); err != nil {
+				log.Warn("the upgrade could not be recorded in the audit log; the next start records it", "event", UpgradedEvent, "journal", j.ID, "error", err)
+			} else if recorded {
+				log.Info("recorded the upgrade in the audit log", "event", UpgradedEvent, "from", j.From, "to", j.To, "journal", j.ID)
+			}
+		})
+	} else if inst.ID != "" {
+		// An upgrade done since the last start that this database has not
+		// recorded yet (a start after the upgrade's own, or after a crash).
+		noteUpgraded(ctx, &write.Writer{Store: store, Gates: gates}, configDir, buildinfo.Version, inst.ID, log)
 	}
 	// A restore's hold (backup.Hold): the workers that deliver or destroy
 	// (below, admission.EnterWork) wait until the host operator resumes.
@@ -622,6 +636,7 @@ func serve(opts Options, h *hooks) int {
 		Outbound:        policy,
 		Version:         buildinfo.Version,
 		ReleaseCheckDir: cfg.DataDir,
+		UpgradeHost:     upgradeHost(env, configDir),
 		PublicURL:       cfg.PublicURL,
 		Sync:            cfg.Sync,
 		AuditExportOff:  !cfg.AuditExport,

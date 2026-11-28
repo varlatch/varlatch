@@ -2576,6 +2576,55 @@ export interface components {
             };
             /** @description True when a record exists on the host but cannot be read. */
             unreadable: boolean;
+            /**
+             * @description How varlatchd runs: from the systemd unit `install.sh --server` installs, or as the single-container image. Known, not chosen. The Go server only, as the members below.
+             * @enum {string}
+             */
+            deployment?: "systemd" | "image";
+            /** @description This server's database schema version. */
+            schemaVersion?: number;
+            /** @description What the host's check verified of the newer release (its signed SHA256SUMS, release.json and varlatchd-image.txt), or why it could not; null when no newer release is known or the check recorded no verification of it. Display state: an upgrade verifies the release again. */
+            target?: null | components["schemas"]["ReleaseTarget"];
+            /** @description Whether the target is rollback-safe for this release, as `varlatch upgrade` judges it: it declares itself rollback-safe, checked against exactly this release, and its compatibleFrom is at or below this server's schema. Null until the target is verified. */
+            rollbackSafe?: boolean | null;
+            /** @description The upgrade's pre-flight checklist for the newer release, in order; null when no newer release is known. */
+            preflight?: null | components["schemas"]["UpgradePreflightLine"][];
+        };
+        /**
+         * @description Why the host could not verify the newer release.
+         * @enum {string}
+         */
+        ReleaseTargetFailure: "unreachable" | "rate-limited" | "not-found" | "not-verified" | "invalid-release";
+        ReleaseTarget: {
+            version: string;
+            /** Format: date-time */
+            checkedAt: string;
+            failed: null | components["schemas"]["ReleaseTargetFailure"];
+            /** @description What the verified release declares; null when it failed. */
+            verified: null | {
+                schemaVersion: number;
+                compatibleFrom: number;
+                /** @description The release's own declaration, checked against `previous` only. */
+                rollbackSafe: boolean;
+                /** @description The release the declaration was checked against. */
+                previous: null | {
+                    version: string;
+                    schemaVersion: number;
+                };
+                endsRollbackWindow: boolean;
+                /** @description The release's container image, by its tag and index digest. */
+                image: string;
+            };
+        };
+        UpgradePreflightLine: {
+            /** @enum {string} */
+            id: "release-check" | "backup" | "custody" | "disk" | "in-the-way" | "rollback-safe";
+            /** @enum {string} */
+            status: "pass" | "fail" | "unknown";
+            title: string;
+            detail: string;
+            /** @description What to do; null when the line passes. */
+            remedy: string | null;
         };
         ApiError: {
             error: {

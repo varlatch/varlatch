@@ -107,9 +107,9 @@ func startedByFormatOne(j *upgradejournal.Journal, version string) bool {
 }
 
 // endUpgradeHold lifts admission's upgrade hold once the journal in configDir
-// no longer holds. A journal that cannot be read, or is gone, says nothing:
-// the hold stays.
-func endUpgradeHold(ctx context.Context, configDir string, admission *maintenance.Admission, log *slog.Logger) {
+// no longer holds, then gives over (when set) the journal that ended it. A
+// journal that cannot be read, or is gone, says nothing: the hold stays.
+func endUpgradeHold(ctx context.Context, configDir string, admission *maintenance.Admission, log *slog.Logger, over func(*upgradejournal.Journal)) {
 	path := filepath.Join(configDir, upgradejournal.File)
 	var seen os.FileInfo
 	said := ""
@@ -124,6 +124,9 @@ func endUpgradeHold(ctx context.Context, configDir string, admission *maintenanc
 			case rerr == nil && j != nil && !j.Holds():
 				admission.EndUpgrade()
 				log.Info("the upgrade passed its checks, or is over: varlatchd answers", "from", j.From, "to", j.To, "state", string(j.State), "step", string(j.Step))
+				if over != nil {
+					over(j)
+				}
 				return
 			case rerr == nil && j == nil:
 				rerr = os.ErrNotExist
