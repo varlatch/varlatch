@@ -316,6 +316,40 @@ func TestWhoamiJSONShowsOnlyTheDocumentedFields(t *testing.T) {
 	}
 }
 
+// TestWhoamiPlaceholderEmail: a passkey-only account's placeholder email
+// is left out of whoami's human output, and `whoami --json` keeps the
+// field as the server sent it, so a script reading identity.email reads
+// what it always read.
+func TestWhoamiPlaceholderEmail(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/meta":
+			_, _ = w.Write([]byte(`{"serverVersion":"0.51.0","apiMajor":1,"capabilities":["identity.whoami"]}`))
+		case "/v1/me":
+			_, _ = w.Write([]byte(`{"identity":{"id":"idn_1","name":"Ada","kind":"human","email":"idn_1@varlatch.placeholder.invalid"},"organization":null,` +
+				`"credential":{"id":"cred_1","name":"laptop","kind":"cli","expiresAt":null},"listener":"ordinary"}`))
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer srv.Close()
+	s := newSessionRun(t)
+	s.store(map[string]map[string]any{srv.URL: {"token": "vlt_cli_x"}})
+	status, stdout, stderr := s.run("", "whoami")
+	want := "Identity      Ada (human, idn_1)\n" +
+		"Organization  none: a person joins organizations as a member (varlatch org list)\n" +
+		"Credential    laptop (cli, cred_1), no expiry\n" +
+		"Server        " + srv.URL + " (ordinary listener)\n"
+	if status != 0 || stderr != "" || stdout != want {
+		t.Fatalf("whoami: status %d, stderr %q\nstdout\n%s\nwant\n%s", status, stderr, stdout, want)
+	}
+	status, stdout, stderr = s.run("", "whoami", "--json")
+	if status != 0 || stderr != "" || !strings.Contains(stdout, `"email": "idn_1@varlatch.placeholder.invalid"`) {
+		t.Fatalf("whoami --json: status %d, stderr %q\nstdout\n%s", status, stderr, stdout)
+	}
+}
+
 // TestOutputNeverShowsAToken: what the server answers, the environment or
 // the store holds is printed through the fail-safe (printJSON's
 // RedactValue for every --json document, RedactOutput for every stdout

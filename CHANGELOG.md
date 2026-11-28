@@ -5,6 +5,19 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
+## Unreleased
+
+### CLI
+
+- **`varlatch whoami` no longer shows a placeholder as your email.** An
+  account with no email address, as every passkey-only account is, holds a
+  placeholder address under the reserved `.invalid` domain
+  (`<identity>@varlatch.placeholder.invalid`), and `whoami` printed it on
+  its `Email` line as if it were yours. The human output now leaves the
+  line out for such an address, as the dashboard already did. `whoami
+  --json` is unchanged: `identity.email` still holds what the server sent,
+  and a script tells a placeholder by its `.invalid` ending.
+
 ## 0.51.0 (2026-11-27)
 
 New ways for brokers and agents to use a Secret without reading it, on the

@@ -16,7 +16,7 @@ human formats do not change either: scripts that parse them keep working.
 | Command | Document |
 | --- | --- |
 | `varlatch status --json` | stored credentials and the repository context; with `--probe`, each valid credential's `identity` (id, name, kind) and `organization` (id, slug, name, or null for a person), where the server can say |
-| `varlatch whoami --json` | `server`, and the caller as the server answers: `identity` (id, name, kind, email), `organization` (null for a person), `credential` (id, name, kind, expiresAt; never the token), `listener`, and on the tailnet listener `tailnet` (the device) |
+| `varlatch whoami --json` | `server`, and the caller as the server answers: `identity` (id, name, kind, email: null for a machine; for an account with no email address, such as a passkey-only one, a placeholder ending in `.invalid`, which the human output leaves out), `organization` (null for a person), `credential` (id, name, kind, expiresAt; never the token), `listener`, and on the tailnet listener `tailnet` (the device) |
 | `varlatch context --json` | the resolved context; `serverSource` says where the server came from: `flag`, `env-var`, `local-override` or `repository` |
 | `varlatch server --json` | `server` and `serverSource` for a command here (outside a repository also `default` or `only-credential`; both null when none resolves), `defaultServer`, `signedIn` |
 | `varlatch env list --json` | `environments`: name, tier, kind, selected |
