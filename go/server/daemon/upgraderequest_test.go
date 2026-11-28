@@ -32,8 +32,22 @@ func TestAdminUpgradeRequestRecord(t *testing.T) {
 	if code, _, errOut := runAdmin(t, "upgrade-request", "heartbeat", "--helper-version", "0.52.0", "--enabled", "true", "--config", in.conf); code != ExitOK {
 		t.Fatalf("heartbeat: %d %q", code, errOut)
 	}
-	if h, err := upgraderequest.ReadHelper(in.data); err != nil || h == nil || !h.Enabled || h.Version != "0.52.0" || h.Heartbeat().IsZero() {
+	if h, err := upgraderequest.ReadHelper(in.data); err != nil || h == nil || !h.Enabled || h.Version != "0.52.0" || h.Heartbeat().IsZero() || h.Problem != "" {
 		t.Fatalf("the helper record: %+v, %v", h, err)
+	}
+	// A run that could not take a request says so, by class; the next
+	// heartbeat without one clears it.
+	if code, _, errOut := runAdmin(t, "upgrade-request", "heartbeat", "--helper-version", "0.52.0", "--enabled", "true", "--problem", "take", "--config", in.conf); code != ExitOK {
+		t.Fatalf("heartbeat with a problem: %d %q", code, errOut)
+	}
+	if h, err := upgraderequest.ReadHelper(in.data); err != nil || h == nil || h.Problem != "take" {
+		t.Fatalf("the helper record with a problem: %+v, %v", h, err)
+	}
+	if code, _, errOut := runAdmin(t, "upgrade-request", "heartbeat", "--enabled", "true", "--helper-version", "0.52.0", "--config", in.conf); code != ExitOK {
+		t.Fatalf("heartbeat: %d %q", code, errOut)
+	}
+	if h, err := upgraderequest.ReadHelper(in.data); err != nil || h == nil || h.Problem != "" {
+		t.Fatalf("the problem was not cleared: %+v, %v", h, err)
 	}
 	for _, args := range [][]string{
 		{"upgrade-request"},
@@ -47,6 +61,8 @@ func TestAdminUpgradeRequestRecord(t *testing.T) {
 		{"upgrade-request", "heartbeat", "--helper-version", "0.52.0"},
 		{"upgrade-request", "heartbeat", "--helper-version", "latest", "--enabled", "true"},
 		{"upgrade-request", "heartbeat", "--helper-version", "0.52.0", "--enabled", "yes"},
+		{"upgrade-request", "heartbeat", "--helper-version", "0.52.0", "--enabled", "true", "--problem", "it broke"},
+		{"upgrade-request", "heartbeat", "--enabled", "true", "--problem", "take"},
 	} {
 		if code, _, errOut := runAdmin(t, append(args, "--config", in.conf)...); code != 64 || !strings.Contains(errOut, "Usage: varlatchd admin upgrade-request") {
 			t.Errorf("%v: %d %q", args, code, errOut)

@@ -375,10 +375,41 @@ sudo varlatch upgrade --disable-web   # stop allowing it
 - `/etc/varlatch/web-upgrade.conf`, which says that requests are accepted,
   and nothing else.
 
-`--disable-web` removes the units and `web-upgrade.conf`, and refuses while
-an upgrade from a request is running. The taken requests stay in
+`--enable-web` writes `web-upgrade.conf` last, once the units are enabled;
+if a step fails, it removes what it installed and says so, so the host never
+claims to accept requests that nothing takes. `--disable-web` removes
+`web-upgrade.conf` and the units. Both refuse while the helper is taking or
+running a request. `--disable-web` does not stop a boot recovery that is
+running: it finishes or undoes its upgrade first. The taken requests stay in
 `/var/lib/varlatch-upgrade/taken` as a record. Without the helper, the
 dashboard shows the commands to run, whatever an admin clicks.
+
+### When the helper cannot take a request
+
+The helper can fail before it takes a request: `varlatchd`'s configuration
+names no data directory it can use, the `upgrade-request` directory was
+replaced by a link, or `/var/lib/varlatch-upgrade/taken` is no longer
+root's alone. The request then stays where it is. The helper records the
+problem in its heartbeat, so the pre-flight's helper line says it and the
+**Upgrade** button goes away, and it tries again once a minute until
+`varlatchd` removes the request when it expires, 10 minutes after it was
+made. `sudo journalctl -u varlatch-upgrade.service` says what failed. Put
+it right, then clear the problem with a release check:
+
+```sh
+sudo systemctl start varlatch-release-check.service
+```
+
+If the helper fails again and again at once (its binary is missing, for
+example), systemd stops starting it once it hits the service's start limit
+(20 starts in 10 minutes), and no request is taken until you reset it.
+`sudo varlatch doctor` reports that as `release.web-upgrade-units`. Once
+you have put the cause right:
+
+```sh
+sudo systemctl reset-failed varlatch-upgrade.service varlatch-upgrade.path
+sudo systemctl start varlatch-upgrade.path
+```
 
 ### What happens when an admin asks
 

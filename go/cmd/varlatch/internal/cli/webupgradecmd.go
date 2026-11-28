@@ -32,8 +32,12 @@ var webForms = []string{"--enable-web", "--disable-web", "--from-request", "--re
 // replace it.
 var webHost = func() webupgrade.Host { return webupgrade.SystemHost{} }
 
-// webTakenDir is the helper's directory; only the tests replace it.
-var webTakenDir, webTakenOwner = webupgrade.TakenDir, uint32(0)
+// webTakenDir is the helper's directory; only the tests replace it, and
+// webRetryDelay.
+var (
+	webTakenDir, webTakenOwner = webupgrade.TakenDir, uint32(0)
+	webRetryDelay              = webupgrade.RetryDelay
+)
 
 // noticeWait is how long the helper waits before the stop once the
 // dashboards are told varlatchd restarts (varlatchd looks every second).
@@ -77,7 +81,7 @@ func (r *Run) upgradeWeb(ctx context.Context, form string, u *upgrade.Upgrader, 
 	case "--recover":
 		return r.upgradeRecover(ctx, u, config)
 	case "--disable-web":
-		err := webupgrade.Disable(ctx, webHost(), filepath.Dir(config), say)
+		err := webupgrade.Disable(ctx, webHost(), filepath.Dir(config), webTakenDir, say)
 		if errors.Is(err, webupgrade.ErrRunning) {
 			return Fail("varlatch upgrade --disable-web: "+err.Error()+". Nothing was changed.", ExitFailure)
 		}
@@ -99,6 +103,10 @@ func (r *Run) upgradeWeb(ctx context.Context, form string, u *upgrade.Upgrader, 
 		}
 		p := webupgrade.UnitPaths{Varlatch: filepath.Join(u.BinDir, "varlatch"), Config: abs, DataDir: inst.DataDir}
 		if err := webupgrade.Enable(ctx, webHost(), p, filepath.Dir(config), webTakenDir, say); err != nil {
+			if errors.Is(err, webupgrade.ErrLeftOff) {
+				// Left off: a heartbeat from before must not say otherwise.
+				_ = heartbeat(ctx, false)
+			}
 			return Fail("varlatch upgrade --enable-web: "+err.Error(), ExitFailure)
 		}
 		if err := heartbeat(ctx, true); err != nil {
@@ -131,11 +139,16 @@ func (r *Run) upgradeWeb(ctx context.Context, form string, u *upgrade.Upgrader, 
 		Record:     record,
 		NoticeWait: noticeWait,
 		Log:        say,
+		Version:    buildinfo.Version,
+		Lock:       func(context.Context) (func(), error) { return webupgrade.LockRun(webTakenDir) },
+		RetryDelay: webRetryDelay,
 	}
 	o, err := h.FromRequest(ctx)
 	switch {
 	case errors.Is(err, webupgrade.ErrNoRequest):
 		return r.println("There is no upgrade request (it was cancelled, or already taken).")
+	case errors.Is(err, webupgrade.ErrNotTaken):
+		return Fail("varlatch upgrade --from-request: "+err.Error()+". The request stays; this service runs again for it until varlatchd removes it at its expiry (docs: Upgrading from the web app, when the helper cannot take a request).", ExitFailure)
 	case err != nil:
 		return Fail("varlatch upgrade --from-request: "+err.Error(), ExitFailure)
 	case o.Phase == upgraderequest.Done:

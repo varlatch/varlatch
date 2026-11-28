@@ -113,6 +113,33 @@ func TestStatusAndHelperRecords(t *testing.T) {
 	if _, err := ReadHelper(dir); err == nil {
 		t.Fatal("a helper record without its heartbeat was read")
 	}
+	// A problem, by class: written, read, and anything else refused.
+	h.Problem = "take"
+	if err := WriteHelper(dir, h); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := ReadHelper(dir); err != nil || got.Problem != "take" {
+		t.Fatalf("%+v %v", got, err)
+	}
+	h.Problem = "the disk is on fire"
+	if err := WriteHelper(dir, h); err == nil {
+		t.Fatal("a problem that is not a class was written")
+	}
+}
+
+// A request is current from the time it names (and a little before, the
+// skew) until it expires: never more than Lifetime and MaxSkew after that
+// time, wherever it puts it.
+func TestCurrent(t *testing.T) {
+	r := NewRequest(testID, "0.52.0", "idn_"+strings.Repeat("b", 26), testNow)
+	for d, want := range map[time.Duration]bool{
+		0: true, Lifetime - time.Millisecond: true, Lifetime: false,
+		-MaxSkew: true, -MaxSkew - time.Millisecond: false, -time.Hour: false,
+	} {
+		if got := r.Current(testNow.Add(d)); got != want {
+			t.Errorf("%s from the request: current %v", d, got)
+		}
+	}
 }
 
 func TestConf(t *testing.T) {
