@@ -25,12 +25,15 @@ import {
   type UpgradeGuide,
 } from "./releaseStatus";
 import { DeploymentChoice, type Deployment } from "./deployment";
+import { WebUpgrade } from "./WebUpgrade";
 
 /**
  * Releases, for Installation Admins (ADR-0049, ADR-0065 phase 1): the host's
  * last look for a newer release, what it verified of it, the upgrade's
- * pre-flight checklist and the exact commands to run on the host. Read-only
- * by design: the dashboard never upgrades Varlatch.
+ * pre-flight checklist and the exact commands to run on the host; and, on a
+ * systemd host whose helper is installed (phase 2), the button that asks the
+ * host to upgrade, and how far it got. The dashboard never upgrades Varlatch
+ * itself.
  */
 export function ReleaseTab({ admin, checking }: { admin: boolean; checking: boolean }) {
   const release = useInstallationRelease(admin);
@@ -50,10 +53,10 @@ export function ReleaseTab({ admin, checking }: { admin: boolean; checking: bool
       </Callout>
     );
   }
-  return <ReleaseReport release={release.data} now={now} />;
+  return <ReleaseReport release={release.data} now={now} oneClick={<WebUpgrade release={release.data} />} />;
 }
 
-export function ReleaseReport({ release, now }: { release: InstallationRelease; now: number }) {
+export function ReleaseReport({ release, now, oneClick }: { release: InstallationRelease; now: number; oneClick?: React.ReactNode }) {
   const summary = releaseSummary(release, now);
   const failure = lastFailure(release, now);
   const { latest } = release;
@@ -115,7 +118,7 @@ export function ReleaseReport({ release, now }: { release: InstallationRelease; 
         <DeploymentChoice value={deployment} onChange={setDeployment} />
       )}
 
-      {latest && release.newer && <UpgradeCard release={release} deployment={deployment} repo={repo} />}
+      {latest && release.newer && <UpgradeCard release={release} deployment={deployment} repo={repo} oneClick={oneClick} />}
 
       <SectionCard title="Checking for releases" description="The host checks GitHub; this server and your browser never do." data-testid="release-check-how">
         <div className="space-y-3 px-5 py-4 text-[13px]">
@@ -139,18 +142,18 @@ export function ReleaseReport({ release, now }: { release: InstallationRelease; 
 }
 
 /**
- * The upgrade to the newer release (ADR-0065 Decision 8, phase 1): the
- * target and its rollback-safety, the pre-flight checklist, and the exact
- * commands for this installation. No button: the host runs them.
+ * The upgrade to the newer release (ADR-0065 Decision 8): the target and its
+ * rollback-safety, the pre-flight checklist, the one click when it is
+ * offered (oneClick, phase 2), and the exact commands for this installation.
  */
-function UpgradeCard({ release, deployment, repo }: { release: InstallationRelease; deployment: Deployment; repo: string }) {
+function UpgradeCard({ release, deployment, repo, oneClick }: { release: InstallationRelease; deployment: Deployment; repo: string; oneClick?: React.ReactNode }) {
   const latest = release.latest!;
   const rollback = rollbackSentence(release);
   const guide = upgradeGuide(release, deployment);
   return (
     <SectionCard
       title={`Upgrade to ${latest.version}`}
-      description="Upgrading replaces varlatchd itself, so it runs on the host, never from the dashboard."
+      description="Upgrading replaces varlatchd itself, so the host does it: from here when its helper is installed, or with the commands below."
       data-testid="release-upgrade"
     >
       <div className="space-y-4 px-5 py-4 text-[13px]">
@@ -164,6 +167,7 @@ function UpgradeCard({ release, deployment, repo }: { release: InstallationRelea
           </span>
         </div>
         {release.preflight && <Preflight lines={release.preflight} />}
+        {oneClick}
         {guide && <Guide guide={guide} repo={repo} />}
         <p className="text-muted">
           The upgrade verifies the release again, takes an encrypted snapshot first, and keeps the new release only when its checks pass.{" "}

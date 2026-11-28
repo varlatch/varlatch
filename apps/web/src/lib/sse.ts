@@ -10,6 +10,9 @@
  *   event: ready     {"identityId"}               the stream is open
  *   event: change    {"organizationId", "lastEventId", "occurredAt", "domains"}
  *   event: identity  {"lastEventId", "occurredAt", "domains"}
+ *   event: installation {"notice": "upgrade-restarting", "version"} | {"notice": null}
+ *                        to every stream: the host restarts varlatchd for an
+ *                        upgrade (ADR-0065), or no longer does
  *   event: close     {"reason"}                   the server ends the stream
  *
  * Nothing is replayed: signals sent while the stream is down are lost, and
@@ -23,6 +26,12 @@ export interface Signal {
   lastEventId?: string;
   occurredAt?: string;
   domains?: string[];
+}
+
+/** The installation's notice to every dashboard (ADR-0065 Decision 8). */
+export interface InstallationNotice {
+  kind: "upgrade-restarting";
+  version: string | null;
 }
 
 /** What a realtime.ts hook reads: undefined until the stream first opened; then [] or the latest signal. */
@@ -65,6 +74,7 @@ export class SignalStream {
   private closeReason: string | null = null;
   private orgs = new Map<string, { data: Signal }[]>();
   private me: { data: Signal }[] | null = null;
+  private notice: InstallationNotice | null = null;
   private listeners = new Set<() => void>();
   private connectionListeners = new Set<(connected: boolean) => void>();
 
@@ -105,6 +115,9 @@ export class SignalStream {
     return this.orgs.get(orgId) ?? EMPTY;
   }
 
+  /** The installation's notice now, as a stable snapshot: null for none. */
+  installationNotice = (): InstallationNotice | null => this.notice;
+
   /** The person's latest identitySignal, as a stable snapshot. */
   meDocs(): SignalDocs {
     if (!this.opened) return undefined;
@@ -127,6 +140,8 @@ export class SignalStream {
       if (this.source !== source) return;
       this.attempt = 0;
       this.opened = true;
+      // A notice that still stands is sent again after ready.
+      this.notice = null;
       this.setConnected(true);
       this.emit();
     });
@@ -142,6 +157,20 @@ export class SignalStream {
       if (this.source !== source || parsed?.lastEventId === undefined) return;
       const { organizationId: _org, reason: _reason, ...signal } = parsed;
       this.me = [{ data: signal }];
+      this.emit();
+    });
+    source.addEventListener("installation", (e) => {
+      if (this.source !== source) return;
+      let v: unknown;
+      try {
+        v = JSON.parse(String(e.data));
+      } catch {
+        return;
+      }
+      const data = v && typeof v === "object" ? (v as Record<string, unknown>) : null;
+      if (!data || !("notice" in data)) return;
+      this.notice =
+        data.notice === "upgrade-restarting" ? { kind: "upgrade-restarting", version: typeof data.version === "string" ? data.version : null } : null;
       this.emit();
     });
     source.addEventListener("close", (e) => {

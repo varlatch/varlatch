@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import React, { createContext, useContext, useEffect, useState, useSyncExternalStore } from "react";
-import { browserDeps, SignalStream, type SignalDocs, type SignalStreamDeps } from "./sse";
+import { browserDeps, SignalStream, type InstallationNotice, type SignalDocs, type SignalStreamDeps } from "./sse";
 
 /**
  * The Go server's live updates for the signed-in person (lib/sse.ts),
@@ -52,4 +52,10 @@ export function useSseConnected(): boolean {
     stream ? (fn: () => void) => stream.onConnection(fn) : NEVER,
     stream ? stream.isConnected : () => false,
   );
+}
+
+/** The installation's notice to every dashboard (the host restarts Varlatch for an upgrade), null for none. */
+export function useSseInstallationNotice(): InstallationNotice | null {
+  const stream = useContext(SseContext);
+  return useSyncExternalStore(stream?.subscribe ?? NEVER, stream ? stream.installationNotice : () => null);
 }

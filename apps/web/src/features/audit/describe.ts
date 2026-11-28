@@ -789,6 +789,27 @@ export function describeEvent(event: AuditEventLike, names: NameResolver = empty
       return { icon: "login", title: "Installation bootstrapped", segments: ["set up this installation"] };
     case "recovery.completed":
       return { icon: "login", title: "Recovery completed", segments: ["recovered access"] };
+    // ---- upgrades (ADR-0065): the host's, and those asked for in the web app
+    case "installation.upgraded": {
+      const web = str(m.source) === "web";
+      return {
+        icon: "upload",
+        title: "Varlatch upgraded",
+        segments: [`upgraded Varlatch from ${str(m.from) ?? "?"} to ${str(m.to) ?? "?"}`, web ? ", as asked in the web app" : " on the host"],
+      };
+    }
+    case "installation.upgrade_requested":
+      return { icon: "upload", title: "Upgrade requested", segments: [`asked the host to upgrade Varlatch from ${str(m.from) ?? "?"} to ${str(m.to) ?? "?"}, approved with a passkey`] };
+    case "installation.upgrade_cancelled":
+      return str(m.reason) === "expired"
+        ? { icon: "pause", title: "Upgrade request expired", segments: [`the request to upgrade to ${str(m.to) ?? "?"} expired before the host took it`] }
+        : { icon: "pause", title: "Upgrade request cancelled", segments: [`cancelled the request to upgrade to ${str(m.to) ?? "?"}`] };
+    case "installation.upgrade_cancel_too_late":
+      return { icon: "alert", title: "Too late to cancel", segments: [`tried to cancel the upgrade to ${str(m.to) ?? "?"}, which the host had taken`] };
+    case "installation.upgrade_refused":
+      return { icon: "alert", title: "Upgrade refused by the host", segments: [`the host refused the upgrade to ${str(m.to) ?? "?"}: ${(str(m.reason) ?? "").replace(/-/g, " ")}`] };
+    case "installation.upgrade_undone":
+      return { icon: "rotate", title: "Upgrade undone", segments: [`a health check of ${str(m.to) ?? "?"} failed, so the host went back to ${str(m.from) ?? "?"}`] };
   }
 
   // Unknown or rare types: the type itself, readable, plus the place.

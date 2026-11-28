@@ -208,6 +208,8 @@ export function preflightDocs(line: UpgradePreflightLine): { href: string; label
         : { href: DOCS_SCHEDULE_URL, label: "Scheduling the release check" };
     case "backup":
       return { href: DOCS_BACKUP_URL, label: "S3-compatible destinations" };
+    case "helper":
+      return { href: "https://docs.varlatch.com/operations/upgrade/#upgrading-from-the-web-app", label: "Upgrading from the web app" };
     default:
       return null;
   }

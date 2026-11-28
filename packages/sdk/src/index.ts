@@ -22,6 +22,7 @@ import type {
   AuditEventFilters,
   InstallationBackups,
   InstallationRelease,
+  UpgradeRequestState,
   InstallationOutbound,
   InstallationListeners,
   TailnetDevice,
@@ -1864,6 +1865,33 @@ export class VarlatchClient {
    */
   getInstallationRelease(): Promise<InstallationRelease> {
     return this.request("GET", "/v1/installation/release");
+  }
+
+  /**
+   * Installation Admin only: the last upgrade request the web app filed and
+   * how far the host got with it (capability installation.upgrade, ADR-0065
+   * phase 2).
+   */
+  getUpgradeRequest(): Promise<UpgradeRequestState> {
+    return this.request("GET", "/v1/installation/upgrade-request");
+  }
+
+  /**
+   * Installation Admin only, from the dashboard: ask the host to upgrade to
+   * `version`, the release the Release tab offers, as request `requestId`
+   * (a fresh `upr_` id). Always a step-up approval with a trusted passkey
+   * (STEP_UP_REQUIRED, which onStepUp handles), bound to this request.
+   */
+  requestUpgrade(version: string, requestId: string): Promise<UpgradeRequestState> {
+    return this.request("POST", "/v1/installation/upgrade-request", { version, requestId });
+  }
+
+  /**
+   * Installation Admin only: cancel the pending request; `cancelled` is false
+   * when the host had taken it already.
+   */
+  cancelUpgradeRequest(requestId: string): Promise<UpgradeRequestState> {
+    return this.request("POST", `/v1/installation/upgrade-request/${encodeURIComponent(requestId)}/cancel`);
   }
 
   /**
