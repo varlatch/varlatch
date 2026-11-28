@@ -1,0 +1,17 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.28.0.schema.json
+
+PackageIdentifier: Varlatch.Varlatch
+PackageVersion: 0.50.0
+InstallerType: portable
+Commands:
+- varlatch
+ReleaseDate: 2026-11-25
+Installers:
+- Architecture: x64
+  InstallerUrl: https://github.com/varlatch/varlatch/releases/download/v0.50.0/varlatch-0.50.0-windows-amd64.exe
+  InstallerSha256: 14F2726F0FEEF3150E6A3BCE90AA617EF259671479F4E23C1EADAFD3A5D1BDDB
+- Architecture: arm64
+  InstallerUrl: https://github.com/varlatch/varlatch/releases/download/v0.50.0/varlatch-0.50.0-windows-arm64.exe
+  InstallerSha256: ED4DFFBCD58608FCB6CFBE785BECB3A3AB715C44140F23A3454C38E3FBD8264B
+ManifestType: installer
+ManifestVersion: 1.28.0
