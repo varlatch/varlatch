@@ -28,6 +28,22 @@ fixes.
 
 ### API
 
+- **Upgrades asked for in the web app: the request route (ADR-0065, phase
+  2; the Go server on a systemd host, capability `installation.upgrade`).**
+  `GET /v1/installation/upgrade-request` is the last request and how far
+  the host got with it; `POST` files one for the release the Release tab
+  offers when every pre-flight line passes, with a step-up approval with a
+  trusted passkey bound to that request (operation
+  `installation.upgrade`); `POST .../{upgradeRequest}/cancel` cancels it
+  until the host takes it, and says when it was too late. New audit
+  events: `installation.upgrade_requested`, `_cancelled`,
+  `_cancel_too_late`, `_refused` and `_undone`; `installation.upgraded`
+  says `source: web` and the request for an upgrade a request asked for.
+  The dashboard's live updates gain an `installation` event, the restart
+  notice. **api-breaking (label):** the pre-flight line ids
+  (`UpgradePreflightLine.id`, from the Unreleased phase 1) gain `helper`, the
+  host helper's line; no released server or client has the enum.
+
 - **`GET /v1/installation/release` answers more (the Go server only).**
   New members, absent from a server that does not send them: `deployment`
   (`systemd` or `image`), `schemaVersion`, `target` (what the host verified
@@ -78,6 +94,11 @@ fixes.
   gives a systemd timer and a cron line.
 
 ### Server
+
+- **Schema version 8, rollback-safe.** `approval_intents` takes the new
+  operation `installation.upgrade`: `varlatch upgrade` makes both approval
+  tables again with their rows; the release before opens the database as
+  it is. A reverse migration to 0.23.1 leaves such approvals out.
 
 - **A new audit event, `installation.upgraded`.** The release an upgrade
   went to records it once per upgrade, from root's upgrade journal

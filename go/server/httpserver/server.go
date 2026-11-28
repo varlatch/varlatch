@@ -51,6 +51,7 @@ import (
 	"github.com/varlatch/varlatch/go/server/realtime"
 	"github.com/varlatch/varlatch/go/server/servecli"
 	"github.com/varlatch/varlatch/go/server/upgradecheck"
+	"github.com/varlatch/varlatch/go/server/upgraderequests"
 	"github.com/varlatch/varlatch/go/server/values"
 	"github.com/varlatch/varlatch/go/server/write"
 )
@@ -100,6 +101,11 @@ type Options struct {
 	// Unset (a server without a host, the TypeScript fixtures' replay), it
 	// answers as before.
 	UpgradeHost func(ctx context.Context) upgradecheck.Host
+	// UpgradeRequests, when set (a systemd host), is the web upgrade's
+	// request route (ADR-0065 phase 2): GET, POST and the cancel of
+	// /v1/installation/upgrade-request, and /v1/meta lists
+	// installation.upgrade. Unset, they are not found.
+	UpgradeRequests *upgraderequests.Service
 	// PublicURL is the configured public URL; nil when not set.
 	PublicURL *url.URL
 	// Sync is the outbound sync installation switch; SyncAdapters narrows
@@ -236,6 +242,10 @@ var BuiltOperations = []string{
 	deleteEnvironmentPattern,
 	"GET /v1/installation/release",
 	"GET /v1/installation/backups",
+	// ADR-0065 phase 2: upgrades asked for in the web app (upgraderequest.go).
+	"GET /v1/installation/upgrade-request",
+	"POST /v1/installation/upgrade-request",
+	"POST /v1/installation/upgrade-request/{upgradeRequest}/cancel",
 	// Step 4.1d: the writes of values (valuewrites.go).
 	setValuePattern,
 	deleteValuePattern,

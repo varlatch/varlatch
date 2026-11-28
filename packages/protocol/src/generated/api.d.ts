@@ -61,6 +61,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/installation/upgrade-request": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Installation Admin only, the last upgrade request and how far the host got with it
+         * @description The request the web app last filed (ADR-0065), and its state as the host helper's status records and root's upgrade journal say it: waiting for the host, taken, verifying, backing up, restarting, checking, done, refused (with a reason class), failed, undone, interrupted, cancelled or expired. Display state: the host decides. Requires capability `installation.upgrade`. Cache-Control no-store.
+         */
+        get: operations["getInstallationUpgradeRequest"];
+        put?: never;
+        /**
+         * Installation Admin only, ask the host to upgrade to the next release
+         * @description Files an upgrade request for the host helper (ADR-0065 Decision 1): only the version, its id, who asked and when it expires (10 minutes). Offered only on a systemd host, from a dashboard session, for the release GET /v1/installation/release offers when every line of its pre-flight passes, the host helper's among them; otherwise STATE_CHANGED with details.reason (not-offered, pending). One request at a time. Always needs a step-up approval with a trusted passkey and user verification (operation installation.upgrade, STEP_UP_REQUIRED, then the same request with the Varlatch-Approval header), bound to this installation, the running release, the version and the request id, and used once. requestId is the client's, a fresh `upr_` id; one used before is STATE_CHANGED with details.reason request-id-used. Requires capability `installation.upgrade`.
+         */
+        post: operations["requestInstallationUpgrade"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/installation/upgrade-request/{upgradeRequest}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Installation Admin only, cancel the pending upgrade request
+         * @description Removes the request before the host takes it; exactly one of the cancel and the take succeeds. cancelled is false when the host had taken it already ("too late"), with its state; the host goes on, or refuses, as that says. Any Installation Admin may cancel. Another request than the last is RESOURCE_NOT_FOUND. Requires capability `installation.upgrade`.
+         */
+        post: operations["cancelInstallationUpgradeRequest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/installation/outbound": {
         parameters: {
             query?: never;
@@ -2453,7 +2497,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The dashboard's live updates (ADR-0059 Decision 4): server-sent events, served only when /v1/meta lists the capability realtime.sse. The browser's session (its varlatch_session cookie) authenticates the stream; a stream receives the changeSignal of each Organization its identity is a member of when the signal is sent, and its own identity's identitySignal, never another's. An Organization frozen for an incident signals nobody, and one that enforces passkey-verification nobody whose sign-in it would refuse. Signals carry the domains an audit event touched and the last event's id, never data. Events: "ready" once, data {"identityId"}; "change", data {"organizationId", "lastEventId", "occurredAt", "domains"}; "identity", data {"lastEventId", "occurredAt", "domains"}; a comment line about every 15 s to keep the connection alive; and "close", data {"reason"}, as the server ends the stream: "session-ended" (signed out, expired, or the identity disabled), "credential-revoked" (a credential of the session revoked), "membership-removed" (after the identity event that says so), "scope-changed" (an Organization of the stream began to hold its signals back, as above), "slow-client" (16 publications waiting for it; a publication is the events one round of publishing sends it), "replaced" (more than 8 streams for one session; the oldest closes) or "shutdown". Once the server ends a stream, nothing it had queued is sent: only the identity event of a removal or a scope change, and the close event, within 2 s. Nothing is replayed and no event carries an id: a dashboard that reconnects refreshes from /v1. 401 AUTHENTICATION_REQUIRED without a live session; 400 VALIDATION_FAILED, the connection closed, for a request that declares a body. Cache-Control no-store. */
+        /** The dashboard's live updates (ADR-0059 Decision 4): server-sent events, served only when /v1/meta lists the capability realtime.sse. The browser's session (its varlatch_session cookie) authenticates the stream; a stream receives the changeSignal of each Organization its identity is a member of when the signal is sent, and its own identity's identitySignal, never another's. An Organization frozen for an incident signals nobody, and one that enforces passkey-verification nobody whose sign-in it would refuse. Signals carry the domains an audit event touched and the last event's id, never data. Events: "ready" once, data {"identityId"}; "change", data {"organizationId", "lastEventId", "occurredAt", "domains"}; "identity", data {"lastEventId", "occurredAt", "domains"}; "installation", data {"notice": "upgrade-restarting", "version"} to every stream while the host restarts varlatchd for an upgrade asked for in the web app (ADR-0065; sent too to a stream that opens meanwhile), then {"notice": null} if the request ended with this release still serving; a comment line about every 15 s to keep the connection alive; and "close", data {"reason"}, as the server ends the stream: "session-ended" (signed out, expired, or the identity disabled), "credential-revoked" (a credential of the session revoked), "membership-removed" (after the identity event that says so), "scope-changed" (an Organization of the stream began to hold its signals back, as above), "slow-client" (16 publications waiting for it; a publication is the events one round of publishing sends it), "replaced" (more than 8 streams for one session; the oldest closes) or "shutdown". Once the server ends a stream, nothing it had queued is sent: only the identity event of a removal or a scope change, and the close event, within 2 s. Nothing is replayed and no event carries an id: a dashboard that reconnects refreshes from /v1. 401 AUTHENTICATION_REQUIRED without a live session; 400 VALIDATION_FAILED, the connection closed, for a request that declares a body. Cache-Control no-store. */
         get: operations["streamBrowserEvents"];
         put?: never;
         post?: never;
@@ -2548,6 +2592,36 @@ export interface components {
          * @enum {string}
          */
         ReleaseCheckFailure: "unreachable" | "rate-limited" | "not-found" | "invalid-answer";
+        /** @description An upgrade request from the web app and what the host did with it (ADR-0065). Display state, written by varlatchd and by the host helper through it; root's upgrade journal says whether an upgrade it ran is done or undone. */
+        UpgradeRequestState: {
+            request: null | {
+                id: string;
+                /** @description The release that served when it was asked for */
+                from: string;
+                version: string;
+                /** @description The Installation Admin's identity id */
+                requestedBy: string | null;
+                /** Format: date-time */
+                requestedAt: string;
+                /** Format: date-time */
+                expiresAt: string;
+            };
+            /**
+             * @description waiting: the host has not taken it yet. taken to checking: the host's steps. done, refused, failed (nothing changed unless reason is undo), undone (a health check failed: the previous release serves). interrupted: the host stopped mid-way and finishes or undoes it at its next start or sudo varlatch upgrade. cancelled by an admin, or expired before the host took it.
+             * @enum {string}
+             */
+            state: "none" | "waiting" | "taken" | "verifying" | "backing-up" | "restarting" | "checking" | "done" | "refused" | "failed" | "undone" | "interrupted" | "cancelled" | "expired";
+            /** @description The class of a refusal (disabled, expired, not-newer, prerelease, superseded, not-latest, not-rollback-safe, ends-rollback-window, undone, held, pending, maintenance, schema, no-backup-destination, unreachable), of a failure (verification, backup, error, undo) or of an undo (health); never free text. */
+            reason: string | null;
+            /** @description The id of root's upgrade journal the host ran */
+            journalId: string | null;
+            /** Format: date-time */
+            updatedAt: string | null;
+            /** @description The host has not answered for 2 minutes since the request (or since it took it) */
+            noAnswer: boolean;
+            /** @description Only in a cancel's answer, whether it removed the request (false when the host had taken it) */
+            cancelled?: boolean;
+        };
         InstallationRelease: {
             /** @description This server's version. */
             running: string;
@@ -2617,8 +2691,11 @@ export interface components {
             };
         };
         UpgradePreflightLine: {
-            /** @enum {string} */
-            id: "release-check" | "backup" | "custody" | "disk" | "in-the-way" | "rollback-safe";
+            /**
+             * @description The line, in the order the tab shows them. helper (the host helper, ADR-0065 phase 2) is only on a systemd host.
+             * @enum {string}
+             */
+            id: "release-check" | "backup" | "custody" | "disk" | "in-the-way" | "rollback-safe" | "helper";
             /** @enum {string} */
             status: "pass" | "fail" | "unknown";
             title: string;
@@ -5072,6 +5149,95 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            429: components["responses"]["RequestWindow"];
+            default: components["responses"]["Error"];
+        };
+    };
+    getInstallationUpgradeRequest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The last request and its state; state none when there was none */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpgradeRequestState"];
+                };
+            };
+            /** @description Installation Admin authority required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            429: components["responses"]["RequestWindow"];
+            default: components["responses"]["Error"];
+        };
+    };
+    requestInstallationUpgrade: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description The release to upgrade to */
+                    version: string;
+                    requestId: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Filed; the host takes it */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpgradeRequestState"];
+                };
+            };
+            403: components["responses"]["StepUpRequired"];
+            429: components["responses"]["RequestWindow"];
+            default: components["responses"]["Error"];
+        };
+    };
+    cancelInstallationUpgradeRequest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                upgradeRequest: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Cancelled, or too late */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpgradeRequestState"];
                 };
             };
             429: components["responses"]["RequestWindow"];

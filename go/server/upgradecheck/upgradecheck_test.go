@@ -43,7 +43,8 @@ func ready() Input {
 		Host: Host{Deployment: Systemd, Schema: 7,
 			Backups: Backups{Destination: "offsite", Last: now.Add(-2 * time.Hour), Delivered: now.Add(-2 * time.Hour)},
 			Custody: Custody{RootKEKVersion: 1, RootKEK: true, BackupKey: true},
-			Disk:    Disk{Free: 10 << 30, Database: 100 << 20}}}
+			Disk:    Disk{Free: 10 << 30, Database: 100 << 20},
+			Helper:  Helper{Present: true, Enabled: true, Version: "0.51.0", At: now.Add(-3*time.Hour + time.Minute)}}}
 }
 
 func line(t *testing.T, r Report, id string) Line {
@@ -59,7 +60,7 @@ func line(t *testing.T, r Report, id string) Line {
 
 func TestEveryLinePasses(t *testing.T) {
 	r := Judge(ready())
-	if r.Target == nil || r.RollbackSafe == nil || !*r.RollbackSafe || len(r.Lines) != 6 {
+	if r.Target == nil || r.RollbackSafe == nil || !*r.RollbackSafe || len(r.Lines) != 7 || !r.All() {
 		t.Fatalf("%+v", r)
 	}
 	for _, l := range r.Lines {
@@ -245,5 +246,47 @@ func TestAgo(t *testing.T) {
 		if got := Ago(now, now.Add(-d)); got != want {
 			t.Errorf("%v: %q, want %q", d, got, want)
 		}
+	}
+}
+
+// Line 7 (phase 2): the host helper, on a systemd host only; the button
+// (All) needs every line, this one among them.
+func TestTheHelperLine(t *testing.T) {
+	for name, c := range map[string]struct {
+		set    func(in *Input)
+		status Status
+		detail string
+	}{
+		"not installed":          {func(in *Input) { in.Host.Helper = Helper{} }, Fail, "not installed"},
+		"turned off":             {func(in *Input) { in.Host.Helper.Enabled = false }, Fail, "turned off"},
+		"a stale heartbeat":      {func(in *Input) { in.Host.Helper.At = now.Add(-37 * time.Hour) }, Fail, "last answered 37 hours ago"},
+		"not the last check's":   {func(in *Input) { in.Host.Helper.At = now.Add(-4 * time.Hour) }, Fail, "ran without the host helper"},
+		"a record that is wrong": {func(in *Input) { in.Host.Helper.Err = errors.New("not a helper record") }, Unknown, "cannot be read"},
+	} {
+		in := ready()
+		c.set(&in)
+		r := Judge(in)
+		if l := line(t, r, LineHelper); l.Status != c.status || !strings.Contains(l.Detail, c.detail) || l.Remedy == "" {
+			t.Errorf("%s: %+v", name, l)
+		}
+		if r.All() {
+			t.Errorf("%s: one click offered", name)
+		}
+	}
+	in := ready()
+	in.Host.Deployment = Image
+	r := Judge(in)
+	for _, l := range r.Lines {
+		if l.ID == LineHelper {
+			t.Fatal("a helper line in the image")
+		}
+	}
+	if len(r.Lines) != 6 || r.All() {
+		t.Fatalf("the image: %d lines, all %v", len(r.Lines), r.All())
+	}
+	in = ready()
+	in.Target = target(now.Add(-time.Hour), "0.51.1")
+	if Judge(in).All() {
+		t.Fatal("one click for a jump")
 	}
 }

@@ -150,6 +150,8 @@ export type ReleaseTarget = components["schemas"]["ReleaseTarget"];
 export type ReleaseTargetFailure = components["schemas"]["ReleaseTargetFailure"];
 /** One line of the upgrade's pre-flight checklist (ADR-0065 Decision 8). */
 export type UpgradePreflightLine = components["schemas"]["UpgradePreflightLine"];
+/** An upgrade request from the web app and how far the host got (ADR-0065 phase 2, capability installation.upgrade). */
+export type UpgradeRequestState = components["schemas"]["UpgradeRequestState"];
 export type InstallationListeners = components["schemas"]["InstallationListeners"];
 export type TailnetListenerReport = components["schemas"]["TailnetListenerReport"];
 export type ObservedCheck = components["schemas"]["ObservedCheck"];

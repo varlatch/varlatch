@@ -22,7 +22,7 @@ package db
 // applies; go/release/release.json declares whether the release is
 // rollback-safe, and G6 checks it, and each step's own CompatibleFrom
 // against that step's changes (server/db/releasecheck).
-const SchemaVersion = 7
+const SchemaVersion = 8
 
 // CompatibleFrom is the oldest schema version whose varlatchd may open a
 // database of this schema: the last step's CompatibleFrom, or SchemaVersion

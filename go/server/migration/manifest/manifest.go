@@ -26,7 +26,7 @@ import (
 // target.schemaVersion and targetOnly tables follow schema.sql (since
 // schema version 2, certificate_issuances; since 4, exercise_credentials and
 // oidc_token_uses; since 5, one_time_codes_given; since 6, oauth_connections
-// and oauth_authorizations; since 7, entry_links), while the bundle header names
+// and oauth_authorizations; since 7, entry_links; since 8, approval_intents' installation.upgrade, which a reverse carries none of), while the bundle header names
 // the manifest version, 1 in both, and every source table and column is
 // the same.
 //

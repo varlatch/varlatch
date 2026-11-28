@@ -18,6 +18,7 @@ import (
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
 	"github.com/varlatch/varlatch/go/lib/storage"
 	"github.com/varlatch/varlatch/go/lib/upgradejournal"
+	"github.com/varlatch/varlatch/go/lib/upgraderequest"
 	"github.com/varlatch/varlatch/go/server/config"
 )
 
@@ -25,12 +26,19 @@ import (
 // order, as their metadata.
 func upgradedEvents(t *testing.T, in install) []map[string]any {
 	t.Helper()
+	return eventsOf(t, in, UpgradedEvent)
+}
+
+// eventsOf are the events of a type in in's database, as their metadata,
+// none with an actor or an Organization.
+func eventsOf(t *testing.T, in install, eventType string) []map[string]any {
+	t.Helper()
 	store, err := storage.Open(context.Background(), storage.Options{Path: filepath.Join(in.data, config.DatabaseFile)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	rows, err := store.Reader().QueryContext(context.Background(), `SELECT metadata, actor_identity_id, organization_id FROM audit_events WHERE event_type = ? ORDER BY event_order`, UpgradedEvent)
+	rows, err := store.Reader().QueryContext(context.Background(), `SELECT metadata, actor_identity_id, organization_id FROM audit_events WHERE event_type = ? ORDER BY event_order`, eventType)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,5 +211,48 @@ func TestMigrationWindowOpen(t *testing.T) {
 		if open, err := migrationWindowOpen(dir, now); open != c.open || err != nil {
 			t.Errorf("%s: %v %v", name, open, err)
 		}
+	}
+}
+
+// Phase 2: an upgrade a web request's helper ran (its status record names
+// the journal) is recorded with source web and the request; an upgrade
+// undone after its stop is installation.upgrade_undone, once, on the
+// release it went back to, with the journal's reason; one undone before
+// the stop records nothing.
+func TestTheJournalsEventsNameTheWebRequest(t *testing.T) {
+	in := newInstall(t, "")
+	start(t, in).stop(t)
+	installation := installationOf(t, in)
+	request := "upr_" + strings.Repeat("a", 26)
+	status := func(journal string) {
+		if err := upgraderequest.WriteStatus(in.data, upgraderequest.Status{Format: upgraderequest.Format, RequestID: request, Version: buildinfo.Version, Phase: upgraderequest.Checking,
+			JournalID: journal, UpdatedAt: "2026-11-28T10:01:00.000Z"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	status("1212121212121212")
+	writeUpgrade(t, in.dir, done("1212121212121212", installation))
+	start(t, in).stop(t)
+	if events := upgradedEvents(t, in); len(events) != 1 || events[0]["source"] != "web" || events[0]["requestId"] != request {
+		t.Fatalf("from a web request: %v", events)
+	}
+
+	undone := func(id string, step upgradejournal.Step) *upgradejournal.Journal {
+		return &upgradejournal.Journal{Format: upgradejournal.Format, ID: id, From: buildinfo.Version, To: "99.0.0", State: upgradejournal.Undone, Step: step,
+			Installation: installation, Reason: "the health checks of 99.0.0: not ready"}
+	}
+	writeUpgrade(t, in.dir, undone("3434343434343434", upgradejournal.Verified))
+	start(t, in).stop(t)
+	if events := eventsOf(t, in, "installation.upgrade_undone"); len(events) != 0 {
+		t.Fatalf("undone before the stop: %v", events)
+	}
+	status("5656565656565656")
+	writeUpgrade(t, in.dir, undone("5656565656565656", upgradejournal.Started))
+	start(t, in).stop(t)
+	start(t, in).stop(t)
+	events := eventsOf(t, in, "installation.upgrade_undone")
+	if len(events) != 1 || events[0]["journalId"] != "5656565656565656" || events[0]["reason"] != "the health checks of 99.0.0: not ready" || events[0]["source"] != "web" ||
+		events[0]["requestId"] != request || events[0]["to"] != "99.0.0" {
+		t.Fatalf("undone after the stop: %v", events)
 	}
 }

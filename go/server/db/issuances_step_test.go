@@ -26,16 +26,34 @@ const (
 	v4Marker  = "\n-- One-time codes given (ADR-0061)"
 	v5Marker  = "\n-- OAuth connections"
 	v6Marker  = "\n-- Entry links (ADR-0063)"
+	// v7Marker is no section: schema version 8 widened approval_intents'
+	// operation CHECK in place (installation.upgrade, ADR-0065), so the
+	// version before it is the whole file with the CHECK as it was.
+	v7Marker = ""
 )
 
-// schemaBefore is schema.sql as released before marker's section.
+// The operation CHECK's end before schema version 8 and from it.
+const (
+	approvalOpsV7 = "'audit_export.change', 'audit_export.remove')),"
+	approvalOpsV8 = "'audit_export.change', 'audit_export.remove', 'installation.upgrade')),"
+)
+
+// schemaBefore is schema.sql as released before marker's section, with
+// approval_intents' operation CHECK as it was before schema version 8.
 func schemaBefore(t *testing.T, marker string) string {
 	t.Helper()
-	i := strings.Index(schemaSQL, marker)
-	if i < 0 {
-		t.Fatalf("schema.sql has no section %q", marker)
+	if !strings.Contains(schemaSQL, approvalOpsV8) {
+		t.Fatal("schema.sql has no installation.upgrade in approval_intents' operation CHECK")
 	}
-	return schemaSQL[:i] + "\n"
+	s := schemaSQL
+	if marker != v7Marker {
+		i := strings.Index(schemaSQL, marker)
+		if i < 0 {
+			t.Fatalf("schema.sql has no section %q", marker)
+		}
+		s = schemaSQL[:i] + "\n"
+	}
+	return strings.Replace(s, approvalOpsV8, approvalOpsV7, 1)
 }
 
 // schemaOf is the schema a database holds, as statements.
@@ -117,7 +135,7 @@ func TestV2DatabaseUpgradesToVersion3(t *testing.T) {
 // adds is a step of its own, never more of that one.
 func TestEveryEarlierVersionUpgrades(t *testing.T) {
 	ctx := context.Background()
-	markers := []string{rc1Marker, v2Marker, v3Marker, v4Marker, v5Marker, v6Marker}
+	markers := []string{rc1Marker, v2Marker, v3Marker, v4Marker, v5Marker, v6Marker, v7Marker}
 	if len(markers) != SchemaVersion-1 {
 		t.Fatalf("%d markers for schema version %d", len(markers), SchemaVersion)
 	}

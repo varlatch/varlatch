@@ -15,6 +15,16 @@ var GoOnlyEventTypes = []string{
 	// The host operator ended a restore's hold (`varlatchd admin restore
 	// resume`).
 	"installation.restore_resumed",
+	// An upgrade asked for in the web app (ADR-0065 Decision 7): a cancel
+	// that found it taken by the host; cancelled by an admin or expired;
+	// refused by the host helper (from its status record); filed by an
+	// Installation Admin with a step-up approval; undone after a failed
+	// health check (from root's journal, by the release that serves again).
+	"installation.upgrade_cancel_too_late",
+	"installation.upgrade_cancelled",
+	"installation.upgrade_refused",
+	"installation.upgrade_requested",
+	"installation.upgrade_undone",
 	// An upgrade the host made (`varlatch upgrade`), recorded once per
 	// journal id by the release it upgraded to, from root's upgrade journal
 	// (ADR-0065 Decision 7).

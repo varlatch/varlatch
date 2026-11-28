@@ -121,6 +121,96 @@ paths:
         "429": { $ref: "#/components/responses/RequestWindow" }
         default: { $ref: "#/components/responses/Error" }
 
+  /installation/upgrade-request:
+    get:
+      tags: [meta]
+      operationId: getInstallationUpgradeRequest
+      summary: Installation Admin only, the last upgrade request and how far the host got with it
+      description: >
+        The request the web app last filed (ADR-0065), and its state as the
+        host helper's status records and root's upgrade journal say it:
+        waiting for the host, taken, verifying, backing up, restarting,
+        checking, done, refused (with a reason class), failed, undone,
+        interrupted, cancelled or expired. Display state: the host decides.
+        Requires capability `installation.upgrade`. Cache-Control no-store.
+      responses:
+        "200":
+          description: The last request and its state; state none when there was none
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UpgradeRequestState" }
+        "403":
+          description: Installation Admin authority required
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      tags: [meta]
+      operationId: requestInstallationUpgrade
+      summary: Installation Admin only, ask the host to upgrade to the next release
+      description: >
+        Files an upgrade request for the host helper (ADR-0065 Decision 1):
+        only the version, its id, who asked and when it expires (10
+        minutes). Offered only on a systemd host, from a dashboard session,
+        for the release GET /v1/installation/release offers when every line
+        of its pre-flight passes, the host helper's among them; otherwise
+        STATE_CHANGED with details.reason (not-offered, pending). One
+        request at a time. Always needs a step-up approval with a trusted
+        passkey and user verification (operation installation.upgrade,
+        STEP_UP_REQUIRED, then the same request with the Varlatch-Approval
+        header), bound to this installation, the running release, the
+        version and the request id, and used once. requestId is the
+        client's, a fresh `upr_` id; one used before is STATE_CHANGED with
+        details.reason request-id-used. Requires capability
+        `installation.upgrade`.
+      parameters:
+        - $ref: "#/components/parameters/approvalHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [version, requestId]
+              properties:
+                version: { type: string, description: The release to upgrade to, the one the Release tab offers }
+                requestId: { type: string, pattern: "^upr_[a-z2-7]{26}$" }
+      responses:
+        "201":
+          description: Filed; the host takes it
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UpgradeRequestState" }
+        "403": { $ref: "#/components/responses/StepUpRequired" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /installation/upgrade-request/{upgradeRequest}/cancel:
+    post:
+      tags: [meta]
+      operationId: cancelInstallationUpgradeRequest
+      summary: Installation Admin only, cancel the pending upgrade request
+      description: >
+        Removes the request before the host takes it; exactly one of the
+        cancel and the take succeeds. cancelled is false when the host had
+        taken it already ("too late"), with its state; the host goes on, or
+        refuses, as that says. Any Installation Admin may cancel. Another
+        request than the last is RESOURCE_NOT_FOUND. Requires capability
+        `installation.upgrade`.
+      parameters:
+        - { name: upgradeRequest, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Cancelled, or too late
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UpgradeRequestState" }
+        "429": { $ref: "#/components/responses/RequestWindow" }
+        default: { $ref: "#/components/responses/Error" }
+
   /installation/outbound:
     get:
       tags: [meta]
@@ -5812,8 +5902,13 @@ paths:
         carry the domains an audit event touched and the last event's id, never data. Events:
         "ready" once, data {"identityId"}; "change", data {"organizationId",
         "lastEventId", "occurredAt", "domains"}; "identity", data
-        {"lastEventId", "occurredAt", "domains"}; a comment line about every
-        15 s to keep the connection alive; and "close", data {"reason"}, as
+        {"lastEventId", "occurredAt", "domains"}; "installation", data
+        {"notice": "upgrade-restarting", "version"} to every stream while the
+        host restarts varlatchd for an upgrade asked for in the web app
+        (ADR-0065; sent too to a stream that opens meanwhile), then
+        {"notice": null} if the request ended with this release still
+        serving; a comment line about every 15 s to keep the connection
+        alive; and "close", data {"reason"}, as
         the server ends the stream: "session-ended" (signed out, expired, or
         the identity disabled), "credential-revoked" (a credential of the
         session revoked), "membership-removed" (after the identity event
@@ -6162,6 +6257,57 @@ components:
       type: string
       description: Why the host's last check found no answer; never GitHub's own text.
       enum: [unreachable, rate-limited, not-found, invalid-answer]
+    UpgradeRequestState:
+      type: object
+      additionalProperties: false
+      required: [request, state, reason, journalId, updatedAt, noAnswer]
+      description: >
+        An upgrade request from the web app and what the host did with it
+        (ADR-0065). Display state, written by varlatchd and by the host helper
+        through it; root's upgrade journal says whether an upgrade it ran is
+        done or undone.
+      properties:
+        request:
+          oneOf:
+            - type: "null"
+            - type: object
+              additionalProperties: false
+              required: [id, from, version, requestedBy, requestedAt, expiresAt]
+              properties:
+                id: { type: string }
+                from: { type: string, description: The release that served when it was asked for }
+                version: { type: string }
+                requestedBy: { type: [string, "null"], description: The Installation Admin's identity id }
+                requestedAt: { type: string, format: date-time }
+                expiresAt: { type: string, format: date-time }
+        state:
+          type: string
+          enum: [none, waiting, taken, verifying, backing-up, restarting, checking, done, refused, failed, undone, interrupted, cancelled, expired]
+          description: >
+            waiting: the host has not taken it yet. taken to checking: the
+            host's steps. done, refused, failed (nothing changed unless
+            reason is undo), undone (a health check failed: the previous
+            release serves). interrupted: the host stopped mid-way and
+            finishes or undoes it at its next start or sudo varlatch
+            upgrade. cancelled by an admin, or expired before the host took
+            it.
+        reason:
+          type: [string, "null"]
+          description: >
+            The class of a refusal (disabled, expired, not-newer, prerelease,
+            superseded, not-latest, not-rollback-safe, ends-rollback-window,
+            undone, held, pending, maintenance, schema,
+            no-backup-destination, unreachable), of a failure (verification,
+            backup, error, undo) or of an undo (health); never free text.
+        journalId: { type: [string, "null"], description: The id of root's upgrade journal the host ran }
+        updatedAt: { type: [string, "null"], format: date-time }
+        noAnswer:
+          type: boolean
+          description: The host has not answered for 2 minutes since the request (or since it took it)
+        cancelled:
+          type: boolean
+          description: Only in a cancel's answer, whether it removed the request (false when the host had taken it)
+
     InstallationRelease:
       type: object
       required: [running, newer, latest, lastAttempt, unreadable]
@@ -6289,7 +6435,10 @@ components:
       properties:
         id:
           type: string
-          enum: [release-check, backup, custody, disk, in-the-way, rollback-safe]
+          description: >
+            The line, in the order the tab shows them. helper (the host
+            helper, ADR-0065 phase 2) is only on a systemd host.
+          enum: [release-check, backup, custody, disk, in-the-way, rollback-safe, helper]
         status:
           type: string
           enum: [pass, fail, unknown]

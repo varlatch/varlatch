@@ -101,6 +101,49 @@ type Hub struct {
 	startMu  sync.Mutex
 	start    int64
 	startSet bool
+
+	// notice is the installation's notice to every stream (Announce), nil
+	// for none; guarded by mu.
+	notice *Message
+}
+
+// InstallationEvent is the event of an installation's notice to every
+// signed-in dashboard: {"notice": "upgrade-restarting", "version": ...}
+// while the host restarts varlatchd for an upgrade (ADR-0065 Decision 8),
+// {"notice": null} once that no longer stands. Metadata only, like the
+// signals.
+const InstallationEvent = "installation"
+
+// Notice is an installation's notice.
+type Notice struct {
+	Kind    string `json:"notice"`
+	Version string `json:"version,omitempty"`
+}
+
+// NoticeUpgradeRestarting: the host stops varlatchd for an upgrade.
+const NoticeUpgradeRestarting = "upgrade-restarting"
+
+// Announce sends every stream the installation's notice, and every stream
+// that opens while it stands; nil withdraws it (sent too). It never waits:
+// a stream whose buffer is full is disconnected, as for a signal.
+func (h *Hub) Announce(n *Notice) {
+	var data []byte
+	if n == nil {
+		data = []byte(`{"notice":null}`)
+	} else {
+		data, _ = json.Marshal(n)
+	}
+	m := Message{Event: InstallationEvent, Data: data}
+	h.mu.Lock()
+	if n == nil {
+		h.notice = nil
+	} else {
+		h.notice = &m
+	}
+	h.mu.Unlock()
+	for _, st := range h.snapshot() {
+		st.send([]Message{m})
+	}
 }
 
 // New makes a hub; Run starts it.
@@ -517,6 +560,10 @@ func (h *Hub) Subscribe(ctx context.Context, session, identity string) (*Stream,
 	}
 	h.streams[s] = struct{}{}
 	h.registered++
+	if h.notice != nil {
+		// Written after the stream's ready event.
+		s.send([]Message{*h.notice})
+	}
 	return s, nil
 }
 

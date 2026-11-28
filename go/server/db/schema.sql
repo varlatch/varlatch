@@ -968,7 +968,7 @@ CREATE TABLE approval_intents (
     'connection.create', 'connection.replace_credential', 'connection.delete',
     'github_app.register', 'github_app.import', 'github_app.replace_key', 'github_app.remove',
     'project.delete', 'organization.delete', 'secret.export',
-    'audit_export.change', 'audit_export.remove')),
+    'audit_export.change', 'audit_export.remove', 'installation.upgrade')),
   target TEXT NOT NULL CONSTRAINT approval_intents_target_check CHECK (json_valid(target) AND json_type(target) = 'object'),
   body_hash TEXT NOT NULL,
   query_hash TEXT NOT NULL,
