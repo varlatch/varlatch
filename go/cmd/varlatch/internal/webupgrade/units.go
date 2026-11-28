@@ -38,11 +38,28 @@ type UnitPaths struct {
 // hardening is the sandbox of every root unit here, as far as it leaves
 // an upgrade possible: it replaces binaries in /usr/local, writes
 // /etc/varlatch and the data directory, and stops and starts varlatchd
-// through systemd. No new privileges, its own /tmp, no home directories (the
-// Sigstore cache is the unit's cache directory), no kernel or clock changes,
-// no core dump (the commands it runs load the keys).
+// through systemd. Its own /tmp, no home directories (the Sigstore cache is
+// the unit's cache directory), no kernel or clock changes, no core dump (the
+// commands it runs load the keys).
+//
+// No NoNewPrivileges=yes. The helper runs varlatchd admin, which as root
+// becomes the data directory's owner (setgroups, setgid, setuid, on every
+// thread); on Ubuntu 26.04 (systemd 259, kernel 7.0) that setuid failed with
+// EPERM whenever no_new_privs was set together with any seccomp filter
+// systemd installs for the settings below (ProtectKernelModules,
+// ProtectClock, RestrictRealtime, LockPersonality, ...), and with neither of
+// the two alone. It did not happen under strace, nor to a small Go program
+// or setpriv under the same settings, so its cause is not pinned down; and
+// whatever it is, it lies in how the kernel and systemd combine the two,
+// which a later release of either may change again. Dropping no_new_privs
+// keeps every one of those filters (systemd installs them with root's
+// CAP_SYS_ADMIN, which this unit keeps, and implies no_new_privs only for a
+// unit without it) and costs nearly nothing here: the unit is root with
+// every capability, so no set-user-ID program or file capability can give
+// it more. The other way round (no_new_privs, no filters) would give up the
+// kernel's attack surface the filters close. TestUnitSandboxLetsVarlatchdDrop
+// runs these settings under systemd, as root, on CI's runner.
 const hardening = `User=root
-NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectHome=yes
 ProtectKernelModules=yes
