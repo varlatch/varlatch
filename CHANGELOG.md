@@ -9,6 +9,22 @@ fixes.
 
 ### Dashboard
 
+- **Upgrade to the next release from the Release tab (ADR-0065, phase 2;
+  the Go server on a systemd host whose operator ran `sudo varlatch upgrade
+  --enable-web`).** When every line of the pre-flight passes, the new
+  seventh one among them (the host helper is installed and answered at the
+  last release check), the tab shows **Upgrade to <version>**. It says what
+  happens and that Varlatch is unavailable for about a minute, then asks
+  for your approval with a trusted passkey. The tab then follows the host:
+  waiting for it (with a cancel until it takes the request, and "too late"
+  after), verifying the release, backing up and checking the delivered copy,
+  restarting, checking health, done; it says when the host did not answer,
+  and each refusal or failure in words, with what it changed. Every
+  signed-in dashboard shows "Varlatch is restarting for an upgrade" before
+  the stop. The commands stay on the card. The audit log describes the new
+  upgrade events.
+  [Upgrading from the web app](docs/operations/upgrade.md#upgrading-from-the-web-app)
+
 - **The Release tab checks an upgrade before you run it (ADR-0065, phase
   1; the Go server only).** When a newer release is known, the tab shows
   whether it is rollback-safe for the release this installation runs, a
@@ -22,8 +38,7 @@ fixes.
   on a systemd host, one release at a time for a jump that skips releases;
   the verified digest, the schema check and the redeploy steps for Coolify
   and Docker. The server says how `varlatchd` runs, so the "as a service /
-  in a container" choice is gone from the tab. The dashboard still upgrades
-  nothing: there is no upgrade button.
+  in a container" choice is gone from the tab.
   [The pre-flight checklist](docs/operations/upgrade.md#the-pre-flight-checklist)
 
 ### API

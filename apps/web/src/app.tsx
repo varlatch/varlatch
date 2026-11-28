@@ -4,6 +4,7 @@ import { createBrowserRouter, Navigate, Outlet, RouterProvider, type RouteObject
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { ConvexReactClient, ConvexProviderWithAuth } from "convex/react";
 import { LiveUpdatesStatus, RealtimeUnavailable, SseLiveUpdatesStatus } from "./components/LiveUpdatesStatus";
+import { RestartNotice } from "./components/RestartNotice";
 import { backend } from "./lib/backend";
 import { SessionProvider, useSession } from "./lib/session";
 import { SseProvider } from "./lib/sseProvider";
@@ -120,6 +121,7 @@ function ConvexWithSession({ children }: { children: React.ReactNode }) {
     return (
       <SseProvider enabled={identityId !== null}>
         <SseLiveUpdatesStatus />
+        <RestartNotice />
         {children}
       </SseProvider>
     );
