@@ -86,10 +86,23 @@ func NewRequest(id, version, identityID string, now time.Time) Request {
 		RequestedAt: now.UTC().Format(TimeLayout), ExpiresAt: now.Add(Lifetime).UTC().Format(TimeLayout)}
 }
 
+// MaxSkew is how far ahead of the host's clock a request may say it was
+// made: varlatchd runs on the host, so only a little.
+const MaxSkew = 2 * time.Minute
+
 // Expires is when the request expires.
 func (r Request) Expires() time.Time {
 	t, _ := time.Parse(TimeLayout, r.ExpiresAt)
 	return t
+}
+
+// Current is whether the request may be acted on at now: not expired, and
+// not made later than now and MaxSkew. With Check's bound on its expiry,
+// a request is never acted on more than Lifetime and MaxSkew after the
+// time it names, whatever that time is.
+func (r Request) Current(now time.Time) bool {
+	at, err := time.Parse(TimeLayout, r.RequestedAt)
+	return err == nil && now.Before(r.Expires()) && !at.After(now.Add(MaxSkew))
 }
 
 // Check is the request's strict schema: every member present and valid, a
@@ -186,7 +199,7 @@ func (p Phase) Final() bool { return p == Done || p == Refused || p == Failed ||
 var Reasons = map[Phase][]string{
 	Refused: {
 		"disabled",             // the host does not accept requests (web-upgrade.conf)
-		"expired",              // it expired before the host took it
+		"expired",              // it expired before the host took it, or names a time ahead of the host's clock
 		"not-newer",            // the version is not newer than the installed one
 		"prerelease",           // the version is a prerelease
 		"superseded",           // a newer release was published since
@@ -245,12 +258,27 @@ type Helper struct {
 	// Enabled is whether the host accepts requests (web-upgrade.conf).
 	Enabled     bool   `json:"enabled"`
 	HeartbeatAt string `json:"heartbeatAt"`
+	// Problem is why the helper's last run could not take a request, one
+	// of HelperProblems, "" for none: the next heartbeat without one (the
+	// release check's, or --enable-web's) clears it.
+	Problem string `json:"problem,omitempty"`
+}
+
+// HelperProblems are the classes a helper's problem is recorded with,
+// never free text. The request stays in request.json, and the helper tries
+// again about once a minute until varlatchd removes it at its expiry.
+var HelperProblems = []string{
+	"data-directory", // varlatchd's configuration named no data directory the helper could use
+	"take",           // the request could not be taken: a directory on the way is not what it must be
 }
 
 // Check is the helper record's schema.
 func (h Helper) Check() error {
 	if h.Format != Format || !release.ValidVersion(h.Version) {
 		return errors.New("upgrade helper record: not a helper record")
+	}
+	if h.Problem != "" && !slices.Contains(HelperProblems, h.Problem) {
+		return fmt.Errorf("upgrade helper record: problem %q", h.Problem)
 	}
 	if _, err := time.Parse(TimeLayout, h.HeartbeatAt); err != nil {
 		return errors.New("upgrade helper record: no time")

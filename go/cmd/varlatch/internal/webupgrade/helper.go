@@ -22,7 +22,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/varlatch/varlatch/go/cmd/varlatch/internal/selfupdate"
@@ -42,6 +44,20 @@ var ErrNoRequest = errors.New("there is no upgrade request")
 
 // ErrInvalid is a taken file that is not a request.
 var ErrInvalid = errors.New("the taken file is not an upgrade request")
+
+// ErrNotTaken is a run that could not take the request, which stays in
+// request.json: the path unit runs the helper again.
+var ErrNotTaken = errors.New("the upgrade request could not be taken")
+
+// RetryDelay is how long a run that could not take a request waits, its
+// lock released, before it fails. The request stays, so the path unit
+// starts the service again at once: waiting keeps that to one run a
+// minute, far under the start limit of the service's unit, until the
+// cause is put right (then the next run takes it) or varlatchd removes the
+// request at its expiry (then the path unit stops). Without the wait the
+// runs would follow each other until systemd's start limit failed the
+// units for good.
+const RetryDelay = time.Minute
 
 // noDestination is how varlatchd refuses --verify-remote without a backup
 // destination (server/backups ErrNoDestination).
@@ -80,6 +96,16 @@ type Helper struct {
 	// recorded that varlatchd restarts: the dashboards' notice goes out.
 	NoticeWait time.Duration
 	Log        func(line string)
+	// Version is the helper's release, for the heartbeat that records a
+	// problem.
+	Version string
+	// Lock, when set, takes the helper's run lock, waiting for it, until
+	// the function it returns: --enable-web and --disable-web hold it while
+	// they change the host, so no run takes a request meanwhile, and
+	// --disable-web refuses while a run holds it.
+	Lock func(ctx context.Context) (unlock func(), err error)
+	// RetryDelay is RetryDelay but in the tests.
+	RetryDelay time.Duration
 }
 
 // Outcome is what a run did with a request.
@@ -97,14 +123,30 @@ func (h *Helper) logf(format string, a ...any) {
 }
 
 // FromRequest takes the pending request and acts on it. ErrNoRequest when
-// there is none. Any other error is one it could not record: the request
-// is taken, and the dashboard says the host did not answer.
+// there is none. ErrNotTaken when it could not take it: the request stays,
+// the helper's heartbeat says why (where varlatchd can still write it), and
+// the run fails after RetryDelay. Any other error is one it could not
+// record: the request is taken, and the dashboard says the host did not
+// answer.
 func (h *Helper) FromRequest(ctx context.Context) (Outcome, error) {
+	unlock := func() {}
+	if h.Lock != nil {
+		u, err := h.Lock(ctx)
+		if err != nil {
+			return Outcome{}, h.notTaken(ctx, unlock, "take", fmt.Errorf("the helper's lock: %w", err))
+		}
+		unlock = sync.OnceFunc(u)
+	}
+	defer func() { unlock() }()
 	dataDir, err := h.DataDir(ctx)
 	if err != nil {
-		return Outcome{}, fmt.Errorf("the data directory: %w", err)
+		return Outcome{}, h.notTaken(ctx, unlock, "data-directory", fmt.Errorf("the data directory: %w", err))
 	}
 	raw, taken, err := take(dataDir, h.TakenDir, h.TakenOwner)
+	if err != nil && taken == "" && !errors.Is(err, ErrNoRequest) {
+		// Before the take's rename: request.json is where it was.
+		return Outcome{}, h.notTaken(ctx, unlock, "take", err)
+	}
 	if err != nil {
 		return Outcome{}, err
 	}
@@ -134,7 +176,9 @@ func (h *Helper) FromRequest(ctx context.Context) (Outcome, error) {
 		h.logf("Refused the upgrade request %s for %s: %s.", req.ID, req.Version, reason)
 		return o, record(upgraderequest.Refused, reason, "")
 	}
-	if !h.Now().Before(req.Expires()) {
+	if !req.Current(h.Now()) {
+		// Expired, or dated ahead of this host's clock, which varlatchd
+		// shares: the lifetime bounds it either way.
 		return refuse("expired")
 	}
 	if accept, err := upgraderequest.Accepting(h.ConfigDir); err != nil || !accept {
@@ -200,6 +244,34 @@ func (h *Helper) FromRequest(ctx context.Context) (Outcome, error) {
 	return o, errors.Join(err, record(upgraderequest.Failed, "error", id))
 }
 
+// notTaken is a run that could not take the request (problem, one of
+// upgraderequest.HelperProblems, for cause): logged, recorded in the
+// helper's heartbeat so that the dashboard's helper line says so, the lock
+// released, and RetryDelay waited before the run fails. The heartbeat is
+// written through varlatchd as any record is; when even that fails (the
+// upgrade-request directory itself is not one), the journal of the
+// service's unit says why, and `varlatch doctor` that the unit failed.
+func (h *Helper) notTaken(ctx context.Context, unlock func(), problem string, cause error) error {
+	h.logf("The upgrade request could not be taken (%s): %v. It stays in place; the helper tries again in %s, until varlatchd removes it at its expiry.", problem, cause, h.RetryDelay)
+	var said error
+	if h.Version != "" {
+		accept, _ := upgraderequest.Accepting(h.ConfigDir)
+		if err := h.Record(ctx, "heartbeat", "--helper-version", h.Version, "--enabled", strconv.FormatBool(accept), "--problem", problem); err != nil {
+			said = fmt.Errorf("the dashboard was not told: %w", err)
+		}
+	}
+	unlock()
+	if h.RetryDelay > 0 {
+		wait := time.NewTimer(h.RetryDelay)
+		select {
+		case <-ctx.Done():
+		case <-wait.C:
+		}
+		wait.Stop()
+	}
+	return errors.Join(fmt.Errorf("%w: %w", ErrNotTaken, cause), said)
+}
+
 // refusal is Decision 1's refusals that need no download: a version that is
 // a prerelease or not newer; another upgrade or rollback not over; a hold
 // after a restore; a maintenance gate; a version root's journal says was
@@ -228,29 +300,11 @@ func (h *Helper) refusal(ctx context.Context, req upgraderequest.Request, dataDi
 	if order, ok := release.CompareVersions(req.Version, inst.Version); !ok || order <= 0 {
 		return "not-newer", inst, nil
 	}
-	if Undid(j, req.Version) {
+	// Root's journal, by the rule the pre-flight offers by (Decision 6).
+	if j.Undid(req.Version) {
 		return "undone", inst, nil
 	}
 	return "", inst, nil
-}
-
-// Undid is whether root's journal j says the host undid an upgrade to
-// version once it had stopped varlatchd for it, or rolled back from it:
-// then the web app does not ask for it again (Decision 6), so a request
-// cannot restart the service in a loop. Only an upgrade by hand writes
-// another journal. An upgrade undone before the stop (its snapshot or its
-// upload failed) changed nothing that serves, and may be asked for again
-// once that is put right.
-func Undid(j *journal.Journal, version string) bool {
-	switch {
-	case j == nil:
-		return false
-	case j.Kind == journal.Upgrade:
-		return j.State == journal.Undone && j.To == version && j.Reached(journal.Stopping)
-	case j.Kind == journal.Rollback:
-		return j.State == journal.Done && j.Upgraded != nil && j.Upgraded.To == version
-	}
-	return false
 }
 
 // verified finds the newest release again, from GitHub, and refuses a

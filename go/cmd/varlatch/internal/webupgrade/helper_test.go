@@ -52,7 +52,8 @@ type fixture struct {
 	windowEnds          bool
 	run                 func(onStep func(*journal.Journal, journal.Step)) (*journal.Journal, error)
 	ran                 int
-	records             [][]string
+	// records are the status records, heartbeats the heartbeats.
+	records, heartbeats [][]string
 	mu                  sync.Mutex
 }
 
@@ -121,9 +122,14 @@ func (f *fixture) helper() *Helper {
 		Record: func(_ context.Context, args ...string) error {
 			f.mu.Lock()
 			defer f.mu.Unlock()
+			if args[0] == "heartbeat" {
+				f.heartbeats = append(f.heartbeats, args)
+				return nil
+			}
 			f.records = append(f.records, args)
 			return nil
 		},
+		Version: installed,
 	}
 }
 
@@ -167,6 +173,9 @@ func TestEveryRefusal(t *testing.T) {
 		set                   func(f *fixture)
 	}{
 		{"expired", next, "expired", func(f *fixture) { f.skew = upgraderequest.Lifetime }},
+		// Made "later" than the host's clock, beyond the skew allowed: the
+		// lifetime would not bound it.
+		{"dated ahead of the clock", next, "expired", func(f *fixture) { f.skew = -upgraderequest.MaxSkew - time.Second }},
 		{"the host does not accept requests", next, "disabled", func(f *fixture) { f.accept(false) }},
 		{"no web-upgrade.conf", next, "disabled", func(f *fixture) { _ = os.Remove(filepath.Join(f.conf, upgraderequest.ConfFile)) }},
 		{"a prerelease", "0.52.0-rc.1", "prerelease", nil},
@@ -465,6 +474,11 @@ func TestAForgedRequestFile(t *testing.T) {
 			if err == nil || len(f.records) != 0 || f.ran != 0 {
 				t.Fatalf("acted on: %v %v", err, f.records)
 			}
+			// Not taken at all (a link where the directory was): the
+			// heartbeat says so; taken and not a request: nothing to say.
+			if notTaken := errors.Is(err, ErrNotTaken); notTaken != (c.name == "the request directory a link") || notTaken != (len(f.heartbeats) == 1) {
+				t.Fatalf("%v; heartbeats %v", err, f.heartbeats)
+			}
 			if keep != "" {
 				if _, err := os.Stat(keep); err != nil {
 					t.Fatalf("what the link names was moved: %v", err)
@@ -474,26 +488,114 @@ func TestAForgedRequestFile(t *testing.T) {
 	}
 }
 
-// Undid reads only root's journal: an upgrade to the version undone, or a
+// A run that cannot take the request (no data directory, a taken directory
+// that is not root's alone) leaves it in place, says so in the helper's
+// heartbeat, releases its lock and waits RetryDelay before it fails, so the
+// path unit's next run comes a minute later, not at once. Once that is put
+// right, the next run takes it.
+func TestARunThatCannotTake(t *testing.T) {
+	for _, c := range []struct {
+		name, problem string
+		set, fix      func(f *fixture, h *Helper)
+	}{
+		{"no data directory", "data-directory",
+			func(_ *fixture, h *Helper) {
+				h.DataDir = func(context.Context) (string, error) {
+					return "", errors.New("varlatchd admin schema status named no data directory")
+				}
+			},
+			func(f *fixture, h *Helper) { h.DataDir = func(context.Context) (string, error) { return f.data, nil } }},
+		{"a taken directory open to others", "take",
+			func(f *fixture, _ *Helper) { _ = os.Chmod(f.taken, 0o755) },
+			func(f *fixture, _ *Helper) { _ = os.Chmod(f.taken, 0o700) }},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFixture(t)
+			r := f.request(next)
+			h := f.helper()
+			var events []string
+			h.Lock = func(context.Context) (func(), error) {
+				events = append(events, "lock")
+				return func() { events = append(events, "unlock") }, nil
+			}
+			h.RetryDelay = 30 * time.Millisecond
+			c.set(f, h)
+			began := time.Now()
+			_, err := h.FromRequest(context.Background())
+			if !errors.Is(err, ErrNotTaken) || time.Since(began) < h.RetryDelay || len(f.records) != 0 {
+				t.Fatalf("%v after %s; records %v", err, time.Since(began), f.records)
+			}
+			if !slices.Equal(events, []string{"lock", "unlock"}) {
+				t.Fatalf("the lock: %v", events)
+			}
+			if len(f.heartbeats) != 1 || strings.Join(f.heartbeats[0], " ") != "heartbeat --helper-version "+installed+" --enabled true --problem "+c.problem {
+				t.Fatalf("the heartbeat: %v", f.heartbeats)
+			}
+			if p, err := upgraderequest.ReadRequest(f.data); err != nil || p == nil || p.ID != r.ID {
+				t.Fatalf("the request did not stay: %+v %v", p, err)
+			}
+			// A cancelled run does not wait out the delay.
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			h.RetryDelay = time.Hour
+			if _, err := h.FromRequest(ctx); !errors.Is(err, ErrNotTaken) {
+				t.Fatal(err)
+			}
+			c.fix(f, h)
+			if o, err := h.FromRequest(context.Background()); err != nil || o.Phase != upgraderequest.Done || o.Request.ID != r.ID {
+				t.Fatalf("once put right: %+v %v", o, err)
+			}
+		})
+	}
+}
+
+// The run lock: one holder at a time; --enable-web and --disable-web do
+// not wait for it; a directory that is not there is said so.
+func TestLockDir(t *testing.T) {
+	dir := t.TempDir()
+	unlock, ok, err := lockDir(dir, true)
+	if err != nil || !ok {
+		t.Fatal(ok, err)
+	}
+	if _, ok, err := lockDir(dir, false); ok || err != nil {
+		t.Fatalf("a second holder: %v %v", ok, err)
+	}
+	unlock()
+	again, ok, err := lockDir(dir, false)
+	if err != nil || !ok {
+		t.Fatalf("after the unlock: %v %v", ok, err)
+	}
+	again()
+	if _, _, err := lockDir(filepath.Join(dir, "gone"), false); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("no directory: %v", err)
+	}
+	link := filepath.Join(dir, "link")
+	_ = os.Symlink(dir, link)
+	if _, _, err := lockDir(link, false); err == nil {
+		t.Fatal("a link was followed")
+	}
+}
+
+// Journal.Undid reads only root's journal: an upgrade to the version undone, or a
 // rollback from it.
 func TestUndid(t *testing.T) {
 	up := &journal.Journal{Kind: journal.Upgrade, State: journal.Undone, To: next, Step: journal.Started}
-	if !Undid(up, next) || Undid(up, "0.52.1") || Undid(nil, next) {
+	if !up.Undid(next) || up.Undid("0.52.1") || (*journal.Journal)(nil).Undid(next) {
 		t.Fatal("an undone upgrade")
 	}
 	// Undone before the stop (the backup gate): nothing served changed.
-	if Undid(&journal.Journal{Kind: journal.Upgrade, State: journal.Undone, To: next, Step: journal.Verified}, next) {
+	if (&journal.Journal{Kind: journal.Upgrade, State: journal.Undone, To: next, Step: journal.Verified}).Undid(next) {
 		t.Fatal("an upgrade undone before the stop")
 	}
-	if Undid(&journal.Journal{Kind: journal.Upgrade, State: journal.Done, To: next}, next) {
+	if (&journal.Journal{Kind: journal.Upgrade, State: journal.Done, To: next}).Undid(next) {
 		t.Fatal("a done upgrade")
 	}
 	rb := &journal.Journal{Kind: journal.Rollback, State: journal.Done, Upgraded: &journal.Journal{To: next}}
-	if !Undid(rb, next) {
+	if !rb.Undid(next) {
 		t.Fatal("a rollback from it")
 	}
 	rb.State = journal.Undone
-	if Undid(rb, next) {
+	if rb.Undid(next) {
 		t.Fatal("a rollback that was itself undone leaves the upgrade")
 	}
 }
