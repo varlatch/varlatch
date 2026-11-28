@@ -255,6 +255,12 @@ PrivateTmp=yes
 ExecStart=/usr/local/bin/varlatch upgrade --check
 ```
 
+Keep `NoNewPrivileges=yes` out of this unit if you add settings that
+install a system call filter (`ProtectKernelModules=`, `ProtectClock=`,
+`RestrictRealtime=`, `LockPersonality=`, `SystemCallFilter=` and the
+like): on some hosts the two together keep `varlatchd admin` from becoming
+the data directory's owner, and the check records nothing.
+
 `/etc/systemd/system/varlatch-release-check.timer`
 
 ```ini
@@ -357,9 +363,13 @@ sudo varlatch upgrade --disable-web   # stop allowing it
   must be on the same file system as the data directory
   (`/var/lib/varlatch`), because taking a request is a rename; otherwise
   `--enable-web` refuses.
-- In `/etc/systemd/system`, all run as root, each a oneshot with
-  `NoNewPrivileges`, a private `/tmp`, no access to home directories and no
-  core dump:
+- In `/etc/systemd/system`, all run as root, each a oneshot with a private
+  `/tmp`, no access to home directories, no kernel module, kernel log,
+  tunable, clock or host name changes, and no core dump. They do not set
+  `NoNewPrivileges`: together with those kernel settings it kept
+  `varlatchd admin` from becoming the data directory's owner on some
+  hosts, and a unit that is root with every capability gains nothing from
+  it:
   - `varlatch-upgrade.path` and `varlatch-upgrade.service`: when
     `varlatchd` writes a request, the service runs
     `varlatch upgrade --from-request`. Nothing listens, and nothing runs

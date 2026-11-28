@@ -22,18 +22,24 @@ import (
 
 var paths = UnitPaths{Varlatch: "/usr/local/bin/varlatch", Config: "/etc/varlatch/varlatchd.conf", DataDir: "/var/lib/varlatch"}
 
-// Every root unit is hardened as the release check's documented unit is,
-// and more; each runs the CLI with the configuration; the path unit watches
+// Every root unit is hardened, with the system call filters and without
+// NoNewPrivileges (hardening says why; TestUnitSandboxLetsVarlatchdDrop
+// runs it); each runs the CLI with the configuration; the path unit watches
 // the request file in the data directory; the recovery comes after
 // varlatchd (it starts it); the timer is Decision 1's cadence.
 func TestUnitFiles(t *testing.T) {
 	for _, u := range []string{CheckServiceUnit, ServiceUnit, RecoverUnit} {
 		f := UnitFile(u, paths)
-		for _, want := range []string{"Type=oneshot", "User=root", "NoNewPrivileges=yes", "PrivateTmp=yes", "ProtectHome=yes", "LimitCORE=0", "CacheDirectory=varlatch-upgrade",
+		for _, want := range []string{"Type=oneshot", "User=root", "PrivateTmp=yes", "ProtectHome=yes", "LimitCORE=0", "CacheDirectory=varlatch-upgrade",
+			"ProtectKernelModules=yes", "ProtectKernelLogs=yes", "ProtectKernelTunables=yes", "ProtectClock=yes", "ProtectHostname=yes",
+			"RestrictRealtime=yes", "RestrictSUIDSGID=yes", "LockPersonality=yes", "KeyringMode=private",
 			"ExecStart=/usr/local/bin/varlatch upgrade --"} {
 			if !strings.Contains(f, want) {
 				t.Errorf("%s has no %q:\n%s", u, want, f)
 			}
+		}
+		if strings.Contains(f, "NoNewPrivileges") {
+			t.Errorf("%s sets NoNewPrivileges, with which varlatchd admin cannot become the data directory's owner on some hosts:\n%s", u, f)
 		}
 		if !strings.Contains(f, " --config /etc/varlatch/varlatchd.conf\n") {
 			t.Errorf("%s names no configuration", u)
