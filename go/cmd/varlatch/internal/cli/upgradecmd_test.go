@@ -397,6 +397,13 @@ type cliHost struct {
 
 func newCLIHost(t *testing.T, varlatchd []byte) *cliHost {
 	t.Helper()
+	return newCLIHostServing(t, varlatchd, "0.50.0-rc.4")
+}
+
+// newCLIHostServing is newCLIHost for a varlatchd of another version, which
+// it waits for.
+func newCLIHostServing(t *testing.T, varlatchd []byte, version string) *cliHost {
+	t.Helper()
 	dir := t.TempDir()
 	h := &cliHost{bin: filepath.Join(dir, "usr", "local", "bin"), conf: filepath.Join(dir, "etc", "varlatch", "varlatchd.conf"), data: filepath.Join(dir, "data")}
 	for _, d := range []string{h.bin, filepath.Dir(h.conf), h.data, filepath.Join(dir, "keys")} {
@@ -458,7 +465,7 @@ func newCLIHost(t *testing.T, varlatchd []byte) *cliHost {
 	if err := h.svc.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	h.serves(t, "0.50.0-rc.4")
+	h.serves(t, version)
 	return h
 }
 

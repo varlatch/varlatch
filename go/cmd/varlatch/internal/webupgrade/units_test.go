@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
+//go:build !windows
+
+// The units and their paths are a systemd host's: the helper never runs on
+// Windows, whose file paths these are not.
+
 package webupgrade
 
 import (

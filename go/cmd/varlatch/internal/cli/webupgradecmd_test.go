@@ -49,8 +49,7 @@ func TestUpgradeFromARequestOnAHost(t *testing.T) {
 	cli, server, name := upgrade.Assets(to, runtime.GOARCH)
 	srv.Publish(to, &fakerelease.Release{Files: map[string][]byte{cli: []byte("#!/bin/sh\necho varlatch " + to + "\n"), server: cliBuild(t, to, "g6fixture"), name: manifest}})
 
-	h := newCLIHost(t, cliBuild(t, from, ""))
-	h.serves(t, from)
+	h := newCLIHostServing(t, cliBuild(t, from, ""), from)
 	taken := filepath.Join(filepath.Dir(h.data), "upgrade", "taken")
 	if err := os.MkdirAll(taken, 0o700); err != nil {
 		t.Fatal(err)
