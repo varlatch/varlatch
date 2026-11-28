@@ -324,12 +324,32 @@ func MakeDir(dataDir string) error {
 	if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
 		return err
 	}
-	info, err := os.Lstat(dir)
+	return CheckDir(dataDir)
+}
+
+// ErrNotDirectory is an upgrade-request directory that is a link or another
+// file: nothing is read, written or removed through it.
+var ErrNotDirectory = errors.New("upgrade request: the upgrade-request directory is a link or not a directory, and is not used")
+
+// CheckDir checks that dataDir's upgrade-request directory is a directory,
+// not a link to one (ErrNotDirectory), or not there (an error wrapping
+// fs.ErrNotExist). Its records are read and written by path below it.
+func CheckDir(dataDir string) error {
+	info, err := os.Lstat(filepath.Join(dataDir, Dir))
 	if err != nil {
 		return err
 	}
 	if !info.IsDir() {
-		return fmt.Errorf("%s is not a directory", dir)
+		return fmt.Errorf("%w: %s", ErrNotDirectory, filepath.Join(dataDir, Dir))
+	}
+	return nil
+}
+
+// checkDirToRead is CheckDir for a reader: a directory that is not there
+// holds no record (nil).
+func checkDirToRead(dataDir string) error {
+	if err := CheckDir(dataDir); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
 	}
 	return nil
 }
@@ -358,6 +378,9 @@ func ReadHelper(dataDir string) (*Helper, error) {
 // file: nil when there is none.
 func ReadRequest(dataDir string) (*Request, error) {
 	var r Request
+	if err := checkDirToRead(dataDir); err != nil {
+		return nil, err
+	}
 	b, err := readSmall(filepath.Join(dataDir, Dir, RequestFile))
 	if b == nil || err != nil {
 		return nil, err
@@ -369,6 +392,9 @@ func ReadRequest(dataDir string) (*Request, error) {
 }
 
 func readRecord(dataDir, name string, v any) (bool, error) {
+	if err := checkDirToRead(dataDir); err != nil {
+		return false, err
+	}
 	b, err := readSmall(filepath.Join(dataDir, Dir, name))
 	if b == nil || err != nil {
 		return false, err
@@ -389,12 +415,17 @@ func readSmall(path string) ([]byte, error) {
 		return nil, err
 	}
 	defer f.Close()
+	return readLimited(f)
+}
+
+// readLimited reads f, which must hold at most MaxBytes.
+func readLimited(f *os.File) ([]byte, error) {
 	b, err := io.ReadAll(io.LimitReader(f, MaxBytes+1))
 	if err != nil {
 		return nil, err
 	}
 	if len(b) > MaxBytes {
-		return nil, fmt.Errorf("%s holds more than %d bytes", path, MaxBytes)
+		return nil, fmt.Errorf("%s holds more than %d bytes", f.Name(), MaxBytes)
 	}
 	return b, nil
 }
@@ -433,19 +464,10 @@ func WriteRequest(dataDir string, r Request) error {
 
 // CancelRequest removes dataDir's request.json when it is the request id:
 // ErrTaken when there is none (the host renamed it away first), so exactly
-// one of the cancel and the take succeeds.
+// one of the cancel and the take succeeds. An upgrade-request directory
+// that is a link is refused (ErrNotDirectory), as the helper's take refuses
+// it: on Unix the directory is opened without following a link, and the
+// file read and removed below that descriptor.
 func CancelRequest(dataDir, id string) error {
-	r, err := ReadRequest(dataDir)
-	if err != nil {
-		return err
-	}
-	if r == nil || r.ID != id {
-		return ErrTaken
-	}
-	if err := os.Remove(filepath.Join(dataDir, Dir, RequestFile)); errors.Is(err, os.ErrNotExist) {
-		return ErrTaken
-	} else if err != nil {
-		return err
-	}
-	return nil
+	return cancelRequest(dataDir, id)
 }

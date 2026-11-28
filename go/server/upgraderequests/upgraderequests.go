@@ -136,6 +136,11 @@ func (s *Service) now() time.Time {
 func (s *Service) dir() string { return filepath.Join(s.DataDir, upgraderequest.Dir) }
 
 func (s *Service) readLast() (*Last, error) {
+	if err := upgraderequest.CheckDir(s.DataDir); errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
 	b, err := os.ReadFile(filepath.Join(s.dir(), lastFile))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
@@ -155,6 +160,11 @@ func (s *Service) readLast() (*Last, error) {
 func (s *Service) restoreLast(prev *Last) error {
 	if prev != nil {
 		return s.writeLast(*prev)
+	}
+	if err := upgraderequest.CheckDir(s.DataDir); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
 	}
 	if err := os.Remove(filepath.Join(s.dir(), lastFile)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -492,11 +502,12 @@ func (s *Service) Cancel(ctx context.Context, req auth.Requester, requestID stri
 	case err == nil:
 		cancelled = true
 		last.Ended = "cancelled"
-		if werr := s.writeLast(*last); werr != nil {
-			return State{}, werr
-		}
+		werr := s.writeLast(*last)
 		err = s.record(ctx, audit.Event{Type: CancelledEvent, Decision: audit.Info, ActorIdentityID: &actor,
 			Metadata: jsvalue.Object{{Key: "requestId", Value: requestID}, {Key: "to", Value: last.Version}, {Key: "reason", Value: "cancelled"}}})
+		if err == nil {
+			err = werr
+		}
 	case errors.Is(err, upgraderequest.ErrTaken):
 		err = s.record(ctx, audit.Event{Type: TooLateEvent, Decision: audit.Info, ActorIdentityID: &actor,
 			Metadata: jsvalue.Object{{Key: "requestId", Value: requestID}, {Key: "to", Value: last.Version}}})
@@ -564,22 +575,29 @@ func (s *Service) Watch(ctx context.Context, admit func() (leave func(), ok bool
 func (s *Service) Pass(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	// A pending request past its expiry is removed, whether or not
-	// last.json can be read.
-	last, lastErr := s.readLast()
-	if r, err := upgraderequest.ReadRequest(s.DataDir); err == nil && r != nil && !s.now().Before(r.Expires()) &&
-		(last == nil && lastErr != nil || last != nil && last.ID == r.ID && last.Ended == "") {
-		if err := upgraderequest.CancelRequest(s.DataDir, r.ID); err == nil {
-			if last != nil {
+	// A pending request past its expiry is removed, whether last.json names
+	// it, is missing, or cannot be read.
+	last, _ := s.readLast()
+	if r, err := upgraderequest.ReadRequest(s.DataDir); err == nil && r != nil && !s.now().Before(r.Expires()) {
+		switch err := upgraderequest.CancelRequest(s.DataDir, r.ID); {
+		case err == nil:
+			// Once the request is gone, audit its expiry even if last.json
+			// cannot be updated, and update last.json only when it still
+			// names this open request.
+			var writeErr error
+			if last != nil && last.ID == r.ID && last.Ended == "" {
 				last.Ended = "expired"
-				if err := s.writeLast(*last); err != nil {
-					return err
-				}
+				writeErr = s.writeLast(*last)
 			}
-			if err := s.record(ctx, audit.Event{Type: CancelledEvent, Decision: audit.Info,
-				Metadata: jsvalue.Object{{Key: "requestId", Value: r.ID}, {Key: "to", Value: r.Version}, {Key: "reason", Value: "expired"}}}); err != nil {
-				return err
+			if _, recErr := s.recordOnce(ctx, r.ID, audit.Event{Type: CancelledEvent, Decision: audit.Info,
+				Metadata: jsvalue.Object{{Key: "requestId", Value: r.ID}, {Key: "to", Value: r.Version}, {Key: "reason", Value: "expired"}}}); recErr != nil {
+				return recErr
 			}
+			if writeErr != nil {
+				return writeErr
+			}
+		case !errors.Is(err, upgraderequest.ErrTaken):
+			return err
 		}
 	}
 	st, bad := s.read()
