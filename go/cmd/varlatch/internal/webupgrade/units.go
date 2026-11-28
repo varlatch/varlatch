@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/varlatch/varlatch/go/lib/upgraderequest"
 )
@@ -74,8 +75,15 @@ func UnitFile(name string, p UnitPaths) string {
 		return head + "[Unit]\nDescription=Daily Varlatch release check\n" + docs + "\n" +
 			"[Timer]\nOnCalendar=daily\nRandomizedDelaySec=1h\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n"
 	case ServiceUnit:
+		// The start limit is set here, not left to the host's defaults: a
+		// run that cannot take a request waits RetryDelay before it fails,
+		// about ten starts in ten minutes, which this allows; a run that
+		// fails at once, again and again (the binary gone), hits it, and
+		// the units fail, which `varlatch doctor` reports
+		// (docs/operations/upgrade.md: systemctl reset-failed).
 		return head + "[Unit]\nDescription=Varlatch upgrade asked for in the web app (varlatch upgrade --from-request)\n" + docs +
-			"Wants=network-online.target\nAfter=network-online.target\n\n" +
+			"Wants=network-online.target\nAfter=network-online.target\n" +
+			"StartLimitIntervalSec=10min\nStartLimitBurst=20\n\n" +
 			"[Service]\nType=oneshot\n" + hardening +
 			"TimeoutStartSec=45min\n" +
 			"ExecStart=" + p.Varlatch + " upgrade --from-request --config " + p.Config + "\n"
@@ -110,13 +118,24 @@ type Host interface {
 	MkdirRoot(path string, mode fs.FileMode) error
 	SameFileSystem(a, b string) (bool, error)
 	Systemctl(ctx context.Context, args ...string) error
-	// Active is whether a unit is active (running).
-	Active(ctx context.Context, unit string) bool
+	// State is a unit's ActiveState (active, activating for a oneshot that
+	// runs, failed, inactive, ...) and Result (success, exit-code,
+	// start-limit-hit, ...).
+	State(ctx context.Context, unit string) (active, result string, err error)
+	// Lock takes the helper's run lock on dir without waiting: ok false
+	// when a run of the helper holds it; an error wrapping fs.ErrNotExist
+	// when dir is not there.
+	Lock(dir string) (unlock func(), ok bool, err error)
 }
 
-// Enable installs the units and the root-only directory, writes
-// web-upgrade.conf and enables them: the path unit and the timer at once
-// (with a release check now), the recovery for the next boot.
+// Enable installs the units and the root-only directory, enables them (the
+// path unit and the timer at once, with a release check now, the recovery
+// for the next boot), and only then writes web-upgrade.conf: a host never
+// says it accepts requests that no unit takes. When a step fails, what it
+// installed is removed again, web-upgrade.conf with it. It holds the
+// helper's run lock throughout, so a run the path unit starts meanwhile
+// waits and then reads web-upgrade.conf as Enable left it; ErrRunning while
+// a run holds it.
 func Enable(ctx context.Context, h Host, p UnitPaths, configDir, takenDir string, say func(string)) error {
 	parent := filepath.Dir(takenDir)
 	for _, d := range []string{parent, takenDir} {
@@ -131,24 +150,38 @@ func Enable(ctx context.Context, h Host, p UnitPaths, configDir, takenDir string
 	if !same {
 		return fmt.Errorf("%s and varlatchd's data directory %s are on different file systems: taking a request is a rename, which needs one. Nothing was enabled (move %s onto the data directory's file system, or bind-mount it there)", takenDir, p.DataDir, parent)
 	}
-	for _, u := range Units {
-		if err := h.WriteFile(filepath.Join(UnitDir, u), []byte(UnitFile(u, p)), 0o644); err != nil {
-			return err
+	unlock, ok, err := h.Lock(parent)
+	switch {
+	case err != nil:
+		return fmt.Errorf("the helper's lock: %w", err)
+	case !ok:
+		return ErrRunning
+	}
+	// Released before the release check below, which may take a while.
+	unlock = sync.OnceFunc(unlock)
+	defer unlock()
+	conf := filepath.Join(configDir, upgraderequest.ConfFile)
+	install := func() error {
+		for _, u := range Units {
+			if err := h.WriteFile(filepath.Join(UnitDir, u), []byte(UnitFile(u, p)), 0o644); err != nil {
+				return err
+			}
 		}
+		for _, args := range [][]string{{"daemon-reload"}, {"enable", RecoverUnit}, {"enable", "--now", CheckTimerUnit, PathUnit}} {
+			if err := h.Systemctl(ctx, args...); err != nil {
+				return err
+			}
+		}
+		return h.WriteFile(conf, upgraderequest.EncodeConf(true), 0o644)
 	}
-	if err := h.WriteFile(filepath.Join(configDir, upgraderequest.ConfFile), upgraderequest.EncodeConf(true), 0o644); err != nil {
-		return err
+	if err := install(); err != nil {
+		if undo := disable(ctx, h, configDir); undo != nil {
+			return fmt.Errorf("%w; %w, but not all of it was removed again (%v): run sudo varlatch upgrade --disable-web, put that right, then --enable-web again", err, ErrLeftOff, undo)
+		}
+		return fmt.Errorf("%w; %w: its units and %s were removed again (put that right, then run sudo varlatch upgrade --enable-web again)", err, ErrLeftOff, conf)
 	}
-	if err := h.Systemctl(ctx, "daemon-reload"); err != nil {
-		return err
-	}
-	if err := h.Systemctl(ctx, "enable", RecoverUnit); err != nil {
-		return err
-	}
-	if err := h.Systemctl(ctx, "enable", "--now", CheckTimerUnit, PathUnit); err != nil {
-		return err
-	}
-	say("Installed and enabled " + strings.Join(Units, ", ") + " in " + UnitDir + ", and wrote " + filepath.Join(configDir, upgraderequest.ConfFile) + ".")
+	unlock()
+	say("Installed and enabled " + strings.Join(Units, ", ") + " in " + UnitDir + ", and wrote " + conf + ".")
 	say("Checking for a newer release now (" + CheckServiceUnit + ")...")
 	if err := h.Systemctl(ctx, "start", CheckServiceUnit); err != nil {
 		say("The release check did not succeed now (journalctl -u " + CheckServiceUnit + " says why); the timer runs it again daily.")
@@ -156,28 +189,59 @@ func Enable(ctx context.Context, h Host, p UnitPaths, configDir, takenDir string
 	return nil
 }
 
-// ErrRunning refuses to disable while an upgrade from a request runs.
-var ErrRunning = errors.New("an upgrade asked for in the web app is running (" + ServiceUnit + "): wait until it is over, then disable")
+// ErrLeftOff is an Enable that failed part way and removed what it had
+// installed: the host does not accept requests.
+var ErrLeftOff = errors.New("the web upgrade was left off")
 
-// Disable stops and removes the units and web-upgrade.conf. The helper's
+// ErrRunning refuses to enable or disable while a run of the helper holds
+// its lock: an upgrade asked for in the web app is being taken or run.
+var ErrRunning = errors.New("an upgrade asked for in the web app is running (" + ServiceUnit + "): wait until it is over, then run this again")
+
+// Disable stops and removes the units and web-upgrade.conf, holding the
+// helper's run lock (ErrRunning while a run holds it). The helper's
 // directory, with the requests it took, stays.
-func Disable(ctx context.Context, h Host, configDir string, say func(string)) error {
-	if h.Active(ctx, ServiceUnit) {
+func Disable(ctx context.Context, h Host, configDir, takenDir string, say func(string)) error {
+	unlock, ok, err := h.Lock(filepath.Dir(takenDir))
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		// Never enabled here, or its directory removed: no run to wait for.
+		unlock = func() {}
+	case err != nil:
+		return fmt.Errorf("the helper's lock: %w", err)
+	case !ok:
 		return ErrRunning
 	}
-	// Errors from units that are not there are not errors here.
-	_ = h.Systemctl(ctx, "disable", "--now", PathUnit, CheckTimerUnit, RecoverUnit)
-	for _, p := range append([]string{filepath.Join(configDir, upgraderequest.ConfFile)}, unitPaths()...) {
-		if err := h.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return err
-		}
-	}
-	if err := h.Systemctl(ctx, "daemon-reload"); err != nil {
+	defer unlock()
+	if err := disable(ctx, h, configDir); err != nil {
 		return err
 	}
 	say("Removed " + strings.Join(Units, ", ") + " and " + filepath.Join(configDir, upgraderequest.ConfFile) + ": the web app shows upgrade commands only.")
 	say("Nothing schedules the release check now; docs.varlatch.com/operations/upgrade/#scheduling-the-release-check gives a timer to install by hand.")
 	return nil
+}
+
+// disable is Disable's change, and Enable's undo: web-upgrade.conf first,
+// so no run reads yes while the rest goes. The recovery's unit is disabled
+// without --now: a recovery that runs (at boot) is finishing or undoing an
+// upgrade and must not be stopped half way; systemd keeps a running unit
+// loaded when its file goes. A run of the helper waiting RetryDelay holds
+// no lock and changes nothing, and fails when it ends.
+func disable(ctx context.Context, h Host, configDir string) error {
+	var first error
+	keep := func(err error) {
+		if first == nil && err != nil && !errors.Is(err, fs.ErrNotExist) {
+			first = err
+		}
+	}
+	keep(h.Remove(filepath.Join(configDir, upgraderequest.ConfFile)))
+	// Errors from units that are not there are not errors here.
+	_ = h.Systemctl(ctx, "disable", "--now", PathUnit, CheckTimerUnit)
+	_ = h.Systemctl(ctx, "disable", RecoverUnit)
+	for _, p := range unitPaths() {
+		keep(h.Remove(p))
+	}
+	keep(h.Systemctl(ctx, "daemon-reload"))
+	return first
 }
 
 func unitPaths() []string {
@@ -205,6 +269,33 @@ func (SystemHost) Systemctl(ctx context.Context, args ...string) error {
 	return systemctl(ctx, args...)
 }
 
-func (SystemHost) Active(ctx context.Context, unit string) bool {
-	return systemctl(ctx, "is-active", "--quiet", unit) == nil
+func (SystemHost) State(ctx context.Context, unit string) (string, string, error) {
+	return unitState(ctx, unit)
+}
+
+func (SystemHost) Lock(dir string) (func(), bool, error) { return lockDir(dir, false) }
+
+// LockRun is the helper's run lock on takenDir's parent, waiting for it
+// (Helper.Lock).
+func LockRun(takenDir string) (func(), error) {
+	unlock, _, err := lockDir(filepath.Dir(takenDir), true)
+	return unlock, err
+}
+
+// Failed are the helper's units that systemd failed for good: the path
+// unit, the timer or the recovery failed, or the request's service hit its
+// start limit (which fails the path unit too). Then no request is taken
+// until `systemctl reset-failed`. A request's run that failed (an upgrade
+// that failed, a request not taken) leaves the service failed until the
+// next request, and is not counted: the dashboard shows it. A state that
+// cannot be read is not counted.
+func Failed(ctx context.Context, h Host) []string {
+	var out []string
+	for _, u := range []string{PathUnit, ServiceUnit, RecoverUnit, CheckTimerUnit} {
+		active, result, err := h.State(ctx, u)
+		if err == nil && (u != ServiceUnit && active == "failed" || u == ServiceUnit && result == "start-limit-hit") {
+			out = append(out, u)
+		}
+	}
+	return out
 }

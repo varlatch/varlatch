@@ -23,12 +23,13 @@ import (
 //	    what the helper did with a request it took (upgrade-request/
 //	    status.json), which the request's route and the audit events read
 //	varlatchd admin upgrade-request heartbeat --helper-version <version>
-//	    --enabled <true|false>
+//	    --enabled <true|false> [--problem <class>]
 //	    that the helper is there and whether the host accepts requests
-//	    (upgrade-request/helper.json), at each release check
+//	    (upgrade-request/helper.json), at each release check; with a
+//	    problem when a run of the helper could not take a request
 
 const upgradeRequestUsage = "Usage: varlatchd admin upgrade-request record --request <id> --phase <taken|verifying|backing-up|restarting|checking|done|refused|failed|undone> [--version <version>] [--reason <class>] [--journal <id>] [--config <file>]\n" +
-	"       varlatchd admin upgrade-request heartbeat --helper-version <version> --enabled <true|false> [--config <file>]"
+	"       varlatchd admin upgrade-request heartbeat --helper-version <version> --enabled <true|false> [--problem <data-directory|take>] [--config <file>]"
 
 // upgradeRequestArgs reads the command's arguments: the record it writes.
 func upgradeRequestArgs(rest []string) (any, string) {
@@ -49,11 +50,15 @@ func upgradeRequestArgs(rest []string) (any, string) {
 		}
 		return s, ""
 	case "heartbeat":
-		v, ok := pairs(rest[1:], "--helper-version", "--enabled")
-		if !ok || len(v) != 2 || v["--enabled"] != "true" && v["--enabled"] != "false" || !release.ValidVersion(v["--helper-version"]) {
+		v, ok := pairs(rest[1:], "--helper-version", "--enabled", "--problem")
+		if !ok || v["--enabled"] != "true" && v["--enabled"] != "false" || !release.ValidVersion(v["--helper-version"]) {
 			return nil, upgradeRequestUsage
 		}
-		return upgraderequest.Helper{Format: upgraderequest.Format, Version: v["--helper-version"], Enabled: v["--enabled"] == "true", HeartbeatAt: now}, ""
+		h := upgraderequest.Helper{Format: upgraderequest.Format, Version: v["--helper-version"], Enabled: v["--enabled"] == "true", HeartbeatAt: now, Problem: v["--problem"]}
+		if err := h.Check(); err != nil {
+			return nil, upgradeRequestUsage + "\n" + err.Error()
+		}
+		return h, ""
 	}
 	return nil, upgradeRequestUsage
 }

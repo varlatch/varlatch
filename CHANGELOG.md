@@ -78,7 +78,10 @@ fixes.
   configured), and runs the same engine with its snapshot uploaded and
   checked off the host before anything stops (`admin backup run --json
   --verify-remote`). It records each step for the dashboard through the
-  new `varlatchd admin upgrade-request record`. `varlatch setup` asks
+  new `varlatchd admin upgrade-request record`. A run that cannot take a
+  request leaves it in place, records the problem in the helper's
+  heartbeat and tries again a minute later; `varlatch doctor` reports a
+  unit systemd failed (`release.web-upgrade-units`). `varlatch setup` asks
   whether to turn it on, default no.
   [Upgrading from the web app](docs/operations/upgrade.md#upgrading-from-the-web-app)
 

@@ -265,6 +265,25 @@ func (j *Journal) Allows(version, bootID string) bool {
 	return j.Start != nil && j.Start.Version == version && j.Start.BootID == bootID && bootID != ""
 }
 
+// Undid is whether this journal, root's, says the host undid an upgrade to
+// version once it had stopped varlatchd for it, or rolled back from it:
+// then the web app does not offer it, and the host helper refuses a request
+// for it (ADR-0065 Decision 6), so a request cannot restart the service in
+// a loop. Only an upgrade by hand writes another journal. An upgrade undone
+// before the stop (its snapshot or its upload failed) changed nothing that
+// serves, and may be asked for again once that is put right.
+func (j *Journal) Undid(version string) bool {
+	switch {
+	case j == nil:
+		return false
+	case j.Kind == Upgrade:
+		return j.State == Undone && j.To == version && j.Reached(Stopping)
+	case j.Kind == Rollback:
+		return j.State == Done && j.Upgraded != nil && j.Upgraded.To == version
+	}
+	return false
+}
+
 // Reached is whether step s is done.
 func (j *Journal) Reached(s Step) bool {
 	if s == None {

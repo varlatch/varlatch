@@ -21,3 +21,7 @@ func writeRootFile(string, []byte, fs.FileMode) error { return errNotHere }
 func mkdirRoot(string, fs.FileMode) error { return errNotHere }
 
 func systemctl(context.Context, ...string) error { return errNotHere }
+
+func unitState(context.Context, string) (string, string, error) { return "", "", errNotHere }
+
+func lockDir(string, bool) (func(), bool, error) { return nil, false, errNotHere }

@@ -18,6 +18,7 @@ import (
 
 	"github.com/varlatch/varlatch/go/lib/buildinfo"
 	journal "github.com/varlatch/varlatch/go/lib/upgradejournal"
+	"github.com/varlatch/varlatch/go/lib/upgraderequest"
 )
 
 func runDoctor(t *testing.T, path string, env MapEnv, args ...string) (int, string, string) {
@@ -263,5 +264,36 @@ func TestDoctorReadsTheUpgradeJournal(t *testing.T) {
 	}
 	if c := pendingUpgrade("0.49.0", nil, errors.New("not a journal")); c.Status != "fail" {
 		t.Errorf("unreadable, and two releases: %+v", c)
+	}
+}
+
+// release.web-upgrade-units: only on a host that accepts requests from the
+// web app; a unit systemd failed for good fails it, with the reset.
+func TestDoctorWebUpgradeUnits(t *testing.T) {
+	defer func(f func() []string) { webUnitFailures = f }(webUnitFailures)
+	failed := []string{}
+	webUnitFailures = func() []string { return failed }
+	dir := t.TempDir()
+	config := filepath.Join(dir, "varlatchd.conf")
+	ids := func() []string {
+		var out []string
+		for _, c := range doctorCLIChecks(doctorReport{Via: "daemon"}, config) {
+			out = append(out, c.ID+" "+c.Status)
+		}
+		return out
+	}
+	if got := ids(); slices.ContainsFunc(got, func(s string) bool { return strings.HasPrefix(s, "release.web-upgrade-units") }) {
+		t.Fatalf("without the helper: %v", got)
+	}
+	if err := os.WriteFile(filepath.Join(dir, upgraderequest.ConfFile), upgraderequest.EncodeConf(true), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := ids(); !slices.Contains(got, "release.web-upgrade-units pass") {
+		t.Fatalf("with the helper: %v", got)
+	}
+	failed = []string{"varlatch-upgrade.path", "varlatch-upgrade.service"}
+	c := webUpgradeUnits(failed)
+	if c.Status != "fail" || c.Class != "advisory" || !strings.Contains(c.Remedy, "systemctl reset-failed varlatch-upgrade.path varlatch-upgrade.service") || !strings.Contains(c.Remedy, "systemctl start varlatch-upgrade.path") {
+		t.Fatalf("failed units: %+v", c)
 	}
 }
