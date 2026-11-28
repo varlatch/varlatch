@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -54,11 +55,12 @@ func TestWriteAndCancel(t *testing.T) {
 	if err := WriteRequest(dir, r); err != nil {
 		t.Fatal(err)
 	}
+	// The modes are a Unix host's; Windows keeps none of them.
 	info, err := os.Stat(filepath.Join(dir, Dir, RequestFile))
-	if err != nil || info.Mode().Perm() != 0o600 {
+	if err != nil || runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("%v %v", info, err)
 	}
-	if d, _ := os.Stat(filepath.Join(dir, Dir)); d.Mode().Perm() != 0o700 {
+	if d, _ := os.Stat(filepath.Join(dir, Dir)); runtime.GOOS != "windows" && d.Mode().Perm() != 0o700 {
 		t.Fatalf("the directory's mode: %v", d.Mode())
 	}
 	other := NewRequest("upr_"+strings.Repeat("c", 26), "0.52.0", testIdentity, testNow)
