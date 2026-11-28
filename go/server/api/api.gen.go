@@ -3220,6 +3220,27 @@ func (e UpgradeRequestStateState) Valid() bool {
 	}
 }
 
+// Defines values for UpgradeRequestStateUnreadable.
+const (
+	LastJson    UpgradeRequestStateUnreadable = "last.json"
+	RequestJson UpgradeRequestStateUnreadable = "request.json"
+	StatusJson  UpgradeRequestStateUnreadable = "status.json"
+)
+
+// Valid indicates whether the value is a known member of the UpgradeRequestStateUnreadable enum.
+func (e UpgradeRequestStateUnreadable) Valid() bool {
+	switch e {
+	case LastJson:
+		return true
+	case RequestJson:
+		return true
+	case StatusJson:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ValidationReportNotEvaluatedReason.
 const (
 	ValidationReportNotEvaluatedReasonPermission  ValidationReportNotEvaluatedReason = "permission"
@@ -6755,7 +6776,7 @@ type UpgradePreflightLineId string
 // UpgradePreflightLineStatus defines model for UpgradePreflightLine.Status.
 type UpgradePreflightLineStatus string
 
-// UpgradeRequestState An upgrade request from the web app and what the host did with it (ADR-0065). Display state, written by varlatchd and by the host helper through it; root's upgrade journal says whether an upgrade it ran is done or undone.
+// UpgradeRequestState An upgrade request from the web app and what the host did with it (ADR-0065). Display state, written by varlatchd and by the host helper through it; root's upgrade journal says whether an upgrade it ran is done or undone. A record that cannot be read is named in unreadable, never an error.
 type UpgradeRequestState struct {
 	// Cancelled Only in a cancel's answer, whether it removed the request (false when the host had taken it)
 	Cancelled *bool `json:"cancelled,omitempty"`
@@ -6782,12 +6803,18 @@ type UpgradeRequestState struct {
 	}] `json:"request"`
 
 	// State waiting: the host has not taken it yet. taken to checking: the host's steps. done, refused, failed (nothing changed unless reason is undo), undone (a health check failed: the previous release serves). interrupted: the host stopped mid-way and finishes or undoes it at its next start or sudo varlatch upgrade. cancelled by an admin, or expired before the host took it.
-	State     UpgradeRequestStateState     `json:"state"`
-	UpdatedAt nullable.Nullable[time.Time] `json:"updatedAt"`
+	State UpgradeRequestStateState `json:"state"`
+
+	// Unreadable The records in the data directory's upgrade-request directory that are there but cannot be read. The state is what the others say: with last.json among them, which request it was is not known (request is null), and a new request may replace it once nothing is waiting or running.
+	Unreadable []UpgradeRequestStateUnreadable `json:"unreadable"`
+	UpdatedAt  nullable.Nullable[time.Time]    `json:"updatedAt"`
 }
 
 // UpgradeRequestStateState waiting: the host has not taken it yet. taken to checking: the host's steps. done, refused, failed (nothing changed unless reason is undo), undone (a health check failed: the previous release serves). interrupted: the host stopped mid-way and finishes or undoes it at its next start or sudo varlatch upgrade. cancelled by an admin, or expired before the host took it.
 type UpgradeRequestStateState string
+
+// UpgradeRequestStateUnreadable defines model for UpgradeRequestState.Unreadable.
+type UpgradeRequestStateUnreadable string
 
 // ValidationReport defines model for ValidationReport.
 type ValidationReport struct {

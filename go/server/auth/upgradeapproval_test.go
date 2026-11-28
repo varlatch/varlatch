@@ -4,8 +4,10 @@ package auth_test
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -284,6 +286,108 @@ func TestTheWatch(t *testing.T) {
 	_ = w.svc.Pass(w.e.ctx)
 	if len(w.notices) != 2 || w.notices[1] != nil {
 		t.Fatalf("not withdrawn: %+v", w.notices)
+	}
+
+	// A restart whose step never moves again (the helper died before the
+	// stop): once interrupted, the notice is withdrawn too.
+	w.file(t, requestID("d"))
+	w.take(t)
+	w.status(t, requestID("d"), upgraderequest.Restart, "", "0123456789abcdef")
+	_ = w.svc.Pass(w.e.ctx)
+	if len(w.notices) != 3 || w.notices[2] == nil {
+		t.Fatalf("the second notice: %+v", w.notices)
+	}
+	w.e.clock.add(upgraderequests.Stalled - time.Minute)
+	_ = w.svc.Pass(w.e.ctx)
+	if len(w.notices) != 3 {
+		t.Fatalf("withdrawn before the stall: %+v", w.notices)
+	}
+	w.e.clock.add(2 * time.Minute)
+	_ = w.svc.Pass(w.e.ctx)
+	if st, _ := w.svc.Read(w.e.ctx); st.State != "interrupted" || len(w.notices) != 4 || w.notices[3] != nil {
+		t.Fatalf("interrupted, not withdrawn: %+v %+v", st, w.notices)
+	}
+}
+
+// The records are display state: one that is there but cannot be read is
+// said (unreadable), never an error; the watch logs it once, not at each
+// look; a new request replaces it once nothing waits or runs.
+func TestUnreadableRecords(t *testing.T) {
+	w := newUpgradeWorld(t)
+	var logged strings.Builder
+	w.svc.Log = slog.New(slog.NewTextHandler(&logged, nil))
+	dir := filepath.Join(w.data, upgraderequest.Dir)
+	w.file(t, requestID("a"))
+	w.take(t)
+	if err := os.WriteFile(filepath.Join(dir, upgraderequest.StatusFile), []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st, err := w.svc.Read(w.e.ctx)
+	if err != nil || st.State != "taken" || !slices.Equal(st.Unreadable, []string{"status.json"}) || st.Request == nil {
+		t.Fatalf("status.json: %+v %v", st, err)
+	}
+	for i := 0; i < 3; i++ {
+		if err := w.svc.Pass(w.e.ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := strings.Count(logged.String(), "cannot be read"); n != 1 {
+		t.Fatalf("logged %d times:\n%s", n, logged.String())
+	}
+	if err := os.WriteFile(filepath.Join(dir, "last.json"), []byte("[]"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st, err = w.svc.Read(w.e.ctx)
+	if err != nil || st.State != "none" || st.Request != nil || !slices.Equal(st.Unreadable, []string{"last.json", "status.json"}) {
+		t.Fatalf("last.json: %+v %v", st, err)
+	}
+	if !strings.Contains(string(jsvalue.Stringify(st.JS())), `"unreadable":["last.json","status.json"]`) {
+		t.Fatalf("the answer: %s", jsvalue.Stringify(st.JS()))
+	}
+	// Nothing waits or runs (the status cannot say so): a new request
+	// replaces both records' word.
+	w.file(t, requestID("b"))
+	if st, err := w.svc.Read(w.e.ctx); err != nil || st.State != "waiting" || st.Request == nil || st.Request.ID != requestID("b") || !slices.Equal(st.Unreadable, []string{"status.json"}) {
+		t.Fatalf("after a new request: %+v %v", st, err)
+	}
+	// With last.json unreadable while a request waits, none is filed over
+	// it, and it still expires.
+	_ = os.WriteFile(filepath.Join(dir, "last.json"), []byte("[]"), 0o600)
+	if st, _ := w.svc.Read(w.e.ctx); st.State != "waiting" || st.Final() {
+		t.Fatalf("a request waits: %+v", st)
+	}
+	w.e.clock.add(11 * time.Minute)
+	_ = w.svc.Pass(w.e.ctx)
+	if r, _ := upgraderequest.ReadRequest(w.data); r != nil {
+		t.Fatal("the request did not expire")
+	}
+}
+
+// A filing whose job fails after it wrote last.json (here the request
+// file: another is there) takes last.json back: the state stays the
+// previous request's, never a phantom request "taken".
+func TestAFailedFilingLeavesNoRecord(t *testing.T) {
+	w := newUpgradeWorld(t)
+	w.file(t, requestID("a"))
+	if _, err := w.svc.Cancel(w.e.ctx, w.req(), requestID("a")); err != nil {
+		t.Fatal(err)
+	}
+	stray := upgraderequest.NewRequest(requestID("z"), "0.52.0", "idn_"+strings.Repeat("b", 26), w.e.clock.now())
+	if err := upgraderequest.WriteRequest(w.data, stray); err != nil {
+		t.Fatal(err)
+	}
+	approval := w.ask(t, requestID("b"))
+	if err := w.approve(t, approval, w.key); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.svc.Request(w.e.ctx, w.req(), "0.52.0", requestID("b"), approval); reasonOf(err) != "pending" {
+		t.Fatalf("over another request: %v", err)
+	}
+	if st, _ := w.svc.Read(w.e.ctx); st.Request == nil || st.Request.ID != requestID("a") || st.State != "cancelled" {
+		t.Fatalf("the state after the failed filing: %+v", st)
+	}
+	if w.e.count(`SELECT count(*) FROM audit_events WHERE event_type = ? AND json_extract(metadata, '$.requestId') = ?`, upgraderequests.RequestedEvent, requestID("b")) != 0 {
+		t.Fatal("the failed filing was audited")
 	}
 }
 

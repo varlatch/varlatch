@@ -241,6 +241,38 @@ func TestInTheWay(t *testing.T) {
 	}
 }
 
+// Decision 6 in the pre-flight, by the host helper's own rule: a target
+// root's journal says was undone after the stop, or rolled back from, is
+// not offered again; one undone before the stop (its backup failed), or
+// another version, is.
+func TestAnUndoneVersionIsNotOffered(t *testing.T) {
+	undone := &upgradejournal.Journal{ID: "a", Kind: upgradejournal.Upgrade, From: "0.51.0", To: "0.52.0", State: upgradejournal.Undone, Step: upgradejournal.Started}
+	for name, c := range map[string]struct {
+		journal *upgradejournal.Journal
+		fail    string
+	}{
+		"undone after the stop": {undone, "The host undid an upgrade to 0.52.0 after it stopped Varlatch for it: an undone version is not offered again from the web."},
+		"rolled back from": {&upgradejournal.Journal{ID: "b", Kind: upgradejournal.Rollback, From: "0.52.0", To: "0.51.0", State: upgradejournal.Done,
+			Upgraded: &upgradejournal.Journal{To: "0.52.0"}}, "The host rolled back from 0.52.0: an undone version is not offered again from the web."},
+		"undone before the stop": {&upgradejournal.Journal{ID: "c", Kind: upgradejournal.Upgrade, From: "0.51.0", To: "0.52.0", State: upgradejournal.Undone, Step: upgradejournal.Verified}, ""},
+		"another version undone": {&upgradejournal.Journal{ID: "d", Kind: upgradejournal.Upgrade, From: "0.50.2", To: "0.51.0", State: upgradejournal.Undone, Step: upgradejournal.Started}, ""},
+	} {
+		in := ready()
+		in.Host.Upgrade = c.journal
+		r := Judge(in)
+		l := line(t, r, LineInTheWay)
+		if c.fail == "" {
+			if l.Status != Pass || !r.All() {
+				t.Errorf("%s: %+v", name, l)
+			}
+			continue
+		}
+		if l.Status != Fail || l.Detail != c.fail || !strings.Contains(l.Remedy, "sudo varlatch upgrade 0.52.0") || r.All() {
+			t.Errorf("%s: %+v", name, l)
+		}
+	}
+}
+
 func TestAgo(t *testing.T) {
 	for want, d := range map[string]time.Duration{"just now": 10 * time.Second, "1 minute ago": time.Minute, "5 hours ago": 5 * time.Hour, "47 hours ago": 47 * time.Hour, "3 days ago": 72 * time.Hour} {
 		if got := Ago(now, now.Add(-d)); got != want {
@@ -257,11 +289,12 @@ func TestTheHelperLine(t *testing.T) {
 		status Status
 		detail string
 	}{
-		"not installed":          {func(in *Input) { in.Host.Helper = Helper{} }, Fail, "not installed"},
-		"turned off":             {func(in *Input) { in.Host.Helper.Enabled = false }, Fail, "turned off"},
-		"a stale heartbeat":      {func(in *Input) { in.Host.Helper.At = now.Add(-37 * time.Hour) }, Fail, "last answered 37 hours ago"},
-		"not the last check's":   {func(in *Input) { in.Host.Helper.At = now.Add(-4 * time.Hour) }, Fail, "ran without the host helper"},
-		"a record that is wrong": {func(in *Input) { in.Host.Helper.Err = errors.New("not a helper record") }, Unknown, "cannot be read"},
+		"not installed":               {func(in *Input) { in.Host.Helper = Helper{} }, Fail, "not installed"},
+		"turned off":                  {func(in *Input) { in.Host.Helper.Enabled = false }, Fail, "turned off"},
+		"a stale heartbeat":           {func(in *Input) { in.Host.Helper.At = now.Add(-37 * time.Hour) }, Fail, "last answered 37 hours ago"},
+		"not the last check's":        {func(in *Input) { in.Host.Helper.At = now.Add(-4 * time.Hour) }, Fail, "ran without the host helper"},
+		"a record that is wrong":      {func(in *Input) { in.Host.Helper.Err = errors.New("not a helper record") }, Unknown, "cannot be read"},
+		"a request it could not take": {func(in *Input) { in.Host.Helper.Problem = "take" }, Fail, "could not take the last request (2 hours ago): a directory on the way"},
 	} {
 		in := ready()
 		c.set(&in)

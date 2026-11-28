@@ -83,7 +83,7 @@ func upgradeHost(env *hostEnv, configDir string) func(ctx context.Context) upgra
 		if rec, err := upgraderequest.ReadHelper(env.cfg.DataDir); err != nil {
 			h.Helper.Err = err
 		} else if rec != nil {
-			h.Helper = upgradecheck.Helper{Present: true, Enabled: rec.Enabled, Version: rec.Version, At: rec.Heartbeat()}
+			h.Helper = upgradecheck.Helper{Present: true, Enabled: rec.Enabled, Version: rec.Version, At: rec.Heartbeat(), Problem: rec.Problem}
 		}
 		return h
 	}

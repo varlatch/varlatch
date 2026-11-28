@@ -91,9 +91,39 @@ type Service struct {
 	Log      *slog.Logger
 
 	mu sync.Mutex
-	// seen is the status last acted on (Watch), announced the request whose
+	// seen is the state last acted on (Watch), announced the request whose
 	// restart was announced.
 	seen, announced string
+	// warned is, by file, the error last logged for a file that cannot be
+	// read: Watch logs it once, not at each look.
+	warned map[string]string
+}
+
+// The records of the upgrade-request directory a State can say cannot be
+// read.
+const (
+	unreadableLast    = lastFile
+	unreadableStatus  = upgraderequest.StatusFile
+	unreadableRequest = upgraderequest.RequestFile
+)
+
+// warnOnce logs that file cannot be read (err), once per error; a nil err
+// forgets it, so the next failure is logged again.
+func (s *Service) warnOnce(file string, err error) {
+	if s.warned == nil {
+		s.warned = map[string]string{}
+	}
+	if err == nil {
+		delete(s.warned, file)
+		return
+	}
+	if s.warned[file] == err.Error() {
+		return
+	}
+	s.warned[file] = err.Error()
+	if s.Log != nil {
+		s.Log.Warn("the upgrade request's record cannot be read; the dashboard says so until it is replaced", "file", file, "error", err)
+	}
 }
 
 func (s *Service) now() time.Time {
@@ -120,6 +150,18 @@ func (s *Service) readLast() (*Last, error) {
 	return &l, nil
 }
 
+// restoreLast puts back the last.json a failed request replaced: prev, or
+// none.
+func (s *Service) restoreLast(prev *Last) error {
+	if prev != nil {
+		return s.writeLast(*prev)
+	}
+	if err := os.Remove(filepath.Join(s.dir(), lastFile)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
 func (s *Service) writeLast(l Last) error {
 	b, err := json.Marshal(l)
 	if err != nil {
@@ -143,6 +185,10 @@ type State struct {
 	JournalID string
 	UpdatedAt string
 	NoAnswer  bool
+	// Unreadable are the records that are there but cannot be read
+	// (last.json, status.json, request.json): the state is what the rest
+	// says, and a new request may replace them.
+	Unreadable []string
 	// Cancelled is a cancel's outcome; nil elsewhere.
 	Cancelled *bool
 }
@@ -160,8 +206,10 @@ func (st State) JS() jsvalue.Object {
 		req = jsvalue.Object{{Key: "id", Value: r.ID}, {Key: "from", Value: r.From}, {Key: "version", Value: r.Version}, {Key: "requestedBy", Value: orNil(r.RequestedBy)},
 			{Key: "requestedAt", Value: r.RequestedAt}, {Key: "expiresAt", Value: r.ExpiresAt}}
 	}
+	unreadable := append([]string{}, st.Unreadable...)
 	o := jsvalue.Object{{Key: "request", Value: req}, {Key: "state", Value: st.State}, {Key: "reason", Value: orNil(st.Reason)},
-		{Key: "journalId", Value: orNil(st.JournalID)}, {Key: "updatedAt", Value: orNil(st.UpdatedAt)}, {Key: "noAnswer", Value: st.NoAnswer}}
+		{Key: "journalId", Value: orNil(st.JournalID)}, {Key: "updatedAt", Value: orNil(st.UpdatedAt)}, {Key: "noAnswer", Value: st.NoAnswer},
+		{Key: "unreadable", Value: unreadable}}
 	if st.Cancelled != nil {
 		o = append(o, jsvalue.Member{Key: "cancelled", Value: *st.Cancelled})
 	}
@@ -177,30 +225,81 @@ func (st State) Final() bool {
 	return false
 }
 
-// Read is the state now.
+// Read is the state now. Its records are display state, so one that is
+// there but cannot be read is not an error: the state is what the rest
+// says, with Unreadable naming it, as the pre-flight's helper line treats
+// helper.json.
 func (s *Service) Read(ctx context.Context) (State, error) {
-	last, err := s.readLast()
-	if err != nil || last == nil {
-		return State{State: "none"}, err
-	}
-	st := State{Request: last}
+	st, _ := s.read()
+	return st, nil
+}
+
+// errs are the read errors of the files Unreadable names, for warnOnce.
+type errs map[string]error
+
+func (s *Service) read() (State, errs) {
+	bad := errs{}
 	now := s.now()
-	asked, _ := time.Parse(upgraderequest.TimeLayout, last.RequestedAt)
 	pending, err := upgraderequest.ReadRequest(s.DataDir)
 	if err != nil {
-		return st, err
-	}
-	switch {
-	case last.Ended != "":
-		st.State = last.Ended
-		return st, nil
-	case pending != nil && pending.ID == last.ID:
-		st.State, st.NoAnswer = "waiting", now.Sub(asked) > NoAnswer
-		return st, nil
+		bad[unreadableRequest] = err
 	}
 	status, err := upgraderequest.ReadStatus(s.DataDir)
 	if err != nil {
-		return st, err
+		bad[unreadableStatus], status = err, nil
+	}
+	last, err := s.readLast()
+	if err != nil {
+		bad[unreadableLast] = err
+	}
+	if last == nil {
+		st := State{State: "none"}
+		if err != nil {
+			// Which request it was is not known. A file the host has not
+			// taken, or a step it reports that still moves, is not over:
+			// no new request until it is; else one may replace it.
+			switch {
+			case pending != nil || bad[unreadableRequest] != nil:
+				st.State = "waiting"
+			case status != nil && !status.Phase.Final():
+				if at, err := time.Parse(upgraderequest.TimeLayout, status.UpdatedAt); err == nil && now.Sub(at) <= Stalled {
+					st.State, st.JournalID, st.UpdatedAt = string(status.Phase), status.JournalID, status.UpdatedAt
+				}
+			}
+		}
+		st.Unreadable = bad.names()
+		return st, bad
+	}
+	st := s.readOf(last, pending, bad[unreadableRequest] != nil, status, now)
+	st.Unreadable = bad.names()
+	return st, bad
+}
+
+func (e errs) names() []string {
+	var out []string
+	for _, f := range []string{unreadableLast, unreadableStatus, unreadableRequest} {
+		if e[f] != nil {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// readOf is the state of the last request, from the pending request (or
+// one that cannot be read, unreadablePending), the helper's status and
+// root's journal.
+func (s *Service) readOf(last *Last, pending *upgraderequest.Request, unreadablePending bool, status *upgraderequest.Status, now time.Time) State {
+	st := State{Request: last}
+	asked, _ := time.Parse(upgraderequest.TimeLayout, last.RequestedAt)
+	switch {
+	case last.Ended != "":
+		st.State = last.Ended
+		return st
+	case pending != nil && pending.ID == last.ID || pending == nil && unreadablePending:
+		// A request.json that cannot be read is still one the host has
+		// not taken.
+		st.State, st.NoAnswer = "waiting", now.Sub(asked) > NoAnswer
+		return st
 	}
 	if status == nil || status.RequestID != last.ID {
 		// Taken (the file is gone), and nothing said yet. Past the
@@ -210,11 +309,11 @@ func (s *Service) Read(ctx context.Context) (State, error) {
 		if until, err := time.Parse(upgraderequest.TimeLayout, last.ExpiresAt); err == nil && !now.Before(until) {
 			st.State, st.NoAnswer = "interrupted", false
 		}
-		return st, nil
+		return st
 	}
 	st.State, st.Reason, st.JournalID, st.UpdatedAt = string(status.Phase), status.Reason, status.JournalID, status.UpdatedAt
 	if status.Phase.Final() {
-		return st, nil
+		return st
 	}
 	// Not over by the helper's word: root's journal says how its upgrade
 	// ended, and a step that has not moved for long was interrupted.
@@ -223,16 +322,16 @@ func (s *Service) Read(ctx context.Context) (State, error) {
 			switch j.State {
 			case upgradejournal.Done:
 				st.State, st.Reason = "done", ""
-				return st, nil
+				return st
 			case upgradejournal.Undone:
 				st.State, st.Reason = "undone", "health"
 				if !j.Reached(upgradejournal.Stopping) {
 					st.State, st.Reason = "failed", "backup"
 				}
-				return st, nil
+				return st
 			case upgradejournal.Failed:
 				st.State, st.Reason = "failed", "undo"
-				return st, nil
+				return st
 			}
 		}
 	}
@@ -243,7 +342,7 @@ func (s *Service) Read(ctx context.Context) (State, error) {
 	case status.Phase == upgraderequest.Taken && now.Sub(at) > NoAnswer:
 		st.NoAnswer = true
 	}
-	return st, nil
+	return st
 }
 
 // readFile reads root's journal (0644, in a directory varlatchd may read).
@@ -283,9 +382,8 @@ func (s *Service) Request(ctx context.Context, req auth.Requester, version, requ
 		return State{}, err
 	}
 	// One at a time: none waiting, none the host is on.
-	if cur, err := s.Read(ctx); err != nil {
-		return State{}, err
-	} else if !cur.Final() {
+	cur, _ := s.read()
+	if !cur.Final() {
 		return State{}, stateChanged("pending", "Another upgrade request is pending or running: wait for it, or cancel it before the host takes it")
 	} else if cur.Request != nil && cur.Request.ID == requestID {
 		return State{}, stateChanged("request-id-used", "This request id was used: start again for a new one")
@@ -302,7 +400,7 @@ func (s *Service) Request(ctx context.Context, req auth.Requester, version, requ
 	now := s.now()
 	file := upgraderequest.NewRequest(requestID, version, req.IdentityID, now)
 	last := Last{ID: requestID, From: s.Version, Version: version, RequestedBy: req.IdentityID, RequestedAt: file.RequestedAt, ExpiresAt: file.ExpiresAt}
-	written := false
+	lastWritten, written := false, false
 	err = s.Writer.Job(ctx, nil, func(ctx context.Context, tx *storage.Tx) error {
 		var used int
 		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM audit_events WHERE event_type = ? AND json_extract(metadata, '$.requestId') = ?`, RequestedEvent, requestID).Scan(&used); err != nil {
@@ -322,11 +420,13 @@ func (s *Service) Request(ctx context.Context, req auth.Requester, version, requ
 		}}); err != nil {
 			return err
 		}
-		// The request last, inside the job: a commit that fails takes it
-		// back below.
+		// The files last, inside the job: last.json, then the request.
+		// A job that fails after them (its commit) takes both back below,
+		// unless the host took the request first.
 		if err := s.writeLast(last); err != nil {
 			return err
 		}
+		lastWritten = true
 		if err := upgraderequest.WriteRequest(s.DataDir, file); err != nil {
 			if errors.Is(err, upgraderequest.ErrPending) {
 				return stateChanged("pending", "Another upgrade request is pending")
@@ -337,12 +437,35 @@ func (s *Service) Request(ctx context.Context, req auth.Requester, version, requ
 		return nil
 	})
 	if err != nil {
-		if written {
-			_ = upgraderequest.CancelRequest(s.DataDir, requestID)
-		}
+		s.takeBack(requestID, cur.Request, lastWritten, written)
 		return State{}, err
 	}
 	return s.Read(ctx)
+}
+
+// takeBack undoes the files of a request whose job failed: the request
+// when it was written, and last.json when the request is gone (prev is the
+// record it replaced). When the host took the request first, it acts on
+// it, and last.json keeps naming it so that its status is shown; so it
+// does when the request could not be removed.
+func (s *Service) takeBack(requestID string, prev *Last, lastWritten, written bool) {
+	if written {
+		switch err := upgraderequest.CancelRequest(s.DataDir, requestID); {
+		case errors.Is(err, upgraderequest.ErrTaken):
+			return
+		case err != nil:
+			// It may still be there: last.json keeps naming it.
+			if s.Log != nil {
+				s.Log.Warn("an upgrade request whose filing failed could not be taken back", "request", requestID, "error", err)
+			}
+			return
+		}
+	}
+	if lastWritten {
+		if err := s.restoreLast(prev); err != nil && s.Log != nil {
+			s.Log.Warn("the record of an upgrade request whose filing failed could not be taken back", "request", requestID, "error", err)
+		}
+	}
 }
 
 // Cancel removes the pending request, or finds it taken (too late), and
@@ -350,10 +473,9 @@ func (s *Service) Request(ctx context.Context, req auth.Requester, version, requ
 func (s *Service) Cancel(ctx context.Context, req auth.Requester, requestID string) (State, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	last, err := s.readLast()
-	if err != nil {
-		return State{}, err
-	}
+	// A last.json that cannot be read names no request to cancel: a
+	// pending one expires.
+	last, _ := s.readLast()
 	if last == nil || last.ID != requestID {
 		return State{}, domainerr.NotFound("Upgrade request")
 	}
@@ -365,7 +487,7 @@ func (s *Service) Cancel(ctx context.Context, req auth.Requester, requestID stri
 	}
 	actor := req.IdentityID
 	cancelled := false
-	err = upgraderequest.CancelRequest(s.DataDir, requestID)
+	err := upgraderequest.CancelRequest(s.DataDir, requestID)
 	switch {
 	case err == nil:
 		cancelled = true
@@ -442,52 +564,71 @@ func (s *Service) Watch(ctx context.Context, admit func() (leave func(), ok bool
 func (s *Service) Pass(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	last, err := s.readLast()
-	if err != nil || last == nil {
-		return err
-	}
-	if last.Ended == "" {
-		if r, err := upgraderequest.ReadRequest(s.DataDir); err == nil && r != nil && r.ID == last.ID && !s.now().Before(r.Expires()) {
-			if err := upgraderequest.CancelRequest(s.DataDir, r.ID); err == nil {
+	// A pending request past its expiry is removed, whether or not
+	// last.json can be read.
+	last, lastErr := s.readLast()
+	if r, err := upgraderequest.ReadRequest(s.DataDir); err == nil && r != nil && !s.now().Before(r.Expires()) &&
+		(last == nil && lastErr != nil || last != nil && last.ID == r.ID && last.Ended == "") {
+		if err := upgraderequest.CancelRequest(s.DataDir, r.ID); err == nil {
+			if last != nil {
 				last.Ended = "expired"
 				if err := s.writeLast(*last); err != nil {
 					return err
 				}
-				if err := s.record(ctx, audit.Event{Type: CancelledEvent, Decision: audit.Info,
-					Metadata: jsvalue.Object{{Key: "requestId", Value: r.ID}, {Key: "to", Value: r.Version}, {Key: "reason", Value: "expired"}}}); err != nil {
-					return err
-				}
+			}
+			if err := s.record(ctx, audit.Event{Type: CancelledEvent, Decision: audit.Info,
+				Metadata: jsvalue.Object{{Key: "requestId", Value: r.ID}, {Key: "to", Value: r.Version}, {Key: "reason", Value: "expired"}}}); err != nil {
+				return err
 			}
 		}
 	}
-	status, err := upgraderequest.ReadStatus(s.DataDir)
-	if err != nil || status == nil || status.RequestID != last.ID {
-		return err
+	st, bad := s.read()
+	for _, f := range []string{unreadableLast, unreadableStatus, unreadableRequest} {
+		s.warnOnce(f, bad[f])
 	}
-	key := status.RequestID + "/" + string(status.Phase) + "/" + status.UpdatedAt
+	if st.Request == nil {
+		// None, or a last.json that cannot be read: no request to follow.
+		// A restart announced for one that no record names now stands no
+		// more.
+		s.withdraw("")
+		return nil
+	}
+	id := st.Request.ID
+	key := id + "/" + st.State + "/" + st.UpdatedAt
 	if key == s.seen {
 		return nil
 	}
 	s.seen = key
 	switch {
-	case status.Phase == upgraderequest.Restart && s.announced != status.RequestID:
-		s.announced = status.RequestID
+	case st.State == string(upgraderequest.Restart) && s.announced != id:
+		s.announced = id
 		if s.Announce != nil {
-			s.Announce(&realtime.Notice{Kind: realtime.NoticeUpgradeRestarting, Version: last.Version})
+			s.Announce(&realtime.Notice{Kind: realtime.NoticeUpgradeRestarting, Version: st.Request.Version})
 		}
-	case status.Phase.Final() && s.announced == status.RequestID:
-		// Over, and this release still serves: no restart stands.
-		s.announced = ""
-		if s.Announce != nil {
-			s.Announce(nil)
-		}
+	case st.Final():
+		// Over by the helper's word, root's journal, or as interrupted (a
+		// step that has not moved for Stalled), and this release still
+		// serves: no restart stands.
+		s.withdraw(id)
 	}
-	if status.Phase == upgraderequest.Refused {
-		_, err := s.recordOnce(ctx, status.RequestID, audit.Event{Type: RefusedEvent, Decision: audit.Info,
-			Metadata: jsvalue.Object{{Key: "requestId", Value: status.RequestID}, {Key: "to", Value: last.Version}, {Key: "reason", Value: status.Reason}}})
+	if st.State == string(upgraderequest.Refused) {
+		_, err := s.recordOnce(ctx, id, audit.Event{Type: RefusedEvent, Decision: audit.Info,
+			Metadata: jsvalue.Object{{Key: "requestId", Value: id}, {Key: "to", Value: st.Request.Version}, {Key: "reason", Value: st.Reason}}})
 		return err
 	}
 	return nil
+}
+
+// withdraw withdraws the restart notice announced for the request id, or
+// for any request when id is "".
+func (s *Service) withdraw(id string) {
+	if s.announced == "" || id != "" && s.announced != id {
+		return
+	}
+	s.announced = ""
+	if s.Announce != nil {
+		s.Announce(nil)
+	}
 }
 
 // RequestOf is the request a status record names for root's journal id,

@@ -2592,7 +2592,7 @@ export interface components {
          * @enum {string}
          */
         ReleaseCheckFailure: "unreachable" | "rate-limited" | "not-found" | "invalid-answer";
-        /** @description An upgrade request from the web app and what the host did with it (ADR-0065). Display state, written by varlatchd and by the host helper through it; root's upgrade journal says whether an upgrade it ran is done or undone. */
+        /** @description An upgrade request from the web app and what the host did with it (ADR-0065). Display state, written by varlatchd and by the host helper through it; root's upgrade journal says whether an upgrade it ran is done or undone. A record that cannot be read is named in unreadable, never an error. */
         UpgradeRequestState: {
             request: null | {
                 id: string;
@@ -2619,6 +2619,8 @@ export interface components {
             updatedAt: string | null;
             /** @description The host has not answered for 2 minutes since the request (or since it took it) */
             noAnswer: boolean;
+            /** @description The records in the data directory's upgrade-request directory that are there but cannot be read. The state is what the others say: with last.json among them, which request it was is not known (request is null), and a new request may replace it once nothing is waiting or running. */
+            unreadable: ("last.json" | "status.json" | "request.json")[];
             /** @description Only in a cancel's answer, whether it removed the request (false when the host had taken it) */
             cancelled?: boolean;
         };

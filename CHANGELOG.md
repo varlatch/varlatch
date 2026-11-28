@@ -40,7 +40,11 @@ fixes.
   `_cancel_too_late`, `_refused` and `_undone`; `installation.upgraded`
   says `source: web` and the request for an upgrade a request asked for.
   The dashboard's live updates gain an `installation` event, the restart
-  notice. **api-breaking (label):** the pre-flight line ids
+  notice. A record of the request that cannot be read is named in the
+  state's `unreadable`, never an error. The pre-flight's in-the-way line
+  fails for a version root's upgrade journal says the host undid after the
+  stop, or rolled back from, so it is not offered again; its helper line
+  fails when the helper could not take the last request. **api-breaking (label):** the pre-flight line ids
   (`UpgradePreflightLine.id`, from the Unreleased phase 1) gain `helper`, the
   host helper's line; no released server or client has the enum.
 

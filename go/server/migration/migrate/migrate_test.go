@@ -503,6 +503,48 @@ func TestTheFrozenCopy(t *testing.T) {
 	}
 }
 
+// The reverse export drops an upgrade's step-up approvals (ADR-0065),
+// which the TypeScript server's operation CHECK refuses, and their
+// challenges with them; every other approval and its challenge is carried.
+func TestTheReverseExportDropsUpgradeApprovals(t *testing.T) {
+	s := loadSource(t)
+	dir := t.TempDir()
+	if _, err := importInto(t, dir, sourceBundle(t, s, nil, false), s.RootKEK); err != nil {
+		t.Fatal(err)
+	}
+	conn, err := sql.Open("sqlite", "file:"+filepath.Join(dir, config.DatabaseFile)+"?_pragma=foreign_keys(1)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var identity string
+	if err := conn.QueryRow("SELECT identity_id FROM credentials WHERE id = 'crd_migration_cli'").Scan(&identity); err != nil {
+		t.Fatal(err)
+	}
+	for _, op := range []string{"installation.upgrade", "passkey.remove"} {
+		id := "apr_" + strings.ReplaceAll(op, ".", "_")
+		if _, err := conn.Exec(`INSERT INTO approval_intents (id, credential_id, identity_id, operation, target, body_hash, query_hash, summary, origin, created_at, expires_at, poll_interval)
+			VALUES (?, 'crd_migration_cli', ?, ?, '{}', 'b', 'q', '{}', 'cli', 1, 2, 1)`, id, identity, op); err != nil {
+			t.Fatalf("%s: %v", op, err)
+		}
+		if _, err := conn.Exec(`INSERT INTO approval_intent_challenges (id, intent_id, identity_id, auth_session_id, challenge, created_at, expires_at)
+			VALUES (?, ?, ?, 'ses_x', ?, 1, 2)`, "apc_"+id, id, identity, "challenge-"+id); err != nil {
+			t.Fatalf("%s's challenge: %v", op, err)
+		}
+	}
+	conn.Close()
+	var rev bytes.Buffer
+	if _, err := ExportReverse(context.Background(), &rev, Options{DataDir: dir, Release: "0.50.0-test"}); err != nil {
+		t.Fatal(err)
+	}
+	tables := tablesOf(t, rev.Bytes())
+	for table, want := range map[string]string{"approval_intents": "apr_passkey_remove", "approval_intent_challenges": "apc_apr_passkey_remove"} {
+		rows := strings.Join(tables[table], "\n")
+		if !strings.Contains(rows, `"`+want+`"`) || strings.Contains(rows, "installation.upgrade") || strings.Contains(rows, "apr_installation_upgrade") {
+			t.Errorf("%s in the reverse bundle: %s", table, rows)
+		}
+	}
+}
+
 // Go's local backup store, backups/, kept in the data directory after a
 // discarded copy (varlatch migrate --finish --delete-old-data after a
 // rollback; rehearsal r16f): an import leaves it as it is, a directory

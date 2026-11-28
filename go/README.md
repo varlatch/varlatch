@@ -1952,16 +1952,24 @@ may use; it never adds to the Agent's Grants.
     `request.json`; the helper's `status.json`) and root's journal, which
     says done or undone when the helper's last record does not; a step
     unchanged for 45 minutes is `interrupted`; `noAnswer` after 2 minutes.
+    A record that cannot be read is display state too: named in
+    `unreadable` (logged once by the watch), the state is what the rest
+    says, and a new request replaces it once nothing waits or runs. A
+    filing whose job fails takes `last.json` back with the request, unless
+    the host took the request first.
   - The watch, each second inside the admission: an expired request
     removed, the helper's refusal audited once, and the restart announced to
     every dashboard stream (`event: installation`, `{"notice":
     "upgrade-restarting", "version"}`, kept for streams that open after,
     withdrawn with `{"notice": null}` when the request ends with this release
-    serving).
+    serving, interrupted among the ends).
   - The pre-flight's line 7 (`helper`) on a systemd host:
-    `upgrade-request/helper.json` present, accepting, its heartbeat within 36
-    hours and no more than 10 minutes before the release check's last
-    attempt.
+    `upgrade-request/helper.json` present, accepting, with no problem from a
+    run that could not take a request, its heartbeat within 36 hours and no
+    more than 10 minutes before the release check's last attempt. Line 5
+    (`in-the-way`) fails for a target root's journal says was undone after
+    its stop, or rolled back from (`upgradejournal.Journal.Undid`, the
+    helper's own rule).
 - **Entry links** (ADR-0063, `server/entry`, `server/values/entry.go`,
   `httpserver/entry.go`; Go only, capability `values.entry-links`).
   - A row of `entry_links` (schema version 7): the hash of the link's secret,
