@@ -2028,3 +2028,71 @@ func TestHeadscaleRestoreAnswersRefused(t *testing.T) {
 		t.Fatalf("a fresh setup on Headscale: %v (admin %q)", err, h.adminCalls)
 	}
 }
+
+// Setup's copy of the tailnet auth key stays while the node enrols, and
+// goes once it has joined (its pin taken, or state without a pin): the
+// configuration still names it, for a re-join.
+func TestTheJoinedNodesKeyIsRemoved(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix modes and links")
+	}
+	h := newFakeHost(t)
+	said := &recorder{}
+	o := options(h, said, t.TempDir())
+	o.Given = Answers{Ingress: Tailnet, PublicURL: "https://vault.example.com", TailnetAuthKeyFile: "/srv/ts-key", Backups: "host"}
+	if err := Run(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	dest := h.Path(TailnetAuthKey)
+	if _, err := os.Stat(dest); err != nil || !strings.Contains(strings.Join(said.lines, "\n"), "has not joined its tailnet yet, so "+TailnetAuthKey+" stays") {
+		t.Fatalf("before the node joined: %v %q", err, said.lines)
+	}
+	conf, _ := os.ReadFile(h.Path(ConfigFile))
+	pin := filepath.Join(h.Path(DataDir), tailnetPin)
+	if err := os.WriteFile(pin, []byte(`{"controlUrl":"","tailnetId":"","suffix":"","pinnedAt":"","enrolling":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Run(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(dest); err != nil {
+		t.Fatalf("removed while the node enrols: %v", err)
+	}
+	if err := os.WriteFile(pin, []byte(`{"controlUrl":"","tailnetId":"T1","suffix":"example.ts.net","pinnedAt":"2026-11-20T12:00:00Z"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	said.lines = nil
+	if err := Run(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(dest); !errors.Is(err, fs.ErrNotExist) || !strings.Contains(strings.Join(said.lines, "\n"), "removed "+TailnetAuthKey) {
+		t.Fatalf("after the node joined: %v %q", err, said.lines)
+	}
+	if after, _ := os.ReadFile(h.Path(ConfigFile)); string(after) != string(conf) || !strings.Contains(string(after), "tailnet_auth_key_file = "+TailnetAuthKey+"\n") {
+		t.Errorf("the configuration changed:\n%s", after)
+	}
+	said.lines = nil
+	if err := Run(context.Background(), o); err != nil || strings.Contains(strings.Join(said.lines, "\n"), TailnetAuthKey) {
+		t.Errorf("a rerun: %v %q", err, said.lines)
+	}
+
+	// A node with state and no pin never enrols again.
+	h2 := newFakeHost(t)
+	o2 := options(h2, &recorder{}, t.TempDir())
+	o2.Given = o.Given
+	if err := Run(context.Background(), o2); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(h2.Path(DataDir), "tailnet"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(h2.Path(DataDir), filepath.FromSlash(tailnetState)), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Run(context.Background(), o2); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(h2.Path(TailnetAuthKey)); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("state without a pin: %v", err)
+	}
+}

@@ -314,13 +314,27 @@ To add the node to an installation:
    tailnet_auth_key_file = /etc/varlatch/tailnet-auth-key
    ```
 
-3. Once the node has joined, delete the key file and its line: the node
-   keeps its identity in `tailnet/` in the data directory.
+3. Once the node has joined, delete the key file
+   (`sudo rm /etc/varlatch/tailnet-auth-key`): the node keeps its identity
+   in `tailnet/` in the data directory, and `varlatchd` reads the key only
+   while that has no state. The line may stay: to join again (a lost
+   `tailnet/`), put a new key at the same path and restart. Until the file
+   is gone, `sudo varlatch doctor` says so (`tailnet.auth-key`, advisory),
+   because anyone with a copy of the disk could join a node with the
+   node's tags while the key is valid. Revoke the key in the tailnet's
+   admin console, or let it expire.
+
+   Keep the file only while something on this host still joins with it: a
+   [migration](../operations/migrate-to-0.50.md) until `--finish`, its
+   rollback, or a name takeover.
 
 `varlatch setup --ingress tailnet` does this on a new host: it asks for the
 address people open and for the auth key's file, and copies the key to
-`/etc/varlatch/tailnet-auth-key` for the service. Your own file is not
-needed afterwards.
+`/etc/varlatch/tailnet-auth-key` for the service. At the end of the run, it
+removes that copy once the node has joined; if the node has not joined
+yet, it says so, and running setup again removes it. `varlatchd` never
+reads your own file: delete it, unless you keep a reusable key for a
+restore or a migration, which need one.
 
 At its first join `varlatchd` pins the tailnet. If it finds itself in
 another one later, the listener closes until you decide with `sudo

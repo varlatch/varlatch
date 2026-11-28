@@ -22,6 +22,9 @@ import (
 	"github.com/varlatch/varlatch/go/server/jsvalue"
 )
 
+// bucketKeyWait bounds doctor's question to the backup destination.
+const bucketKeyWait = 15 * time.Second
+
 const doctorUsage = "Usage: varlatchd admin doctor [--json] [--config <file>]"
 
 // doctorArgs checks `admin doctor`'s arguments (--config taken out): only
@@ -154,6 +157,13 @@ func runDoctorLive(ctx context.Context, env *hostEnv, rest []string, stdout, std
 		live.Tailnet, live.TailnetClosed = true, env.tailnet.Closed()
 		live.TailnetDetail, live.TailnetWarnings = env.tailnet.Explain()
 		live.TailnetNeverJoined = env.tailnet.NeverJoined()
+	}
+	if env.backups != nil && env.cfg != nil && env.cfg.BackupDestinationsFile != "" {
+		// One HEAD, no content (backups.Service.KeyAccess).
+		bctx, cancel := context.WithTimeout(ctx, bucketKeyWait)
+		access := env.backups.KeyAccess(bctx)
+		cancel()
+		live.BucketKeyReads, live.BucketKeyDetail = access.Reads, access.Detail
 	}
 	if st, err := custody.StatusOf(ctx, env.store.Reader()); err != nil {
 		live.CustodyError = err.Error()

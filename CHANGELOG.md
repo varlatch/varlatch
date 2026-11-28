@@ -64,6 +64,22 @@ fixes.
   id, the new binaries' SHA-256, the pre-upgrade snapshot's archive, the
   start and end times, and `source: host`. It has no actor and no
   Organization; Installation Admins see it in the installation's audit log.
+- **Key files are checked before `varlatchd serve` reads them.** A Root KEK
+  or backup key file that is not a regular file stops the start, with exit
+  78. One its group or others may read is logged as a warning at each start
+  and fails `varlatch doctor`, but the server still starts. Tighten it to
+  0600, or 0400 in the container image.
+- **No tailnet join key stays on disk after the join.** `varlatch setup`
+  removes its copy, `/etc/varlatch/tailnet-auth-key`, once the node has
+  joined. A new advisory `doctor` check, `tailnet.auth-key`, reports any
+  auth key file still there after the join.
+- **The bucket key is checked.** `doctor` fails a bucket key file
+  (`writeCredentialsFile`) that is open to others, writable by its group,
+  or readable by a group other than the service's (`files.bucket-key`).
+  Each upload logs the same warning. A new advisory check,
+  `backups.bucket-key-read`, asks the destination whether the key may
+  read archives, with one `HEAD` request that downloads nothing.
+  [Scoping destination credentials](docs/operations/backup.md#scoping-destination-credentials-per-provider)
 
 ## 0.51.0 (2026-11-27)
 

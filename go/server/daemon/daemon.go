@@ -219,6 +219,16 @@ func serve(opts Options, h *hooks) int {
 	if err != nil {
 		return fail(ExitConfig, "varlatchd does not start: "+err.Error())
 	}
+	// The key files looked at before they are read (keyfiles.go).
+	for _, k := range [][2]string{{"the Root KEK file", cfg.RootKEKFile}, {"the backup key file", cfg.BackupKeyFile}} {
+		loose, refuse := keyFileProblem(k[0], k[1], os.Getenv("CREDENTIALS_DIRECTORY"))
+		if refuse != nil {
+			return fail(ExitConfig, "varlatchd does not start: "+refuse.Error())
+		}
+		if loose != "" {
+			log.Warn(loose)
+		}
+	}
 	material, err := os.ReadFile(cfg.RootKEKFile)
 	if err != nil {
 		return fail(ExitFailure, "cannot read the Root KEK file", "file", cfg.RootKEKFile, "error", err)

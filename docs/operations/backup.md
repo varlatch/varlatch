@@ -145,6 +145,12 @@ disk, and loses them with it. New to S3? Start with the
    sudo chmod 640 /etc/varlatch/bucket-write.json
    ```
 
+   In the container image, make it `0400`, owned by uid `65532`. `sudo
+   varlatch doctor` fails (`files.bucket-key`) when the file is open to
+   others, writable by its group, or readable by a group other than the
+   service's, and each upload logs the same warning. Give the server a key
+   that may only write ([below](#scoping-destination-credentials-per-provider)).
+
 3. Add both settings to `/etc/varlatch/varlatchd.conf`, and restart:
 
    ```ini
@@ -210,15 +216,27 @@ host cannot list or delete existing archives.
 
 A destination has one key, and the server uses it for everything. So choose:
 
-- **A key that may write only.** A compromised host cannot read archives,
-  but the server cannot download one either: `test-bucket` then reports
-  that retention and recoverability could not be checked, and the status
-  keeps the warning that no remote copy was verified within 30 days. Check
-  archives from another machine instead, with a read key and a
+- **A key that may write only (recommended).** A compromised host cannot
+  read archives, but the server cannot download one either: `test-bucket`
+  then reports that retention and recoverability could not be checked, and
+  the status keeps the warning that no remote copy was verified within 30
+  days. Check archives from another machine instead, with a read key and a
   [restore rehearsal](#rehearse-a-restore).
 - **A key that may also read** (`GetObject`, `GetObjectVersion` and
-  `GetObjectRetention`) under the prefix. `test-bucket` and the remote check then work. Archives are
-  encrypted with the backup key, so a stolen copy opens only with that key.
+  `GetObjectRetention`) under the prefix. `test-bucket` and the remote
+  check then work. Archives are encrypted with the backup key, so a copy
+  stolen from the bucket opens only with that key.
+
+Why write-only: the bucket key sits on the host's disk, and so does the
+backup key (`/etc/varlatch/backup-key`). Whoever gets a copy of that disk
+already has the current data; with a key that may read, they can also
+download and open every archive the bucket keeps, older ones included,
+which may hold secrets deleted or rotated since. The server stores no
+standing credential that reads its own archives. `sudo varlatch doctor`
+asks the destination whether the key may read (`backups.bucket-key-read`,
+advisory): one `HEAD` of the newest archive delivered there, which
+downloads nothing, or, before any, of a name never written. It reports a
+key that may read, and never fails because of it.
 
 A write-only key can still **overwrite** an object if it knows the key name.
 Random UUID names only help against a key stolen *off* the host: the host

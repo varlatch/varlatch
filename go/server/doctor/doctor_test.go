@@ -50,11 +50,19 @@ func newFixture(t *testing.T, extra string) *fixture {
 			t.Fatal(err)
 		}
 	}
-	if err := os.WriteFile(filepath.Join(f.dir, "destinations.json"), []byte("{}"), 0o600); err != nil {
+	// A bucket destination, its key the service's group may read.
+	destinations := `{"offsite": {"region": "us-east-1", "bucket": "b", "writeCredentialsFile": "bucket-write.json"}}`
+	if err := os.WriteFile(filepath.Join(f.dir, "destinations.json"), []byte(destinations), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.dir, "bucket-write.json"), []byte("not a key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(f.dir, "bucket-write.json"), 0o640); err != nil {
 		t.Fatal(err)
 	}
 	f.conf = filepath.Join(f.dir, "varlatchd.conf")
-	conf := fmt.Sprintf("public_url = https://vault.example.com\ndata_dir = %s\nroot_kek_file = %s\nbackup_key_file = %s\nbackup_destinations_file = %s\n%s",
+	conf := fmt.Sprintf("public_url = https://vault.example.com\ndata_dir = %s\nroot_kek_file = %s\nbackup_key_file = %s\nbackup_destinations_file = %s\nbackup_destination = offsite\n%s",
 		data, filepath.Join(f.dir, "root-kek"), filepath.Join(f.dir, "backup-key"), filepath.Join(f.dir, "destinations.json"), extra)
 	if err := os.WriteFile(f.conf, []byte(conf), 0o644); err != nil {
 		t.Fatal(err)
@@ -82,7 +90,8 @@ func newFixture(t *testing.T, extra string) *fixture {
 			Storage:  storage.Metrics{WALBytes: 4 << 20, Truncates: 3, LastTruncate: storage.CheckpointResult{Duration: 30 * time.Millisecond, Trigger: "size"}, MaxTruncate: 40 * time.Millisecond},
 			WALBound: 64 << 20,
 			Custody: &custody.Status{RootKEKVersion: 1, Attestations: map[string]*custody.Attestation{
-				"root-kek": {Key: "root-kek", Method: "printed", At: at, KeyVersion: &v}, "backup-key": {Key: "backup-key", Method: "printed", At: at}}}},
+				"root-kek": {Key: "root-kek", Method: "printed", At: at, KeyVersion: &v}, "backup-key": {Key: "backup-key", Method: "printed", At: at}}},
+			BucketKeyReads: &writeOnly, BucketKeyDetail: "the key may not read varlatch/0f0e0d0c-0b0a-4908-8706-050403020100.vltbak"},
 		Probe: func(context.Context, string) (diskprobe.Result, error) {
 			s := diskprobe.Stats{Samples: 200, P50: time.Millisecond, P95: 2 * time.Millisecond, P99: 3 * time.Millisecond, Max: 4 * time.Millisecond}
 			return diskprobe.Result{Append: s, Rewrite: s, Limit: diskprobe.DefaultLimit, Pass: true}, nil
@@ -92,6 +101,8 @@ func newFixture(t *testing.T, extra string) *fixture {
 	}
 	return f
 }
+
+var writeOnly = false
 
 func (f *fixture) run(t *testing.T) Report {
 	t.Helper()

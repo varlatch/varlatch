@@ -77,6 +77,34 @@ func (c *Client) ObjectSHA256(ctx context.Context, key string) (string, error) {
 	return head.Metadata["sha256"], nil
 }
 
+// ReadAccess is what a HEAD of key says about the key's read access, with
+// no content downloaded: Readable when the object's metadata came back,
+// ReadRefused when the store refused (403), NotThere when it answered that
+// there is no such object (404, which S3 tells only a key that may read
+// and list). Any other answer is an error.
+func (c *Client) ReadAccess(ctx context.Context, key string) (Access, error) {
+	_, err := c.s3.HeadObject(ctx, &s3.HeadObjectInput{Bucket: &c.bucket, Key: aws.String(key)})
+	switch {
+	case err == nil:
+		return Readable, nil
+	case IsAccessDenied(err):
+		return ReadRefused, nil
+	case statusOf(err) == http.StatusNotFound || codeOf(err) == "NotFound" || codeOf(err) == "NoSuchKey":
+		return NotThere, nil
+	}
+	return 0, err
+}
+
+// Access is a HEAD's answer (ReadAccess).
+type Access int
+
+// ReadAccess's answers.
+const (
+	Readable Access = iota + 1
+	ReadRefused
+	NotThere
+)
+
 // ObjectRetention is objectRetention: an object's retention read back
 // (GetObjectRetention); nil when it has none, whether the answer says so
 // (NoSuchObjectLockConfiguration) or names no mode and date. A refusal
