@@ -245,6 +245,9 @@ After=network-online.target varlatchd.service
 
 [Service]
 Type=oneshot
+User=root
+NoNewPrivileges=yes
+PrivateTmp=yes
 ExecStart=/usr/local/bin/varlatch upgrade --check
 ```
 
